@@ -22,6 +22,7 @@ import { buildActiveImageGenerationTaskPromptContextForSession } from "../../ima
 import { buildActiveMusicGenerationTaskPromptContextForSession } from "../../music-generation-task-status.js";
 import { prependSystemPromptAdditionAfterCacheBoundary } from "../../system-prompt-cache-boundary.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
+import { normalizeToolName } from "../../tool-policy.js";
 import { derivePromptTokens, type NormalizedUsage } from "../../usage.js";
 import { buildActiveVideoGenerationTaskPromptContextForSession } from "../../video-generation-task-status.js";
 import { buildEmbeddedCompactionRuntimeContext } from "../compaction-runtime-context.js";
@@ -213,6 +214,14 @@ export function resolvePromptModeForSession(sessionKey?: string): "minimal" | "f
     return "full";
   }
   return isSubagentSessionKey(sessionKey) || isCronSessionKey(sessionKey) ? "minimal" : "full";
+}
+
+export function shouldUseMinimalPromptForRuntimeToolsAllow(toolsAllow?: string[]): boolean {
+  return (
+    toolsAllow !== undefined &&
+    toolsAllow.length > 0 &&
+    !toolsAllow.some((entry) => normalizeToolName(entry) === "*")
+  );
 }
 
 export function shouldInjectHeartbeatPrompt(params: {

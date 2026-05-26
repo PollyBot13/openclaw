@@ -25,6 +25,7 @@ import {
   resolveAttemptFsWorkspaceOnly,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
+  shouldUseMinimalPromptForRuntimeToolsAllow,
   shouldWarnOnOrphanedUserRepair,
 } from "./attempt.prompt-helpers.js";
 import { composeSystemPromptWithHookContext } from "./attempt.thread-helpers.js";
@@ -129,6 +130,15 @@ describe("buildEmbeddedAttemptToolRunContext", () => {
     expect(context.jobId).toBe("job-1");
     expect(context.memoryFlushWritePath).toBe("memory/log.md");
     expect(context.runtimeToolAllowlist).toEqual(["memory_search", "memory_get"]);
+  });
+});
+
+describe("shouldUseMinimalPromptForRuntimeToolsAllow", () => {
+  it("keeps wildcard runtime allowlists on the normal prompt surface", () => {
+    expect(shouldUseMinimalPromptForRuntimeToolsAllow(undefined)).toBe(false);
+    expect(shouldUseMinimalPromptForRuntimeToolsAllow([])).toBe(false);
+    expect(shouldUseMinimalPromptForRuntimeToolsAllow(["*", "goal_status"])).toBe(false);
+    expect(shouldUseMinimalPromptForRuntimeToolsAllow(["read", "goal_status"])).toBe(true);
   });
 });
 
