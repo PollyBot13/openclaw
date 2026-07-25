@@ -81,9 +81,12 @@ flow:
                 params: [candidate]
                 expr: "candidate.conversation.id === config.conversationId && candidate.conversation.kind === 'channel' && String(candidate.text ?? '') === config.expectedReply"
             - expr: liveTurnTimeoutMs(env, 180000)
-        - set: matchingOutbound
+        - call: sleep
+          args:
+            - expr: liveTurnTimeoutMs(env, 8000)
+        - set: conversationOutbound
           value:
-            expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && String(message.text ?? '') === config.expectedReply)"
+            expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && message.conversation.kind === 'channel')"
         - set: scenarioRequests
           value:
             expr: "env.mock ? (await fetchJson(`${env.mock.baseUrl}/debug/requests?after=${requestCursorBefore}`)).filter((request) => String(request.allInputText ?? '').includes(config.promptSnippet)) : []"
@@ -94,9 +97,13 @@ flow:
           value:
             expr: "scenarioRequests.filter((request) => String(request.toolOutput ?? '').trim().length > 0)"
         - assert:
-            expr: matchingOutbound.length === 1
+            expr: conversationOutbound.length === 1
             message:
-              expr: "`expected one sanitized provider failure reply, saw ${matchingOutbound.length}`"
+              expr: "`expected exactly one channel reply after settling, saw ${conversationOutbound.length}: ${JSON.stringify(conversationOutbound.map((message) => String(message.text ?? '')))}`"
+        - assert:
+            expr: "String(conversationOutbound[0]?.text ?? '') === config.expectedReply"
+            message:
+              expr: "`expected the sanitized provider failure reply, saw ${String(conversationOutbound[0]?.text ?? '')}`"
         - assert:
             expr: "!env.mock || plannedReads.length === 1"
             message:
@@ -105,7 +112,7 @@ flow:
             expr: "!env.mock || postToolRequests.length >= 1"
             message: expected at least one post-tool HTTP 503 request
         - assert:
-            expr: "!String(outbound.text ?? '').includes('Service Unavailable') && !String(outbound.text ?? '').includes('biscuit_baker')"
+            expr: "conversationOutbound.every((message) => !String(message.text ?? '').includes('Service Unavailable') && !String(message.text ?? '').includes('biscuit_baker'))"
             message:
-              expr: "`raw provider diagnostics leaked into channel reply: ${String(outbound.text ?? '')}`"
-      detailsExpr: "`reply=${matchingOutbound.length}; plannedReads=${plannedReads.length}; postTool503=${postToolRequests.length}`"
+              expr: "`raw provider diagnostics leaked into channel replies: ${JSON.stringify(conversationOutbound.map((message) => String(message.text ?? '')))}`"
+      detailsExpr: "`reply=${conversationOutbound.length}; plannedReads=${plannedReads.length}; postTool503=${postToolRequests.length}`"
