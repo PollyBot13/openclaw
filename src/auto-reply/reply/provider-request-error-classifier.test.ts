@@ -209,6 +209,7 @@ describe("provider request error classifier", () => {
       code: "provider_internal_error",
       userMessage: PROVIDER_INTERNAL_ERROR_USER_MESSAGE,
       technicalMessage: "LLM request timed out.",
+      allowTransientHttpRetry: true,
     });
   });
 

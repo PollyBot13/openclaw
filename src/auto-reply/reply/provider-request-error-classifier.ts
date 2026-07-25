@@ -20,6 +20,7 @@ type ProviderRequestErrorClassification = {
   code: ProviderRequestErrorCode;
   userMessage: string;
   technicalMessage: string;
+  allowTransientHttpRetry?: true;
 };
 
 /** User-facing copy for provider-side broken conversation state. */
@@ -86,10 +87,15 @@ export function classifyProviderRequestError(
       technicalMessage,
     };
   }
-  if (
-    hasHttp503Evidence(err, technicalMessage) ||
-    isProviderInternalErrorMessage(technicalMessage)
-  ) {
+  if (hasHttp503Evidence(err, technicalMessage)) {
+    return {
+      code: "provider_internal_error",
+      userMessage: PROVIDER_INTERNAL_ERROR_USER_MESSAGE,
+      technicalMessage,
+      allowTransientHttpRetry: true,
+    };
+  }
+  if (isProviderInternalErrorMessage(technicalMessage)) {
     return {
       code: "provider_internal_error",
       userMessage: PROVIDER_INTERNAL_ERROR_USER_MESSAGE,
