@@ -86,7 +86,10 @@ export function classifyProviderRequestError(
       technicalMessage,
     };
   }
-  if (isProviderInternalErrorMessage(technicalMessage)) {
+  if (
+    hasHttp503Evidence(err, technicalMessage) ||
+    isProviderInternalErrorMessage(technicalMessage)
+  ) {
     return {
       code: "provider_internal_error",
       userMessage: PROVIDER_INTERNAL_ERROR_USER_MESSAGE,
@@ -136,12 +139,27 @@ function isProviderInternalErrorMessage(message: string): boolean {
 
 function hasHttp429Evidence(err: unknown, message: string): boolean {
   return (
-    readHttp429Status(err) ||
+    readHttpStatus(err, 429) ||
     /\b(?:http\s*)?429\b|["'](?:status|code)["']\s*:\s*429\b/iu.test(message)
   );
 }
 
-function readHttp429Status(err: unknown, seen = new Set<unknown>()): boolean {
+function hasHttp503Evidence(err: unknown, message: string): boolean {
+  const rawError = isFailoverError(err) ? err.rawError : undefined;
+  return (
+    readHttpStatus(err, 503) ||
+    hasHttp503TextEvidence(message) ||
+    (rawError ? hasHttp503TextEvidence(rawError) : false)
+  );
+}
+
+function hasHttp503TextEvidence(message: string): boolean {
+  return /\b(?:(?:unexpected\s+status|http)\s*503|503\s+service unavailable)\b|["'](?:status|code)["']\s*:\s*503\b/iu.test(
+    message,
+  );
+}
+
+function readHttpStatus(err: unknown, expectedStatus: number, seen = new Set<unknown>()): boolean {
   if (!err || typeof err !== "object" || seen.has(err)) {
     return false;
   }
@@ -150,16 +168,16 @@ function readHttp429Status(err: unknown, seen = new Set<unknown>()): boolean {
     (err as { status?: unknown; statusCode?: unknown }).status ??
     (err as { statusCode?: unknown }).statusCode;
   if (typeof candidate === "number" && Number.isFinite(candidate)) {
-    if (candidate === 429) {
+    if (candidate === expectedStatus) {
       return true;
     }
-  } else if (typeof candidate === "string" && Number(candidate.trim()) === 429) {
+  } else if (typeof candidate === "string" && Number(candidate.trim()) === expectedStatus) {
     return true;
   }
   const nested = err as { cause?: unknown; error?: unknown; response?: unknown };
   return (
-    readHttp429Status(nested.response, seen) ||
-    readHttp429Status(nested.error, seen) ||
-    readHttp429Status(nested.cause, seen)
+    readHttpStatus(nested.response, expectedStatus, seen) ||
+    readHttpStatus(nested.error, expectedStatus, seen) ||
+    readHttpStatus(nested.cause, expectedStatus, seen)
   );
 }

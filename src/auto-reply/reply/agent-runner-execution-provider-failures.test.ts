@@ -39,6 +39,9 @@ function createOverloadSummaryError() {
   });
 }
 
+const OPENAI_SERVICE_UNAVAILABLE_MESSAGE =
+  "unexpected status 503 Service Unavailable: Service Unavailable, url: https://chatgpt.com/backend-api/codex/responses, cf-ray: qa-test-AMS, auth error: 503, auth error code: biscuit_baker_service_me_circuit_open";
+
 describe("runAgentTurnWithFallback: provider failures", () => {
   it.each(NON_DIRECT_FAILURE_SURFACE_CASES)(
     "keeps raw runner failure boilerplate out of $label chats",
@@ -183,6 +186,48 @@ describe("runAgentTurnWithFallback: provider failures", () => {
       if (result.kind === "final") {
         expect(result.payload.text).not.toBe(SILENT_REPLY_TOKEN);
         expect(result.payload.text).toContain('Missing API key for provider "openai"');
+      }
+    },
+  );
+
+  it.each(["group", "channel"] as const)(
+    "surfaces provider HTTP 503 failures in Discord %s chats without replaying after tool execution",
+    async (chatType) => {
+      state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+        params.onExecutionPhase?.({ phase: "tool_execution_started", tool: "exec" });
+        throw new FailoverError("LLM request timed out.", {
+          reason: "timeout",
+          provider: "openai",
+          model: "gpt-5.6",
+          status: 408,
+          rawError: OPENAI_SERVICE_UNAVAILABLE_MESSAGE,
+        });
+      });
+
+      const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+      const result = await runAgentTurnWithFallback(
+        createMinimalRunAgentTurnParams({
+          sessionCtx: {
+            Provider: "discord",
+            Surface: "discord",
+            ChatType: chatType,
+            GroupSubject: "agent group",
+            GroupChannel: "#general",
+            MessageSid: "msg",
+          } as unknown as TemplateContext,
+        }),
+      );
+
+      expect(state.runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
+      expect(result.kind).toBe("final");
+      if (result.kind === "final") {
+        expect(result.payload.isError).toBe(true);
+        expect(result.payload.text).toBe(PROVIDER_INTERNAL_ERROR_USER_MESSAGE);
+        expect(result.payload.text).not.toBe(SILENT_REPLY_TOKEN);
+        expect(result.payload.text).not.toContain(OPENAI_SERVICE_UNAVAILABLE_MESSAGE);
+        expect(getReplyPayloadMetadata(result.payload)).toMatchObject({
+          deliverDespiteSourceReplySuppression: true,
+        });
       }
     },
   );
