@@ -411,6 +411,7 @@ is in progress:
       enabled: true,
       token: { source: "env", provider: "default", id: "CLICKCLACK_BOT_TOKEN" },
       workspace: "default",
+      nativeProgress: true,
       agentActivity: true,
     },
   },
