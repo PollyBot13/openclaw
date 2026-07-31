@@ -1,0 +1,35 @@
+PR: openclaw/openclaw#116504
+Captured: 2026-07-31 Europe/Amsterdam
+Environment: disposable iPhone 17 simulator, iOS 26.5, fresh install/privacy state
+
+HEAD
+7088a4712d3b69111581f3814c92f84e25bd7a71
+
+APP EMBEDDED COMMIT
+7088a4712d3b69111581f3814c92f84e25bd7a71
+
+ORIGINAL PROCESS AFTER BOTH GRANTS
+PID 53526
+launchctl procinfo 53526 resolved the installed OpenClaw executable after both system sheets completed.
+
+READ-ONLY TCC QUERY AFTER BOTH GRANTS
+kTCCServiceCalendar|<redacted-debug-bundle-id>|2
+kTCCServiceReminders|<redacted-debug-bundle-id>|2
+
+FOCUSED TESTS
+DevicePermissionsTests: 5 passed
+EventKitPermissionRequesterTests: 2 passed
+Total: 7 tests in 2 suites passed
+Result: ** TEST SUCCEEDED **
+
+NATIVE I18N
+native-app-i18n: entries=5406 changed=false
+
+IOS BUILD
+Result: ** BUILD SUCCEEDED **
+
+SCREENSHOT SHA-256
+9f7258c9c04c8bac32075cf87805027d3a2cb8c85f4990bb2aa3fbfbd3da066b  calendar-system-prompt.png
+d5ad142d757d1696c99f28bf7fc26697ecb47028875df47bcb0dc35c40afd79e  calendar-after-grant.png
+3f9194f8382132d39cde3c466229c6060afc015206f19f8325c8e5ee1634a259  reminders-system-prompt.png
+f3dcb9bd13898f3a9e5371f20376645aa9e26c08208a28deb25f0df05622fa3b  both-after-grant.png
