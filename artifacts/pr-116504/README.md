@@ -2,16 +2,17 @@
 
 ## Current-head proof
 
-- Tested application head: `db6f8a6d9a6a0202824bc3588a37d5f60a0446c9`
+- Tested application head: `7cefc4705e97175a3a5127ddef9e915e66b405c8`
+- Rebased upstream main: `b252df88494e0bf1b5ea882fa7c74c1f786874e5`
 - Environment: disposable iPhone 17 simulator, iOS 26.5, fresh install and privacy state
-- Application launch PID: `26981`
+- Application launch PID: `43489`
 - `current-head/calendar-system-prompt.png`: real Calendar full-access system sheet
 - `current-head/calendar-after-grant.png`: Calendar row reconciled to a green check without relaunch
 - `current-head/reminders-system-prompt.png`: real Reminders system sheet
 - `current-head/both-after-grant.png`: Calendar and Reminders rows both reconciled to green checks without relaunch
 - `current-head/terminal-proof.txt`: exact-head, process, TCC, test, build, and hash readback
 
-The application bundle's embedded `OpenClawGitCommit` matched the tested head. After both grants, a read-only TCC query returned authorization value `2` for `kTCCServiceCalendar` and `kTCCServiceReminders`, while process `26981` still resolved the original OpenClaw executable. The focused current-head test lane passed 7 tests in 2 suites, native i18n reported `changed=false`, the iOS simulator build succeeded, and the final independent Codex review reported no introduced regression.
+The application bundle's embedded `OpenClawGitCommit` matched the tested head. After both grants, a read-only TCC query returned authorization value `2` for `kTCCServiceCalendar` and `kTCCServiceReminders`, while process `43489` still resolved the original OpenClaw executable. The focused current-head test lane passed 7 tests in 2 suites, native i18n reported `changed=false`, the iOS simulator build succeeded, and the final independent Codex review reported no introduced regression.
 
 ## Earlier proof
 
@@ -28,8 +29,8 @@ The original exact-head run at `b5c35dba3107e42b5824f555b2f80710a0a9d425` is ret
 ## SHA-256
 
 ```text
-8f3ee6ea548be3e1a6be143baac9bedce0e1b6f39c34e609c7f4c26a18932f6b  calendar-system-prompt.png
-fda66f2e3536d5652e65e5ea20e0f5f47f570c3f3deebec4822f5cf73d546be9  calendar-after-grant.png
-1f4093ed9f5e18a8a1cdbffc4e37fcd17e0eafeda24c95c02a4e1206dcbb88c1  reminders-system-prompt.png
-ffc4e627f0ae24434f96685a2c03bce4873229e018bcd63dc7c0d6e3f2bb9cc6  both-after-grant.png
+d000ff0058ed9e9448fff9db357009357f2452a21120275b26ae987d3e495217  calendar-system-prompt.png
+8ed231cedc2f926aada81ca0e9f2289c41659258b444bfafa25914b9c09ae981  calendar-after-grant.png
+9929b10d271d6d95a4e4e5eb50078545dd8d641885f6ebd802a5daf4694847a6  reminders-system-prompt.png
+e135edabeea1346177147986fe624e9d533f5258bfd5d94467a725e4d494c7c2  both-after-grant.png
 ```

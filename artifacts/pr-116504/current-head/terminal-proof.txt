@@ -3,14 +3,17 @@ Captured: 2026-07-31 Europe/Amsterdam
 Environment: disposable iPhone 17 simulator, iOS 26.5, fresh install/privacy state
 
 HEAD
-db6f8a6d9a6a0202824bc3588a37d5f60a0446c9
+7cefc4705e97175a3a5127ddef9e915e66b405c8
+
+UPSTREAM MAIN
+b252df88494e0bf1b5ea882fa7c74c1f786874e5
 
 APP EMBEDDED COMMIT
-db6f8a6d9a6a0202824bc3588a37d5f60a0446c9
+7cefc4705e97175a3a5127ddef9e915e66b405c8
 
 ORIGINAL PROCESS AFTER BOTH GRANTS
-PID 26981
-Process 26981 still resolved the installed OpenClaw executable after both system sheets completed.
+PID 43489
+Process 43489 still resolved the installed OpenClaw executable after both system sheets completed.
 
 READ-ONLY TCC QUERY AFTER BOTH GRANTS
 kTCCServiceCalendar|<redacted-debug-bundle-id>|2
@@ -29,10 +32,10 @@ IOS BUILD
 Result: ** BUILD SUCCEEDED **
 
 INDEPENDENT REVIEW
-The final local Codex review found no discrete introduced regression after the retention test was tightened.
+The final local Codex review found no discrete regression in the changed surfaces.
 
 SCREENSHOT SHA-256
-8f3ee6ea548be3e1a6be143baac9bedce0e1b6f39c34e609c7f4c26a18932f6b  calendar-system-prompt.png
-fda66f2e3536d5652e65e5ea20e0f5f47f570c3f3deebec4822f5cf73d546be9  calendar-after-grant.png
-1f4093ed9f5e18a8a1cdbffc4e37fcd17e0eafeda24c95c02a4e1206dcbb88c1  reminders-system-prompt.png
-ffc4e627f0ae24434f96685a2c03bce4873229e018bcd63dc7c0d6e3f2bb9cc6  both-after-grant.png
+d000ff0058ed9e9448fff9db357009357f2452a21120275b26ae987d3e495217  calendar-system-prompt.png
+8ed231cedc2f926aada81ca0e9f2289c41659258b444bfafa25914b9c09ae981  calendar-after-grant.png
+9929b10d271d6d95a4e4e5eb50078545dd8d641885f6ebd802a5daf4694847a6  reminders-system-prompt.png
+e135edabeea1346177147986fe624e9d533f5258bfd5d94467a725e4d494c7c2  both-after-grant.png
