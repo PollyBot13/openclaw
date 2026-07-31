@@ -1,0 +1,42 @@
+{"marker":"ready-for-screenshot","mode":"degraded","headSha":"097303eadc594ef3d2fc23e2805abcd2e1b787e9","turnId":"proof-degraded-097303eadc59-1785526743798","holdMs":0}
+{
+  "mode": "degraded",
+  "headSha": "097303eadc594ef3d2fc23e2805abcd2e1b787e9",
+  "turnId": "proof-degraded-097303eadc59-1785526743798",
+  "finalDeliveryMs": 16,
+  "finalizeMs": 1002,
+  "finalMessageId": "msg_01kywtzwr9w1bz2dd0y1pjp179",
+  "finalReadbackMatches": true,
+  "progressRequests": [
+    {
+      "method": "POST",
+      "path": "/api/realtime/ephemeral",
+      "durationMs": 15006,
+      "error": "AbortError"
+    },
+    {
+      "method": "POST",
+      "path": "/api/realtime/ephemeral",
+      "durationMs": 15003,
+      "error": "AbortError"
+    }
+  ],
+  "durableRequests": [
+    {
+      "method": "POST",
+      "path": "/api/channels/chn_01kywtyfavnsp1nej21hp19jjn/messages",
+      "status": 201,
+      "durationMs": 13
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/msg_01kywtzwr9w1bz2dd0y1pjp179",
+      "status": 200,
+      "durationMs": 15
+    }
+  ],
+  "progressErrors": [
+    "AbortError",
+    "AbortError"
+  ]
+}

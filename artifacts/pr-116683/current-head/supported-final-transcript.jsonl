@@ -1,0 +1,45 @@
+{"marker":"ready-for-screenshot","mode":"supported","headSha":"097303eadc594ef3d2fc23e2805abcd2e1b787e9","turnId":"proof-supported-097303eadc59-1785526727218","holdMs":4000}
+{
+  "mode": "supported",
+  "headSha": "097303eadc594ef3d2fc23e2805abcd2e1b787e9",
+  "turnId": "proof-supported-097303eadc59-1785526727218",
+  "finalDeliveryMs": 8,
+  "finalizeMs": 1,
+  "finalMessageId": "msg_01kywtzgpya4dhcas56reetgda",
+  "finalReadbackMatches": true,
+  "progressRequests": [
+    {
+      "method": "POST",
+      "path": "/api/realtime/ephemeral",
+      "status": 202,
+      "durationMs": 15
+    },
+    {
+      "method": "POST",
+      "path": "/api/realtime/ephemeral",
+      "status": 202,
+      "durationMs": 3
+    },
+    {
+      "method": "POST",
+      "path": "/api/realtime/ephemeral",
+      "status": 202,
+      "durationMs": 2
+    }
+  ],
+  "durableRequests": [
+    {
+      "method": "POST",
+      "path": "/api/channels/chn_01kywtyfavnsp1nej21hp19jjn/messages",
+      "status": 201,
+      "durationMs": 7
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/msg_01kywtzgpya4dhcas56reetgda",
+      "status": 200,
+      "durationMs": 2
+    }
+  ],
+  "progressErrors": []
+}
