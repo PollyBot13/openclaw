@@ -353,7 +353,7 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Reply modes
   - H2: Command menu
   - H2: Durable media delivery
-  - H2: Agent activity rows
+  - H2: Native progress and agent activity rows
   - H2: Group mention gating
   - H3: Mention detection
   - H3: Configuration example
