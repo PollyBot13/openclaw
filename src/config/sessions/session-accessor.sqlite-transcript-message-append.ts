@@ -14,6 +14,7 @@ import {
   appendTranscriptEventInTransaction,
   ensureTranscriptHeader,
   readMessageIdempotencyKey,
+  readPreservedTranscriptMessageIdempotencyKey,
   readTranscriptIdentityByEventId,
   readTranscriptMessageByEventId,
   readTranscriptMessageByScopedIdempotencyKey,
@@ -68,7 +69,9 @@ export function appendTranscriptMessageInTransaction<TMessage>(
       messageId: found.messageId,
     };
   };
-  const idempotencyKey = readMessageIdempotencyKey(options.message);
+  const idempotencyKey =
+    readPreservedTranscriptMessageIdempotencyKey(options) ??
+    readMessageIdempotencyKey(options.message);
   if (idempotencyKey && options.idempotencyLookup !== "caller-checked") {
     const existing = readTranscriptMessageByScopedIdempotencyKey(
       database,
@@ -110,6 +113,7 @@ export function appendTranscriptMessageInTransaction<TMessage>(
     dedupeByMessageIdempotency:
       options.idempotencyLookup !== "caller-checked" &&
       options.idempotencyLookup !== "scan-assistant",
+    ...(idempotencyKey ? { indexedMessageIdempotencyKey: idempotencyKey } : {}),
   });
   if (!appended && idempotencyKey && options.idempotencyLookup !== "caller-checked") {
     const existing = readTranscriptMessageByScopedIdempotencyKey(

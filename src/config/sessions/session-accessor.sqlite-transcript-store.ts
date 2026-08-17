@@ -11,12 +11,7 @@ import type {
   TranscriptEvent,
   TranscriptMessageAppendOptions,
 } from "./session-accessor.sqlite-contract.js";
-import {
-  findTranscriptEventInDatabase,
-  loadTranscriptEventsFromDatabase,
-  readTranscriptEventId,
-  readTranscriptEventMessage,
-} from "./session-accessor.sqlite-read.js";
+import { loadTranscriptEventsFromDatabase } from "./session-accessor.sqlite-read.js";
 import { getSessionKysely, type ResolvedTranscriptScope } from "./session-accessor.sqlite-scope.js";
 import {
   advanceTranscriptMutationAtInTransaction,
@@ -42,6 +37,24 @@ import {
 } from "./transcript-tree.js";
 import { resolveVisibleTranscriptAppendParentId } from "./transcript-visible-events.js";
 
+const indexedTranscriptMessageIdempotencyKey = Symbol("indexedTranscriptMessageIdempotencyKey");
+
+export function preserveIndexedTranscriptMessageIdempotencyKey<T extends object>(
+  value: T,
+  message: unknown,
+): T {
+  const idempotencyKey = readMessageIdempotencyKey(message);
+  if (idempotencyKey) {
+    Object.assign(value, { [indexedTranscriptMessageIdempotencyKey]: idempotencyKey });
+  }
+  return value;
+}
+
+export function readPreservedTranscriptMessageIdempotencyKey(value: object): string | undefined {
+  const key = Reflect.get(value, indexedTranscriptMessageIdempotencyKey);
+  return typeof key === "string" && key.trim() ? key : undefined;
+}
+
 export function appendTranscriptEventInTransaction(
   database: OpenClawAgentDatabase,
   scope: ResolvedTranscriptScope,
@@ -49,6 +62,7 @@ export function appendTranscriptEventInTransaction(
   options: {
     allowStoredAlias?: boolean;
     dedupeByMessageIdempotency?: boolean;
+    indexedMessageIdempotencyKey?: string;
     onProjectionReconcileNeeded?: () => void;
     scheduleProjectionReconcile?: boolean;
     touchMutation?: boolean;
@@ -61,7 +75,14 @@ export function appendTranscriptEventInTransaction(
     allowStoredAlias: options.allowStoredAlias === true,
   });
   ensureTranscriptGenerationInTransaction(database, scope.sessionId);
-  const identity = readTranscriptEventIdentity(persistedEvent);
+  const persistedIdentity = readTranscriptEventIdentity(persistedEvent);
+  const identity = persistedIdentity
+    ? {
+        ...persistedIdentity,
+        messageIdempotencyKey:
+          options.indexedMessageIdempotencyKey ?? persistedIdentity.messageIdempotencyKey,
+      }
+    : undefined;
   if (identity && readTranscriptIdentityByEventId(database, scope.sessionId, identity.eventId)) {
     return false;
   }
@@ -532,16 +553,9 @@ export function readTranscriptMessageByScopedIdempotencyKey(
   if (lookup !== "scan-assistant") {
     return readTranscriptMessageByIdempotencyKey(database, scope, idempotencyKey);
   }
-  const found = findTranscriptEventInDatabase(database, scope.sessionId, (event) => {
-    const message = readTranscriptEventMessage(event);
-    return message?.role === "assistant" && message.idempotencyKey === idempotencyKey;
-  });
-  if (!found) {
-    return undefined;
-  }
-  const message = readTranscriptEventMessage(found.event);
-  return message
-    ? { messageId: readTranscriptEventId(found.event) ?? idempotencyKey, message }
+  const found = readTranscriptMessageByIdempotencyKey(database, scope, idempotencyKey);
+  return found && isTranscriptAgentMessage(found.message) && found.message.role === "assistant"
+    ? found
     : undefined;
 }
 

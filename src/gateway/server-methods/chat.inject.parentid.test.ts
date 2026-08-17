@@ -172,4 +172,37 @@ describe("gateway chat.inject transcript writes", () => {
       await cleanupFixture(fixture);
     }
   });
+
+  it("deduplicates a redacted injected assistant message by its raw identity", async () => {
+    const fixture = await createSqliteTranscriptFixture({
+      prefix: "openclaw-chat-inject-idempotency-redact-",
+      sessionId: "sess-idempotency-redact",
+    });
+    const idempotencyKey = "sk-proj-FAKEKEYFORTESTINGONLY1234567890:assistant";
+
+    try {
+      const params = {
+        agentId: fixture.agentId,
+        sessionId: fixture.sessionId,
+        sessionKey: fixture.sessionKey,
+        storePath: fixture.storePath,
+        message: "gateway retry",
+        idempotencyKey,
+      };
+      const first = await appendInjectedAssistantMessageToTranscript(params);
+      const replay = await appendInjectedAssistantMessageToTranscript(params);
+      const assistantEvents = (await readTranscriptEvents(fixture)).filter((event) => {
+        const message = event.message as { role?: unknown } | undefined;
+        return message?.role === "assistant";
+      });
+
+      expect(first.ok, first.error).toBe(true);
+      expect(replay.ok, replay.error).toBe(true);
+      expect(replay.messageId).toBe(first.messageId);
+      expect(assistantEvents).toHaveLength(1);
+      expect(JSON.stringify(assistantEvents)).not.toContain(idempotencyKey);
+    } finally {
+      await cleanupFixture(fixture);
+    }
+  });
 });

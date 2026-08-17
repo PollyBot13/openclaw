@@ -19,7 +19,10 @@ import {
   readCommittedTranscriptMessageSequence,
   rememberCommittedTranscriptMessageSequences,
 } from "./session-accessor.sqlite-transcript-sequences.js";
-import { redactTranscriptMessageForStorage } from "./session-accessor.sqlite-transcript-store.js";
+import {
+  preserveIndexedTranscriptMessageIdempotencyKey,
+  redactTranscriptMessageForStorage,
+} from "./session-accessor.sqlite-transcript-store.js";
 import { appendExpectedSessionTranscriptTurn } from "./session-accessor.sqlite-transcript-write.js";
 import { resolveSessionTranscriptRuntimeTarget } from "./session-accessor.transcript-target.js";
 import { appendTranscriptMessage, emitTranscriptUpdate } from "./session-accessor.transcript.js";
@@ -122,12 +125,17 @@ export async function appendTranscriptMessages<TMessage>(
     config: options.config,
     cwd: options.cwd,
     expectedSessionId,
-    messages: options.messages.map((append) => ({
-      ...append,
-      eventId: append.eventId ?? randomUUID(),
-      message: redactTranscriptMessageForStorage(append.message, options),
-      now: append.now ?? Date.now(),
-    })),
+    messages: options.messages.map((append) =>
+      preserveIndexedTranscriptMessageIdempotencyKey(
+        {
+          ...append,
+          eventId: append.eventId ?? randomUUID(),
+          message: redactTranscriptMessageForStorage(append.message, options),
+          now: append.now ?? Date.now(),
+        },
+        append.message,
+      ),
+    ),
     updateMode: "none",
   });
   if (turn.rejectedReason) {

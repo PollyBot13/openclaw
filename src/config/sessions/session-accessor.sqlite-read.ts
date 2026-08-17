@@ -397,7 +397,7 @@ export async function findTranscriptEvent(
   return findTranscriptEventInDatabase(database, resolved.sessionId, match);
 }
 
-export function findTranscriptEventInDatabase(
+function findTranscriptEventInDatabase(
   database: OpenClawAgentDatabase,
   sessionId: string,
   match: (event: TranscriptEvent) => boolean,
@@ -434,12 +434,4 @@ export function readTranscriptEventMessage(
   return message && typeof message === "object" && !Array.isArray(message)
     ? (message as Record<string, unknown>)
     : undefined;
-}
-
-export function readTranscriptEventId(event: TranscriptEvent): string | undefined {
-  if (!event || typeof event !== "object" || Array.isArray(event)) {
-    return undefined;
-  }
-  const id = (event as { id?: unknown }).id;
-  return typeof id === "string" && id.trim() ? id : undefined;
 }
