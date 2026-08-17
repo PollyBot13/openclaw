@@ -206,15 +206,15 @@ require_common_inputs() {
     fail "at least one image ref is required."
   fi
   local image_ref
-  declare -A seen_refs=()
+  local seen_refs=" "
   for image_ref in "${image_refs[@]}"; do
     if [[ ! "$image_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/@:-]*$ ]]; then
       fail "image ref contains unsupported characters: $image_ref"
     fi
-    if [[ -n "${seen_refs[$image_ref]:-}" ]]; then
+    if [[ "$seen_refs" == *" $image_ref "* ]]; then
       fail "duplicate image ref: $image_ref"
     fi
-    seen_refs["$image_ref"]=1
+    seen_refs+="$image_ref "
   done
 }
 
@@ -338,7 +338,7 @@ load_artifact() {
   [[ -f "$manifest_path" ]] || fail "shared Docker image artifact manifest is missing: $manifest_path"
   [[ -f "$archive_path" ]] || fail "shared Docker image archive is missing: $archive_path"
 
-  local validated_path
+  local validated_line validated_path
   validated_path="$(mktemp)"
   cleanup_load() {
     rm -f "$validated_path"
@@ -396,7 +396,10 @@ for (const image of value.images) {
 }
 NODE
 
-  mapfile -t validated < "$validated_path"
+  local -a validated=()
+  while IFS= read -r validated_line; do
+    validated+=("$validated_line")
+  done < "$validated_path"
   if [[ "${#validated[@]}" -ne $((2 + ${#image_refs[@]})) ]]; then
     fail "invalid shared Docker image artifact: validated manifest output length"
   fi
