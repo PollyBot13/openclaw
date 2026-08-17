@@ -679,18 +679,9 @@ export function createCodexDynamicToolBridge(params: {
         }
       };
       try {
-        // Keep non-object roots intact long enough to validate them. The execution
-        // boundary still uses record arguments, but normalizing first would turn
-        // values such as `null`, arrays, or numbers into `{}` and could let them
-        // satisfy schemas whose object properties are all optional.
-        if (!isRecord(rawArguments) && shouldValidateCodexDynamicToolInput(tool)) {
-          assertCodexDynamicToolInputMatchesSchema({
-            toolName,
-            schema: toolEntry.inputSchema,
-            value: rawArguments,
-          });
-        }
-        const toolArgs = tool.prepareArguments ? tool.prepareArguments(args) : args;
+        // Compatibility preparation owns raw arguments; record coercion must not run first.
+        const prepare = tool.prepareArguments;
+        const toolArgs = prepare ? Reflect.apply(prepare, tool, [rawArguments]) : args;
         const preparedArgs =
           toolName === "message" && isRecord(toolArgs)
             ? await prepareCodexRemoteWorkspaceMessageMedia({

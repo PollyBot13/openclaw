@@ -225,6 +225,7 @@ async function runSchemaToolCall(params: {
   name?: string;
   namespace?: SchemaToolNamespace;
   parameters?: AnyAgentTool["parameters"];
+  prepareArguments?: AnyAgentTool["prepareArguments"];
 }) {
   const name = params.name ?? "strict_tool";
   const namespace = params.namespace ?? null;
@@ -232,6 +233,7 @@ async function runSchemaToolCall(params: {
   const tool = createTool({
     name,
     parameters: params.parameters ?? STRICT_INSTRUCTION_SCHEMA,
+    prepareArguments: params.prepareArguments,
     execute,
   });
   const bridge = createCodexDynamicToolBridge({
@@ -339,31 +341,38 @@ describe("createCodexDynamicToolBridge", () => {
     expect((contentItem.text as string).length).toBeLessThanOrEqual(260);
   });
 
-  it.each([
-    { label: "number", arguments: 47 },
-    { label: "string", arguments: "unexpected" },
-    { label: "array", arguments: [] },
-    { label: "null", arguments: null },
-  ])(
-    "rejects a $label root before optional-only object arguments are normalized",
-    async (testCase) => {
-      const { execute, response } = await runSchemaToolCall({
-        arguments: testCase.arguments as JsonValue,
-        callId: `call-non-object-${testCase.label}`,
-        name: "optional_object_tool",
-        parameters: {
-          type: "object",
-          properties: { note: { type: "string" } },
-          additionalProperties: false,
-        },
-        namespace: CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
-      });
+  it("prepares raw null arguments before native Codex schema validation", async () => {
+    const prepareArguments = vi.fn(function (this: AnyAgentTool, arguments_: unknown) {
+      return arguments_ === null ? { preparedBy: this.name } : arguments_;
+    });
+    const { execute, response } = await runSchemaToolCall({
+      arguments: null,
+      callId: "call-null-compatibility",
+      name: "optional_object_tool",
+      parameters: {
+        type: "object",
+        properties: { preparedBy: { type: "string" } },
+        additionalProperties: false,
+      },
+      prepareArguments,
+      namespace: CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
+    });
 
-      expectSchemaRejection(response, execute, "must be object");
+    expect(prepareArguments).toHaveBeenCalledWith(null);
+    expect(response).toEqual(expectInputText("done"));
+    expectExecuteCall(execute, {
+      callId: "call-null-compatibility",
+      args: { preparedBy: "optional_object_tool" },
+    });
+  });
+
+  it.each([
+    {
+      label: "repairs primitive input",
+      initial: 47,
+      adjusted: { instruction: "repaired" },
+      executes: true,
     },
-  );
-
-  it.each([
     {
       label: "repairs invalid input",
       initial: { instruction: 47 },
