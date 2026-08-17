@@ -1698,14 +1698,17 @@ describe("plugin-clawhub-publish.sh", () => {
     expect(localIdentityIndex).toBeLessThan(clawHubDryRunIndex);
   });
 
-  it("probes GNU timeout capabilities and leaves pack-only mode portable", () => {
+  it("prefers GNU timeout and keeps a portable bounded fallback", () => {
     const source = readFileSync("scripts/plugin-clawhub-publish.sh", "utf8");
     const packExitIndex = source.indexOf('if [[ "${mode}" == "--pack" ]]');
     const timeoutProbeIndex = source.indexOf("for timeout_candidate in timeout gtimeout");
 
     expect(timeoutProbeIndex).toBeGreaterThan(packExitIndex);
     expect(source).toContain("--signal=TERM --kill-after=1s 1s true");
-    expect(source).toContain("with --signal and --kill-after support is required");
+    expect(source).toContain('"${repo_root}/scripts/lib/bounded-command.mjs"');
+    expect(readFileSync("scripts/lib/bounded-command.mts", "utf8")).toContain(
+      "timeoutKillGraceMs: 10_000",
+    );
   });
 
   it("prints help before package or ClawHub checks", () => {

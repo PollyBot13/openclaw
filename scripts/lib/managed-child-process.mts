@@ -55,6 +55,7 @@ type ManagedCommandOptions = {
 
 type RunManagedCommandOptions = ManagedCommandOptions & {
   timeoutMs?: number;
+  timeoutKillGraceMs?: number;
   requireProcessTreeExit?: boolean;
   runTaskkill?: TaskkillRunner;
   onReady?: (child: ChildProcess) => void;
@@ -278,6 +279,7 @@ export async function runManagedCommand({
   windowsVerbatimArguments,
   comSpec,
   timeoutMs,
+  timeoutKillGraceMs,
   requireProcessTreeExit = false,
   runTaskkill = spawnSync,
   onReady,
@@ -384,7 +386,7 @@ export async function runManagedCommand({
     });
     if (timeoutMs !== undefined) {
       timeoutTimer = setTimeout(() => {
-        void stop({ type: "timeout" }, "SIGTERM");
+        void stop({ type: "timeout" }, "SIGTERM", timeoutKillGraceMs);
       }, timeoutMs);
     }
     signal?.addEventListener("abort", abort, { once: true });

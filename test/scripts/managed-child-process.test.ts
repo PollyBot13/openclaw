@@ -679,13 +679,14 @@ ${publish(2)}
     const childPath = path.join(dir, "child.mjs");
     const childPidPath = path.join(dir, "child.pid");
     const descendantPidPath = path.join(dir, "descendant.pid");
+    const signalPath = path.join(dir, "signal.txt");
     fs.writeFileSync(
       childPath,
       `
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 
-process.on("SIGTERM", () => {});
+process.on("SIGTERM", () => fs.writeFileSync(process.argv[4], "SIGTERM\\n"));
 setInterval(() => {}, 1_000);
 spawn(process.execPath, [
   "-e",
@@ -706,9 +707,10 @@ ${publishReadyPidScript(2)}
       expect(
         runManagedCommand({
           bin: process.execPath,
-          args: [childPath, childPidPath, descendantPidPath],
+          args: [childPath, childPidPath, descendantPidPath, signalPath],
           shell: false,
           stdio: "ignore",
+          timeoutKillGraceMs: 100,
           timeoutMs: 500,
         }),
       ).rejects.toMatchObject({ code: "ETIMEDOUT" }),
@@ -723,6 +725,7 @@ ${publishReadyPidScript(2)}
       expect(isProcessAlive(descendantPid)).toBe(true);
       await releaseAndWait();
       if (process.platform !== "win32") {
+        expect(fs.readFileSync(signalPath, "utf8")).toBe("SIGTERM\n");
         expect(killSpy).toHaveBeenCalledWith(-childPid, "SIGKILL");
       }
       expect(isProcessAlive(childPid)).toBe(false);
@@ -743,6 +746,84 @@ ${publishReadyPidScript(2)}
             await waitForDead(descendantPid, 2_000);
           }
         }
+      }
+    }
+  });
+
+  posixIt("lets a timed-out command handle SIGTERM before forced cleanup", async () => {
+    const dir = createTempDir("openclaw-managed-timeout-grace-");
+    const childPath = path.join(dir, "child.mjs");
+    const signalPath = path.join(dir, "signal.txt");
+    fs.writeFileSync(
+      childPath,
+      `
+import fs from "node:fs";
+process.on("SIGTERM", () => {
+  fs.writeFileSync(process.argv[2], "SIGTERM\\n");
+  process.exit(0);
+});
+setInterval(() => {}, 1_000);
+`,
+      "utf8",
+    );
+
+    await expect(
+      runManagedCommand({
+        args: [childPath, signalPath],
+        bin: process.execPath,
+        shell: false,
+        stdio: "ignore",
+        timeoutKillGraceMs: 10_000,
+        timeoutMs: 500,
+      }),
+    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    expect(fs.readFileSync(signalPath, "utf8")).toBe("SIGTERM\n");
+  });
+
+  posixIt("force-kills descendants after the timed-out leader exits during grace", async () => {
+    const dir = createTempDir("openclaw-managed-timeout-leader-exit-");
+    const childPath = path.join(dir, "child.mjs");
+    const descendantPidPath = path.join(dir, "descendant.pid");
+    const signalPath = path.join(dir, "signal.txt");
+    fs.writeFileSync(
+      childPath,
+      `
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+
+const descendant = spawn(process.execPath, [
+  "-e",
+  "process.on('SIGTERM', () => {}); setInterval(() => {}, 1_000);",
+], { stdio: "ignore" });
+fs.writeFileSync(process.argv[2], String(descendant.pid));
+process.on("SIGTERM", () => {
+  fs.writeFileSync(process.argv[3], "SIGTERM\\n");
+  process.exit(0);
+});
+setInterval(() => {}, 1_000);
+`,
+      "utf8",
+    );
+
+    let descendantPid = 0;
+    try {
+      await expect(
+        runManagedCommand({
+          args: [childPath, descendantPidPath, signalPath],
+          bin: process.execPath,
+          shell: false,
+          stdio: "ignore",
+          timeoutKillGraceMs: 100,
+          timeoutMs: 500,
+        }),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+
+      descendantPid = Number(fs.readFileSync(descendantPidPath, "utf8"));
+      expect(fs.readFileSync(signalPath, "utf8")).toBe("SIGTERM\n");
+      expect(isProcessAlive(descendantPid)).toBe(false);
+    } finally {
+      if (descendantPid && isProcessAlive(descendantPid)) {
+        process.kill(descendantPid, "SIGKILL");
       }
     }
   });
