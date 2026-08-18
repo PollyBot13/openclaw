@@ -429,6 +429,7 @@ describe("resolveSelectedClawHubPublishablePluginPackages", () => {
     "scripts/lib/bounded-command.mjs",
     "scripts/lib/bounded-command.mts",
     "scripts/lib/managed-child-process.mts",
+    "scripts/lib/tsx-cli-shim.mjs",
     "scripts/lib/plugin-publication-candidates.ts",
     "scripts/lib/plugin-publication-collector.ts",
   ])("selects all publishable plugins when %s changes", (changedPath) => {
