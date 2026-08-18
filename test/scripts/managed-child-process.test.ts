@@ -1,5 +1,5 @@
 // Managed Child Process tests cover managed child process script behavior.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -252,6 +252,65 @@ ${publish(2)}
       );
     },
     20_000,
+  );
+
+  it("rejects timeout values beyond Node's timer range", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/lib/bounded-command.mjs",
+        "2147483648",
+        "--",
+        process.execPath,
+        "-e",
+        "process.exit(0)",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("timeout-ms must be at most 2147483647");
+    expect(result.stderr).not.toContain("TimeoutOverflowWarning");
+  });
+
+  posixIt(
+    "keeps the bounded launcher alive until nested signal cleanup finishes",
+    async () => {
+      const dir = createTempDir("openclaw-bounded-launcher-cleanup-");
+      const leafPath = path.join(dir, "leaf.mjs");
+      const leafPidPath = path.join(dir, "leaf.pid");
+      fs.writeFileSync(
+        leafPath,
+        `
+import fs from "node:fs";
+fs.writeFileSync(process.argv[2], String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`,
+        "utf8",
+      );
+      const launcher = spawn(
+        process.execPath,
+        ["scripts/lib/bounded-command.mjs", "60000", "--", process.execPath, leafPath, leafPidPath],
+        { detached: true, stdio: "ignore" },
+      );
+      const closed = waitForChildClose(launcher, 12_000);
+      let leafPid = 0;
+      try {
+        leafPid = await waitForPidFile(leafPidPath, 5_000);
+        process.kill(-launcher.pid!, "SIGTERM");
+        await expect(closed).resolves.toEqual({ code: 143, signal: null });
+        await waitForDead(leafPid, 2_000);
+      } finally {
+        if (launcher.pid && isProcessAlive(launcher.pid)) {
+          process.kill(-launcher.pid, "SIGKILL");
+        }
+        if (leafPid && isProcessAlive(leafPid)) {
+          process.kill(leafPid, "SIGKILL");
+        }
+      }
+    },
+    15_000,
   );
 
   it("maps forwarded signals to shell-compatible exit codes", () => {
@@ -807,13 +866,15 @@ setInterval(() => {}, 1_000);
 
     let descendantPid = 0;
     try {
+      const startedAt = Date.now();
       await expect(
         runManagedCommand({
           args: [childPath, descendantPidPath, signalPath],
           bin: process.execPath,
           shell: false,
           stdio: "ignore",
-          timeoutKillGraceMs: 100,
+          timeoutForceKillOnLeaderExit: true,
+          timeoutKillGraceMs: 10_000,
           timeoutMs: 500,
         }),
       ).rejects.toMatchObject({ code: "ETIMEDOUT" });
@@ -821,6 +882,7 @@ setInterval(() => {}, 1_000);
       descendantPid = Number(fs.readFileSync(descendantPidPath, "utf8"));
       expect(fs.readFileSync(signalPath, "utf8")).toBe("SIGTERM\n");
       expect(isProcessAlive(descendantPid)).toBe(false);
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
     } finally {
       if (descendantPid && isProcessAlive(descendantPid)) {
         process.kill(descendantPid, "SIGKILL");

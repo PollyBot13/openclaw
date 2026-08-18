@@ -1713,6 +1713,9 @@ describe("plugin-clawhub-publish.sh", () => {
     expect(readFileSync("scripts/lib/bounded-command.mts", "utf8")).toContain(
       "timeoutKillGraceMs: 10_000",
     );
+    expect(readFileSync("scripts/lib/bounded-command.mjs", "utf8")).toContain(
+      "forceKillDelayMs: 15_000",
+    );
   });
 
   it("prints help before package or ClawHub checks", () => {

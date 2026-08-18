@@ -1,5 +1,7 @@
 import { runManagedCommand } from "./managed-child-process.mjs";
 
+const NODE_TIMEOUT_MAX_MS = 2 ** 31 - 1;
+
 function usage(message?: string): never {
   if (message) {
     console.error(message);
@@ -21,12 +23,16 @@ const timeoutMs = Number(timeoutMsRaw);
 if (!Number.isSafeInteger(timeoutMs)) {
   usage("timeout-ms must be a safe integer");
 }
+if (timeoutMs > NODE_TIMEOUT_MAX_MS) {
+  usage(`timeout-ms must be at most ${NODE_TIMEOUT_MAX_MS}`);
+}
 
 try {
   process.exitCode = await runManagedCommand({
     args,
     bin: command,
     requireProcessTreeExit: true,
+    timeoutForceKillOnLeaderExit: true,
     timeoutKillGraceMs: 10_000,
     timeoutMs,
   });
