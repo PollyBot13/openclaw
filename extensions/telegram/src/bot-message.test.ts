@@ -444,6 +444,38 @@ describe("telegram bot message processor", () => {
     expect(finalizeSpooledReplayResult).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a pre-adoption owner timeout retryable when dispatch returns completed", async () => {
+    buildTelegramMessageContext.mockResolvedValue(createMessageContext());
+    const timeoutError = new Error("handler-timeout");
+    const ownerAbort = new AbortController();
+    const finalizeSpooledReplayResult = vi.fn(
+      async (result: TelegramMessageProcessingResult): Promise<TelegramMessageProcessingResult> =>
+        result,
+    );
+    dispatchTelegramMessage.mockImplementationOnce(async () => {
+      ownerAbort.abort(timeoutError);
+      return { kind: "completed" };
+    });
+    const processMessage = createTelegramMessageProcessor(baseDeps);
+    const update = { update_id: 1234581 };
+
+    const replay = await runWithTelegramSpooledReplayUpdate(update, async () =>
+      processSampleMessage(
+        processMessage,
+        {
+          finalizeSpooledReplayResult,
+          spooledReplayAbortSignal: ownerAbort.signal,
+        },
+        { update },
+      ),
+    );
+
+    const expected = { kind: "failed-retryable", error: timeoutError };
+    expect(replay.value).toEqual(expected);
+    await expect(replay.deferredWork?.task).resolves.toEqual(expected);
+    expect(finalizeSpooledReplayResult).toHaveBeenCalledWith(expected, "terminal");
+  });
+
   it("keeps a spooled replay completed when dispatch fails after adoption", async () => {
     buildTelegramMessageContext.mockResolvedValue(createMessageContext());
     const lateError = new Error("late dispatch failure");

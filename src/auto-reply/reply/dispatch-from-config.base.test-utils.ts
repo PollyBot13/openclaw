@@ -345,6 +345,123 @@ describe("dispatchReplyFromConfig", () => {
     activeOperation.complete();
   });
 
+  it("releases inbound dedupe when durable ingress aborts before adoption", async () => {
+    setNoAbort();
+    hookMocks.runner.hasHooks.mockImplementation(
+      ((hookName?: string) => hookName === "before_dispatch") as () => boolean,
+    );
+    let markHookStarted!: () => void;
+    const hookStarted = new Promise<void>((resolve) => {
+      markHookStarted = resolve;
+    });
+    let releaseHook!: () => void;
+    const hookRelease = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    hookMocks.runner.runBeforeDispatch
+      .mockImplementationOnce(async () => {
+        markHookStarted();
+        await hookRelease;
+        return undefined;
+      })
+      .mockResolvedValue(undefined);
+
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      OriginatingChannel: "telegram",
+      OriginatingTo: "user:1",
+      SessionKey: "agent:main:telegram:direct:1",
+      MessageSid: "42",
+      BodyForAgent: "retry me",
+    });
+    const firstAbort = new AbortController();
+    const replyResolver = vi.fn(async () => ({ text: "retried" }) satisfies ReplyPayload);
+    const lifecycle = {
+      onAdopted: vi.fn(async () => {}),
+      onDeferred: vi.fn(),
+      onSettled: vi.fn(),
+    };
+
+    const firstDispatch = dispatchReplyFromConfig({
+      ctx,
+      cfg: automaticDirectReplyConfig,
+      dispatcher: createDispatcher(),
+      replyOptions: { abortSignal: firstAbort.signal, turnAdoptionLifecycle: lifecycle },
+      replyResolver,
+    });
+    await hookStarted;
+    firstAbort.abort(new Error("handler-timeout"));
+    releaseHook();
+    await expect(firstDispatch).resolves.toMatchObject({ queuedFinal: false });
+    expect(replyResolver).not.toHaveBeenCalled();
+
+    await expect(
+      dispatchReplyFromConfig({
+        ctx,
+        cfg: automaticDirectReplyConfig,
+        dispatcher: createDispatcher(),
+        replyOptions: { turnAdoptionLifecycle: lifecycle },
+        replyResolver,
+      }),
+    ).resolves.toMatchObject({ queuedFinal: true });
+    expect(replyResolver).toHaveBeenCalledOnce();
+  });
+
+  it("retains inbound dedupe when a reply operation aborts after durable adoption", async () => {
+    setNoAbort();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      OriginatingChannel: "telegram",
+      OriginatingTo: "user:1",
+      SessionKey: "agent:main:telegram:direct:1",
+      MessageSid: "43",
+      BodyForAgent: "run once",
+    });
+    const lifecycle = {
+      onAdopted: vi.fn(async () => {}),
+      onDeferred: vi.fn(),
+      onSettled: vi.fn(),
+    };
+    const firstReplyResolver = vi.fn(
+      async (_ctx: MsgContext, opts?: GetReplyOptions): Promise<ReplyPayload | undefined> => {
+        await opts?.turnAdoptionLifecycle?.onAdopted();
+        const operation = (
+          opts as { replyOperation?: ReturnType<typeof createReplyOperation> } | undefined
+        )?.replyOperation;
+        expect(operation?.abortForRestart()).toBe(true);
+        await new Promise<never>(() => {});
+        return undefined;
+      },
+    );
+
+    await expect(
+      dispatchReplyFromConfig({
+        ctx,
+        cfg: automaticDirectReplyConfig,
+        dispatcher: createDispatcher(),
+        replyOptions: { turnAdoptionLifecycle: lifecycle },
+        replyResolver: firstReplyResolver,
+      }),
+    ).resolves.toMatchObject({ queuedFinal: false });
+    expect(lifecycle.onAdopted).toHaveBeenCalledOnce();
+
+    const duplicateReplyResolver = vi.fn(
+      async () => ({ text: "duplicate" }) satisfies ReplyPayload,
+    );
+    await expect(
+      dispatchReplyFromConfig({
+        ctx,
+        cfg: automaticDirectReplyConfig,
+        dispatcher: createDispatcher(),
+        replyOptions: { turnAdoptionLifecycle: lifecycle },
+        replyResolver: duplicateReplyResolver,
+      }),
+    ).resolves.toMatchObject({ queuedFinal: false });
+    expect(duplicateReplyResolver).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["confirmed", false, "succeeded", "completed", "active_run_injected"],
     ["unconfirmed", true, "blocked", "skipped", "reply_operation_aborted"],

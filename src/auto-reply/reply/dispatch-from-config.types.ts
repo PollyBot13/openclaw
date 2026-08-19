@@ -47,6 +47,8 @@ export type DispatchFromConfigParams = {
    * config snapshot is unavailable during startup or durable ingress replay.
    */
   usePublishedModelRuntime?: boolean;
+  /** Internal per-dispatch fact used to distinguish pre-adoption from later aborts. */
+  turnAdoptionState?: { adopted: boolean };
 };
 
 export type DispatchReplyFromConfig = (

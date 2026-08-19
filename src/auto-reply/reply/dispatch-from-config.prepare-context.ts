@@ -484,7 +484,14 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
           isError: true,
         })
       : false;
-    commitInboundDedupeIfClaimed();
+    // A durable transport owns retry after a pre-adoption abort. Releasing its
+    // process-local claim lets the canonical spool row re-enter dispatch; the
+    // transport lifecycle still decides whether that row is retried or closed.
+    if (params.turnAdoptionState && !params.turnAdoptionState.adopted) {
+      releaseInboundDedupeIfClaimed();
+    } else {
+      commitInboundDedupeIfClaimed();
+    }
     recordProcessed("completed", { reason: "reply_operation_aborted" });
     markIdle("message_completed");
     state.completeDispatchReplyOperation();

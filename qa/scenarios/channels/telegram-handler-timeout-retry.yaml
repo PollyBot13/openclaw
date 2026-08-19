@@ -1,0 +1,160 @@
+title: Telegram handler-timeout retry ordering
+
+scenario:
+  id: telegram-handler-timeout-retry
+  surface: channels
+  coverage:
+    primary:
+      - channels.recovered-final-reply
+    secondary:
+      - agent-runtime.failure-recovery-retry-policy
+      - agent-runtime.session-turn-ordering
+  objective: Verify a Telegram update released by the claim-to-adoption watchdog is retried before a later same-chat update, with one visible reply per update.
+  gatewayConfigPatch:
+    messages:
+      inbound:
+        debounceMs: 0
+  successCriteria:
+    - A real Telegram plugin connected to Crabline records the handler-timeout retry disposition.
+    - The same ephemeral Gateway replays the first update before its same-chat successor.
+    - The transport observes exactly one ordered final reply for each update.
+  docsRefs:
+    - docs/channels/qa-channel.md
+    - docs/channels/telegram.md
+    - docs/concepts/qa-e2e-automation.md
+  codeRefs:
+    - extensions/qa-lab/index.ts
+    - extensions/qa-lab/src/crabline-transport.ts
+    - extensions/telegram/src/telegram-ingress-drain.ts
+    - src/channels/message/ingress-drain.ts
+  execution:
+    kind: flow
+    channel: telegram
+    suiteIsolation: isolated
+    isolationReason: Uses a QA-only one-shot pre-dispatch stall and a shortened watchdog timeout.
+    summary: Force one Telegram claim-to-adoption timeout, then prove same-Gateway retry-before-successor ordering and single delivery.
+    config:
+      requiredProviderMode: mock-openai
+      requiredChannelDriver: crabline
+      forcedTimeoutMs: "2000"
+      stallMs: "2200"
+      conversationId: handler-timeout-retry
+      senderId: qa-timeout-operator
+      firstMarker: TELEGRAM-HANDLER-TIMEOUT-FIRST-OK
+      secondMarker: TELEGRAM-HANDLER-TIMEOUT-SECOND-OK
+      firstPrompt: "Reply exactly: TELEGRAM-HANDLER-TIMEOUT-FIRST-OK"
+      secondPrompt: "Reply exactly: TELEGRAM-HANDLER-TIMEOUT-SECOND-OK"
+
+flow:
+  steps:
+    - name: retries the timed-out update before its same-chat successor
+      actions:
+        - assert:
+            expr: env.providerMode === config.requiredProviderMode
+            message: this deterministic proof requires mock-openai
+        - assert:
+            expr: env.gateway.runtimeEnv.OPENCLAW_TELEGRAM_SPOOLED_HANDLER_TIMEOUT_MS === config.forcedTimeoutMs
+            message: start the proof with OPENCLAW_TELEGRAM_SPOOLED_HANDLER_TIMEOUT_MS=2000
+        - assert:
+            expr: env.gateway.runtimeEnv.OPENCLAW_QA_PRE_DISPATCH_STALL_ONCE_MS === config.stallMs
+            message: start the proof with OPENCLAW_QA_PRE_DISPATCH_STALL_ONCE_MS=2200
+        - assert:
+            expr: env.gateway.runtimeEnv.OPENCLAW_QA_PRE_DISPATCH_STALL_MARKER === config.firstMarker
+            message: the QA one-shot pre-dispatch stall marker must match the first update
+        - call: waitForGatewayHealthy
+          args:
+            - ref: env
+            - 60000
+        - call: waitForTransportReady
+          args:
+            - ref: env
+            - 60000
+        - resetTransport: true
+        - set: timeoutLogMark
+          value:
+            expr: markGatewayLogCursor()
+        - sendInbound:
+            conversation:
+              id:
+                ref: config.conversationId
+              kind: direct
+            senderId:
+              ref: config.senderId
+            senderName: QA Timeout Operator
+            text:
+              ref: config.firstPrompt
+        - sendInbound:
+            conversation:
+              id:
+                ref: config.conversationId
+              kind: direct
+            senderId:
+              ref: config.senderId
+            senderName: QA Timeout Operator
+            text:
+              ref: config.secondPrompt
+        - call: waitForCondition
+          saveAs: timeoutLogs
+          args:
+            - lambda:
+                expr: "(() => { const logs = readGatewayLogs().slice(timeoutLogMark); return logs.includes('handler-timeout') && logs.includes('keeping for retry') ? logs : undefined; })()"
+            - 30000
+            - 25
+        - call: waitForCondition
+          saveAs: orderedOutbounds
+          args:
+            - lambda:
+                expr: "(() => { const outbounds = state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId); const markers = outbounds.map((message) => message.text).filter((text) => text.includes(config.firstMarker) || text.includes(config.secondMarker)); return markers.length >= 2 ? markers : undefined; })()"
+            - 90000
+            - 50
+        - call: sleep
+          args:
+            - 1000
+        - set: matchingOutbounds
+          value:
+            expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && (message.text.includes(config.firstMarker) || message.text.includes(config.secondMarker)))"
+        - assert:
+            expr: "matchingOutbounds.length === 2 && matchingOutbounds[0]?.text.includes(config.firstMarker) && matchingOutbounds[1]?.text.includes(config.secondMarker)"
+            message:
+              expr: "`expected exactly one ordered reply per update; transcript=${formatTransportTranscript(state, { conversationId: config.conversationId })}`"
+        - set: timeoutLogLine
+          value:
+            expr: "timeoutLogs.split('\\n').find((line) => line.includes('handler-timeout'))?.replace(/event \\d+/u, 'event <redacted>').replace(/lane [^ ]+/u, 'lane <redacted>') ?? 'handler-timeout observed'"
+        - set: timeoutCount
+          value:
+            expr: "timeoutLogs.split('\\n').filter((line) => line.includes('] Channel ingress claim→adoption stalled')).length"
+        - set: retryDispositionCount
+          value:
+            expr: "timeoutLogs.split('\\n').filter((line) => line.includes('keeping for retry')).length"
+        - assert:
+            expr: timeoutCount === 1 && retryDispositionCount === 1
+            message:
+              expr: "`expected one timeout and one retry disposition; timeoutCount=${timeoutCount} retryDispositionCount=${retryDispositionCount}`"
+        - set: verdict
+          value:
+            expr: |-
+              ({
+                schemaVersion: 1,
+                headSha: env.gateway.runtimeEnv.OPENCLAW_QA_HEAD_SHA ?? null,
+                transport: 'crabline:telegram',
+                provider: env.providerMode,
+                gateway: 'ephemeral',
+                eventOrder: ['first:handler-timeout', 'first:retry:outbound', 'second:outbound'],
+                outboundOrder: matchingOutbounds.map((message) => message.text),
+                outboundCount: matchingOutbounds.length,
+                timeoutCount,
+                retryDispositionCount,
+                timeoutLog: timeoutLogLine,
+                queueOutcome: 'retry completed before same-lane successor',
+                pass: true,
+              })
+        - set: verdictPath
+          value:
+            expr: path.join(env.outputDir, 'handler-timeout-verdict.json')
+        - set: wroteVerdict
+          value:
+            expr: "await fs.writeFile(verdictPath, `${JSON.stringify(verdict, null, 2)}\\n`, 'utf8').then(() => true)"
+        - assert:
+            expr: wroteVerdict === true
+            message: failed to write handler-timeout verdict
+      detailsExpr: "`timeout=${timeoutLogLine}; outbound=${matchingOutbounds.map((message) => message.text).join(' -> ')}; verdict=${path.basename(verdictPath)}`"

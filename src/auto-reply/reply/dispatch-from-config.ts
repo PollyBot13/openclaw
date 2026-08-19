@@ -24,16 +24,34 @@ export type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";
 export async function dispatchReplyFromConfig(
   params: DispatchFromConfigParams,
 ): Promise<DispatchFromConfigResult> {
+  const turnAdoptionLifecycle = params.replyOptions?.turnAdoptionLifecycle;
+  const turnAdoptionState = { adopted: false };
+  const trackedParams = turnAdoptionLifecycle
+    ? {
+        ...params,
+        turnAdoptionState,
+        replyOptions: {
+          ...params.replyOptions,
+          turnAdoptionLifecycle: {
+            ...turnAdoptionLifecycle,
+            onAdopted: async () => {
+              await turnAdoptionLifecycle.onAdopted();
+              turnAdoptionState.adopted = true;
+            },
+          },
+        },
+      }
+    : params;
   const ticket = reserveReplyAdmissionTicket([
-    params.ctx.SessionKey,
-    params.ctx.CommandTargetSessionKey,
+    trackedParams.ctx.SessionKey,
+    trackedParams.ctx.CommandTargetSessionKey,
   ]);
   const ticketedParams = ticket
     ? {
-        ...params,
-        replyOptions: { ...params.replyOptions, [REPLY_ADMISSION_TICKET]: ticket },
+        ...trackedParams,
+        replyOptions: { ...trackedParams.replyOptions, [REPLY_ADMISSION_TICKET]: ticket },
       }
-    : params;
+    : trackedParams;
   const messageAuditTerminal = createInboundMessageAuditTerminal(params);
   try {
     const result = await dispatchReplyFromConfigInner(ticketedParams, messageAuditTerminal);

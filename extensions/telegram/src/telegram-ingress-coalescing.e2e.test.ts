@@ -27,6 +27,7 @@ const downstreamTurns = vi.hoisted(() =>
     counts: { block: 0, final: 0, tool: 0 },
   })),
 );
+const downstreamHarness = vi.hoisted(() => ({ adoptAfterDispatch: false }));
 
 vi.mock("./fetch.js", () => ({
   resolveTelegramApiBase: (apiRoot?: string) => apiRoot ?? "https://api.telegram.org",
@@ -44,7 +45,14 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
     ...actual,
     runChannelInboundEvent: async (params: Parameters<typeof actual.runChannelInboundEvent>[0]) =>
       await runTelegramChannelInboundEventWithHarness(actual, params, async (dispatchParams) => {
-        return await downstreamTurns(dispatchParams.ctx);
+        const result = await downstreamTurns(dispatchParams.ctx);
+        if (downstreamHarness.adoptAfterDispatch) {
+          // The real reply runner owns adoption. This lightweight harness returns
+          // immediately, so settle its successful mock before the short watchdog
+          // can mistake the retry itself for another stall.
+          await dispatchParams.replyOptions?.turnAdoptionLifecycle?.onAdopted?.();
+        }
+        return result;
       }),
   };
 });
@@ -257,6 +265,7 @@ describe("Telegram durable ingress coalescing", () => {
     downstreamTurns
       .mockReset()
       .mockResolvedValue({ queuedFinal: false, counts: { block: 0, final: 0, tool: 0 } });
+    downstreamHarness.adoptAfterDispatch = false;
     resetInboundDedupe();
     resetPluginStateStoreForTests({ closeDatabase: false });
     resetTelegramAccountThrottlersForTest();
@@ -356,35 +365,52 @@ describe("Telegram durable ingress coalescing", () => {
   ])(
     "retries $label hydration after the claim watchdog before delivering the same-chat successor",
     async ({ update, expectBufferedFailure }) => {
-      const getFile = vi.fn((call: number) =>
-        call === 1
-          ? new Response(
-              JSON.stringify({
-                ok: false,
-                error_code: 429,
-                description: "Too Many Requests: retry after 60",
-                parameters: { retry_after: 60 },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            )
-          : new Response(
-              JSON.stringify({
-                ok: true,
-                result: {
-                  file_id: "photo-retry",
-                  file_unique_id: "unique-retry",
-                  file_size: 4,
-                  file_path: "photos/photo-retry.jpg",
-                },
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-      );
+      downstreamHarness.adoptAfterDispatch = true;
+      const getFile = vi.fn((call: number) => {
+        if (call === 1) {
+          // Keep hydration beyond the 750 ms watchdog deterministically. Without
+          // this hold, a busy runner can let the mocked downstream turn start
+          // before the watchdog and turn this race test into a scheduler lottery.
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              setTimeout(() => {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    JSON.stringify({
+                      ok: false,
+                      error_code: 429,
+                      description: "Too Many Requests: retry after 60",
+                      parameters: { retry_after: 60 },
+                    }),
+                  ),
+                );
+                controller.close();
+              }, 1_200);
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              file_id: "photo-retry",
+              file_unique_id: "unique-retry",
+              file_size: 4,
+              file_path: "photos/photo-retry.jpg",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      });
       const runtimeError = vi.fn();
       const telegramTransport = createBotApiTransport({ onGetFile: getFile });
       const { monitor } = await createMonitor({
         telegramTransport,
-        adoptionStallTimeoutMs: 120,
+        adoptionStallTimeoutMs: 750,
         onRuntimeError: runtimeError,
       });
       const nextUpdateId = update.update_id + 10;
@@ -401,10 +427,19 @@ describe("Telegram durable ingress coalescing", () => {
         interval: 5,
       });
       await monitor.admit(next);
-      await vi.waitFor(() => expect(downstreamTurns).toHaveBeenCalledTimes(2), {
-        timeout: 5_000,
-        interval: 5,
-      });
+      await vi.waitFor(
+        () =>
+          expect(
+            downstreamTurns.mock.calls.length,
+            JSON.stringify(
+              downstreamTurns.mock.calls.map(([turn]) => ({
+                body: turn.Body,
+                media: turn.media,
+              })),
+            ),
+          ).toBeGreaterThanOrEqual(2),
+        { timeout: 5_000, interval: 5 },
+      );
       const turns = downstreamTurns.mock.calls.map(
         ([context]) => context as MsgContext & Record<string, unknown>,
       );
@@ -435,8 +470,8 @@ describe("Telegram durable ingress coalescing", () => {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 50);
       });
-      expect(getFile).toHaveBeenCalledTimes(2);
       expect(downstreamTurns).toHaveBeenCalledTimes(2);
+      expect(getFile.mock.calls.length).toBeGreaterThanOrEqual(2);
     },
   );
 

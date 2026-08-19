@@ -13,11 +13,37 @@ const EMPTY_TOOL_PARAMETERS = {
   additionalProperties: false,
 } as const;
 
+const QA_PRE_DISPATCH_STALL_ONCE_MS_ENV = "OPENCLAW_QA_PRE_DISPATCH_STALL_ONCE_MS";
+const QA_PRE_DISPATCH_STALL_MARKER_ENV = "OPENCLAW_QA_PRE_DISPATCH_STALL_MARKER";
+const stalledQaPreDispatches = new Set<string>();
+
+async function stallQaBeforeDispatchOnce(
+  event: { channel?: string; content?: string },
+  context: { accountId?: string; conversationId?: string },
+) {
+  const marker = process.env[QA_PRE_DISPATCH_STALL_MARKER_ENV]?.trim();
+  const delayMs = Number(process.env[QA_PRE_DISPATCH_STALL_ONCE_MS_ENV]);
+  if (!marker || !event.content?.includes(marker) || !Number.isFinite(delayMs) || delayMs <= 0) {
+    return;
+  }
+  const key = [event.channel, context.accountId, context.conversationId, event.content].join(
+    "\u0000",
+  );
+  if (stalledQaPreDispatches.has(key)) {
+    return;
+  }
+  stalledQaPreDispatches.add(key);
+  // Deliberately ignore the ingress abort: the QA scenario verifies that a late
+  // first attempt cannot adopt after the watchdog releases its durable claim.
+  await sleep(Math.floor(delayMs));
+}
+
 export default definePluginEntry({
   id: "qa-lab",
   name: "QA Lab",
   description: "Private QA automation harness and debugger UI",
   register(api) {
+    api.on("before_dispatch", stallQaBeforeDispatchOnce);
     api.registerTool(
       {
         name: "qa_restart_wait",
