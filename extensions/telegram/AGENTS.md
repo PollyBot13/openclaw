@@ -17,7 +17,7 @@ Proof: `src/channels/message/ingress-drain.test.ts`,
 
 - Completed rows tombstone via `complete()`, never `delete`.
 - Complete at turn adoption, not settle. Deferred holds the claim; watchdog
-  stays armed through deferral; dead-letter reason `handler-timeout`.
+  stays armed through deferral and routes timeouts through the shared retry policy.
 - One retry policy: attempt floor **and** age gate (defaults 8 / 24h).
 - Claim refresh heartbeat while dispatching/deferred (`claimLeaseMs / 3`).
 - Never silently complete on transient failure — release/fail via disposition.

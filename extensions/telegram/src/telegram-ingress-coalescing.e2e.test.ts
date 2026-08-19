@@ -354,19 +354,31 @@ describe("Telegram durable ingress coalescing", () => {
       expectBufferedFailure: true,
     },
   ])(
-    "cancels $label hydration at the claim watchdog and releases the same-chat lane",
+    "retries $label hydration after the claim watchdog before delivering the same-chat successor",
     async ({ update, expectBufferedFailure }) => {
-      const getFile = vi.fn(
-        () =>
-          new Response(
-            JSON.stringify({
-              ok: false,
-              error_code: 429,
-              description: "Too Many Requests: retry after 60",
-              parameters: { retry_after: 60 },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
+      const getFile = vi.fn((call: number) =>
+        call === 1
+          ? new Response(
+              JSON.stringify({
+                ok: false,
+                error_code: 429,
+                description: "Too Many Requests: retry after 60",
+                parameters: { retry_after: 60 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            )
+          : new Response(
+              JSON.stringify({
+                ok: true,
+                result: {
+                  file_id: "photo-retry",
+                  file_unique_id: "unique-retry",
+                  file_size: 4,
+                  file_path: "photos/photo-retry.jpg",
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
       );
       const runtimeError = vi.fn();
       const telegramTransport = createBotApiTransport({ onGetFile: getFile });
@@ -388,25 +400,33 @@ describe("Telegram durable ingress coalescing", () => {
         timeout: 1_000,
         interval: 5,
       });
-      const nextAdmittedAt = Date.now();
       await monitor.admit(next);
-      const turn = await awaitSingleDownstreamTurn();
-
-      expect(Date.now() - nextAdmittedAt).toBeLessThan(1_000);
-      expect(turn.Body).toContain("next message after stalled media");
-      expect(turn.Body).not.toContain("<media:image>");
+      await vi.waitFor(() => expect(downstreamTurns).toHaveBeenCalledTimes(2), {
+        timeout: 5_000,
+        interval: 5,
+      });
+      const turns = downstreamTurns.mock.calls.map(
+        ([context]) => context as MsgContext & Record<string, unknown>,
+      );
+      const successorTurn = turns.find((turn) =>
+        String(turn.Body).includes("next message after stalled media"),
+      );
+      const retriedMediaTurn = turns.find((turn) => turn !== successorTurn);
+      expect(successorTurn?.Body).not.toContain("<media:image>");
+      expect(retriedMediaTurn?.media).toMatchObject([
+        { path: "/tmp/photo-retry.jpg", kind: "image" },
+      ]);
       const queue = openTelegramIngressQueue(spoolDir);
       await vi.waitFor(async () => {
-        expect(await queue.listFailed?.({ limit: "all" })).toEqual([
-          expect.objectContaining({
-            id: telegramQueueEventId(update.update_id),
-            reason: "handler-timeout",
-          }),
-        ]);
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
       });
-      await expect(
-        queue.enqueue(telegramQueueEventId(nextUpdateId), {} as never),
-      ).resolves.toMatchObject({ kind: "completed" });
+      expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
+      for (const updateId of [update.update_id, nextUpdateId]) {
+        await expect(
+          queue.enqueue(telegramQueueEventId(updateId), {} as never),
+        ).resolves.toMatchObject({ kind: "completed" });
+      }
       if (expectBufferedFailure) {
         await vi.waitFor(() => expect(runtimeError).toHaveBeenCalledOnce());
       } else {
@@ -415,8 +435,8 @@ describe("Telegram durable ingress coalescing", () => {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 50);
       });
-      expect(getFile).toHaveBeenCalledOnce();
-      expect(downstreamTurns).toHaveBeenCalledOnce();
+      expect(getFile).toHaveBeenCalledTimes(2);
+      expect(downstreamTurns).toHaveBeenCalledTimes(2);
     },
   );
 

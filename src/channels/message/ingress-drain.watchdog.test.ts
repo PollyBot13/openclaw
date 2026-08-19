@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
-import { createChannelIngressDrain } from "./ingress-drain.js";
+import type { ChannelIngressDispatchLifecycle } from "./ingress-drain-lifecycle.js";
+import { createChannelIngressDrain, isIngressAdoptionLostError } from "./ingress-drain.js";
 import {
   createTestIngressQueue,
   type IngressDrainTestPayload as Payload,
@@ -17,17 +18,19 @@ describe("channel ingress drain watchdog", () => {
     closeOpenClawStateDatabaseForTest();
   });
 
-  it("guillotines pre-adoption stalls with handler-timeout", async () => {
+  it("releases pre-adoption stalls for retry and fences late adoption", async () => {
     await withTempState(async (stateDir) => {
       let clock = 10_000;
       const queue = createTestIngressQueue(stateDir, { now: () => clock });
       await queue.enqueue("evt-stall", { text: "x" }, { laneKey: "l1" });
+      let stalledLifecycle: ChannelIngressDispatchLifecycle | undefined;
 
       const drain = createChannelIngressDrain<Payload>({
         queue,
         now: () => clock,
         adoptionStallTimeoutMs: 5_000,
-        dispatchClaimedEvent: async () => {
+        dispatchClaimedEvent: async (_event, lifecycle) => {
+          stalledLifecycle = lifecycle;
           // Never adopt, never return -- stall until watchdog.
           await new Promise(() => {});
         },
@@ -38,16 +41,24 @@ describe("channel ingress drain watchdog", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       await drain.waitForIdle();
 
-      const reenqueue = await queue.enqueue("evt-stall", { text: "x" });
-      expect(reenqueue.kind).toBe("failed");
-      if (reenqueue.kind === "failed") {
-        expect(reenqueue.record.reason).toBe("handler-timeout");
-      }
+      expect(await queue.listClaims()).toEqual([]);
+      expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
+      expect(await queue.listPending({ limit: "all" })).toMatchObject([
+        {
+          id: "evt-stall",
+          attempts: 1,
+          lastError: expect.stringContaining("handler-timeout"),
+        },
+      ]);
+      const lateAdoption = stalledLifecycle?.onAdopted();
+      expect(lateAdoption).toBeDefined();
+      const lateAdoptError = await lateAdoption?.catch((error: unknown) => error);
+      expect(isIngressAdoptionLostError(lateAdoptError) && lateAdoptError.code).toBe("guillotined");
       drain.dispose();
     });
   });
 
-  it("guillotines deferred stalls", async () => {
+  it("releases deferred stalls for retry", async () => {
     await withTempState(async (stateDir) => {
       let clock = 30_000;
       const queue = createTestIngressQueue(stateDir, { now: () => clock });
@@ -70,11 +81,15 @@ describe("channel ingress drain watchdog", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       await drain.waitForIdle();
 
-      const reenqueue = await queue.enqueue("evt-def-stall", { text: "x" });
-      expect(reenqueue.kind).toBe("failed");
-      if (reenqueue.kind === "failed") {
-        expect(reenqueue.record.reason).toBe("handler-timeout");
-      }
+      expect(await queue.listClaims()).toEqual([]);
+      expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
+      expect(await queue.listPending({ limit: "all" })).toMatchObject([
+        {
+          id: "evt-def-stall",
+          attempts: 1,
+          lastError: expect.stringContaining("handler-timeout"),
+        },
+      ]);
       drain.dispose();
     });
   });

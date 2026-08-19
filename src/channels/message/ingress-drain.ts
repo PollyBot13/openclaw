@@ -393,25 +393,27 @@ export function createChannelIngressDrain<
       }
       const ageMs = now() - state.startedAt;
       const displayId = state.eventId.replace(/^0+(?=\d)/, "") || state.eventId;
-      const message = `Channel ingress claim→adoption stalled for event ${displayId} on lane ${state.laneKey} after ${ageMs}ms; marking failed (handler-timeout).`;
+      const message = `Channel ingress claim→adoption stalled for event ${displayId} on lane ${state.laneKey} after ${ageMs}ms; applying retry policy (handler-timeout).`;
+      const timeoutError = new Error(message);
       // Closed guillotine flag — catch must not string-sniff errors.
       state.guillotined = true;
       clearStallTimer(state);
       log(message);
       try {
-        state.abortController.abort(new Error(message));
+        state.abortController.abort(timeoutError);
       } catch {
         // AbortController.abort is not fallible in practice.
       }
-      // Same bounded-retry/hold-ownership policy as tombstone: a fail write
-      // error must not falsely settle (would stop heartbeat and wedge recovery).
+      // Route the timeout through the same retry owner as dispatch failures.
+      // A release/fail write error must not falsely settle (would stop the
+      // heartbeat and wedge recovery).
       void state
         .settleOnce(async () => {
-          await failClaim(state.claim, "handler-timeout", message);
+          await applyFailureDisposition(state.claim, timeoutError);
         })
         .catch((err: unknown) => {
           log(
-            `ingress drain: failed to dead-letter stalled event ${displayId}; holding claim: ${formatError(err)}`,
+            `ingress drain: failed to settle stalled event ${displayId}; holding claim: ${formatError(err)}`,
           );
         });
     }, adoptionStallTimeoutMs);
