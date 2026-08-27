@@ -413,6 +413,8 @@ async function runSkillExperienceReviewInner(
   });
   const foregroundSession = SessionManager.open(sessionTarget, workspaceDir);
   const detachedSession = SessionManager.fromEntries(foregroundSession.getEntries(), workspaceDir);
+  const reviewSessionId = randomUUID();
+  const reviewSessionKey = `agent:${sessionTarget.agentId}:skill-workshop-review:incognito-${reviewSessionId}`;
   const { listWritableWorkspaceSkillSummaries } = await import("./workspace-skill-read.js");
   const existingSkills = listWritableWorkspaceSkillSummaries(workspaceDir, {
     config,
@@ -429,12 +431,12 @@ async function runSkillExperienceReviewInner(
   let outcome: "applied" | "proposed" | "nothing";
   let proposalId: string | undefined;
   let usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | undefined;
-  // The warm review reuses the foreground session identity for prompt caching.
-  // Keep every review event and lifecycle transition out of that user-visible session.
+  // The review reads the foreground snapshot and keeps its prompt-cache affinity,
+  // but owns an incognito run identity so foreground admission and steering stay independent.
   registerAgentRunContext(runId, {
     agentId: foregroundPromptContext.agentId,
-    sessionId,
-    sessionKey,
+    sessionId: reviewSessionId,
+    sessionKey: reviewSessionKey,
     isControlUiVisible: false,
     projectSessionActive: false,
     projectSessionLifecycle: false,
@@ -447,9 +449,8 @@ async function runSkillExperienceReviewInner(
         runEmbeddedAgent({
           ...foregroundPromptContext,
           preparedRunAdmission,
-          sessionId,
-          sessionKey,
-          sessionTarget,
+          sessionId: reviewSessionId,
+          sessionKey: reviewSessionKey,
           sessionManager: detachedSession,
           sessionPersistence: "detached",
           // Never occupy the foreground agent lane after the idle gate opens.
@@ -482,7 +483,7 @@ async function runSkillExperienceReviewInner(
             sessionKey,
             ...(candidate.ctx.runId ? { runId: candidate.ctx.runId } : {}),
           },
-          // The review shares the foreground session, so its MCP runtime stays warm for the next turn.
+          // Foreground prompt context keeps provider cache affinity without sharing admission.
           verboseLevel: "off",
           suppressToolErrorWarnings: true,
           ...(capability ? { cronCreatorAuthorityCapability: capability } : {}),
