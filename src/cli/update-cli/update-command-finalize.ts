@@ -182,8 +182,8 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
     });
   }
 
-  const completedPluginUpdate = await withPluginLifecycleLease({}, async () => {
-    const initialPluginUpdate = await withPrePluginUpdateDoctorEnv(async () => {
+  const initialPluginUpdate = await withPluginLifecycleLease({}, async () => {
+    return await withPrePluginUpdateDoctorEnv(async () => {
       await runTimedFinalizePhase({
         finalizationStartedAt,
         phaseTimings,
@@ -251,26 +251,26 @@ export async function updateFinalizeCommand(opts: UpdateFinalizeOptions): Promis
               : "completed",
       });
     });
-    return await runTimedFinalizePhase({
-      finalizationStartedAt,
-      phaseTimings,
-      phase: "targetConfigConvergence",
-      run: async () =>
-        await completePostCorePluginUpdate({
-          root,
-          pluginUpdate: initialPluginUpdate,
-          freshDoctorRequired: initialPluginUpdate.changed,
-          yes: opts.yes === true,
-          json: opts.json === true,
-          timeoutMs: timeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS,
-        }),
-      outcome: (result) =>
-        result.pluginUpdate.status === "error"
-          ? "failed"
-          : result.pluginUpdate.status === "warning"
-            ? "warning"
-            : "completed",
-    });
+  });
+  const completedPluginUpdate = await runTimedFinalizePhase({
+    finalizationStartedAt,
+    phaseTimings,
+    phase: "targetConfigConvergence",
+    run: async () =>
+      await completePostCorePluginUpdate({
+        root,
+        pluginUpdate: initialPluginUpdate,
+        freshDoctorRequired: initialPluginUpdate.changed,
+        yes: opts.yes === true,
+        json: opts.json === true,
+        timeoutMs: timeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS,
+      }),
+    outcome: (result) =>
+      result.pluginUpdate.status === "error"
+        ? "failed"
+        : result.pluginUpdate.status === "warning"
+          ? "warning"
+          : "completed",
   });
   const pluginUpdate = completedPluginUpdate.pluginUpdate;
   configSnapshot = completedPluginUpdate.configSnapshot;
