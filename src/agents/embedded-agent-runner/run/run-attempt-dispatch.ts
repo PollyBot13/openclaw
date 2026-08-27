@@ -277,6 +277,8 @@ export async function dispatchEmbeddedRunAttempt(input: {
     operation: "attempt",
     sessionId: runtime.sessionId,
     sessionKey: runtime.sessionKey,
+    admissionSessionId: params.admissionSessionId,
+    admissionSessionKey: params.admissionSessionKey,
     conversationRecall: params.conversationRecall,
     promptCacheKey: params.promptCacheKey,
     sandboxSessionKey: params.sandboxSessionKey,

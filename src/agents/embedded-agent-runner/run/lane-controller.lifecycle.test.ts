@@ -9,6 +9,7 @@ import {
 import { claimAgentRunContext, getAgentRunContext } from "../../../infra/agent-run-registry.js";
 import type { CommandQueueEnqueueOptions } from "../../../process/command-queue.types.js";
 import { createTestAdmittedRunContext } from "../../admitted-run-context.test-support.js";
+import { installSessionPlacementAdmissionProvider } from "../../session-placement-admission.js";
 import type { EmbeddedAgentRunResult } from "../types.js";
 import { createEmbeddedRunLaneController } from "./lane-controller.js";
 import type { RunEmbeddedAgentParams } from "./params.js";
@@ -51,7 +52,10 @@ function createController(options: {
   trigger?: LaneParams["trigger"];
   abortSignal?: AbortSignal;
   runId?: string;
-  params?: Pick<LaneParams, "agentId" | "sessionKey">;
+  params?: Pick<
+    LaneParams,
+    "admissionSessionId" | "admissionSessionKey" | "agentId" | "sessionKey" | "sessionPersistence"
+  >;
 }) {
   let lifecycleGeneration = options.lifecycleGeneration;
   const runId = options.runId ?? "run-1";
@@ -136,6 +140,46 @@ describe("createEmbeddedRunLaneController lifecycle admission", () => {
       expect(events).toMatchObject([{ agentId: "research", sessionKey: undefined }]);
     } finally {
       unsubscribe();
+    }
+  });
+
+  it("uses sessionless placement while isolating detached admitted run context", async () => {
+    const runId = "isolated-admission-run";
+    const admissionSessionId = "isolated-admission-session";
+    const admissionSessionKey = "agent:main:skill-workshop-review:isolated";
+    const claims: Array<{ sessionId: string; sessionKey?: string }> = [];
+    const uninstall = installSessionPlacementAdmissionProvider({
+      executeLocalTurn: async (_claim, runLocal) => await runLocal(),
+      executeTurn: async (claim, _params, runLocal) => {
+        claims.push({ sessionId: claim.sessionId, sessionKey: claim.sessionKey });
+        return await runLocal();
+      },
+    });
+    claimAgentRunContext(runId, {
+      sessionId: admissionSessionId,
+      sessionKey: admissionSessionKey,
+    });
+    const { controller } = createController({
+      lifecycleGeneration: getAgentEventLifecycleGeneration(),
+      enqueue: async (task) => await task(),
+      runId,
+      params: {
+        admissionSessionId,
+        admissionSessionKey,
+        sessionPersistence: "detached",
+      },
+    });
+
+    try {
+      await controller.enqueueGlobal(async () => completedResult);
+
+      expect(claims).toEqual([{ sessionId: admissionSessionId, sessionKey: undefined }]);
+      expect(getAgentRunContext(runId)).toMatchObject({
+        sessionId: admissionSessionId,
+        sessionKey: admissionSessionKey,
+      });
+    } finally {
+      uninstall();
     }
   });
 

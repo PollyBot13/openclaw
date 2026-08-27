@@ -250,6 +250,8 @@ describe("createEmbeddedAttemptRunAbort", () => {
       abortActiveSession,
       activeSession: { abortCompaction, isCompacting: true },
       attempt: {
+        admissionSessionId: "review-admission-id",
+        admissionSessionKey: "agent:main:skill-workshop-review:incognito-review",
         onAttemptTimeout,
         runId: "run-timeout",
         sessionFile: "/tmp/session.jsonl",
@@ -274,10 +276,10 @@ describe("createEmbeddedAttemptRunAbort", () => {
     expect(abortCompaction).toHaveBeenCalledTimes(1);
     expect(abortActiveSession).toHaveBeenCalledTimes(1);
     expect(mocks.markActiveEmbeddedRunAbandoned).toHaveBeenCalledWith({
-      sessionId: "session-timeout",
+      sessionId: "review-admission-id",
       handle: queueHandle,
-      sessionKey: "agent:main",
-      sessionFile: "/tmp/session.jsonl",
+      sessionKey: "agent:main:skill-workshop-review:incognito-review",
+      sessionFile: undefined,
       reason: "timeout",
     });
   });

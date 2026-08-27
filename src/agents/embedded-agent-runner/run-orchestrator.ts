@@ -146,7 +146,12 @@ async function runEmbeddedAgentInternal(
     sessionFile: runSessionTarget.sessionKey,
     skillWorkshopProposalMutationBudget,
   });
-  const sessionLane = resolveSessionLane(params.sessionKey?.trim() || params.sessionId);
+  const sessionLane = resolveSessionLane(
+    params.admissionSessionKey?.trim() ||
+      params.admissionSessionId?.trim() ||
+      params.sessionKey?.trim() ||
+      params.sessionId,
+  );
   const globalLane = resolveGlobalLane(params.lane);
   // Outer fallback attempts defer session suspension only while another
   // candidate remains. Direct and final-candidate runs suspend normally.

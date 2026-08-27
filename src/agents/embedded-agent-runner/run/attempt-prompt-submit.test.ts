@@ -2,6 +2,12 @@ import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ImageContent } from "../../../llm/types.js";
 import type { AgentMessage } from "../../runtime/index.js";
+import type { EmbeddedAgentQueueHandle } from "../runs.js";
+import {
+  clearActiveEmbeddedRun,
+  getActiveEmbeddedRunSnapshot,
+  setActiveEmbeddedRun,
+} from "../runs.js";
 import {
   clearEmbeddedSessionPromptStates,
   getEmbeddedSessionPromptState,
@@ -61,6 +67,33 @@ afterEach(() => {
 });
 
 describe("submitEmbeddedAttemptPrompt", () => {
+  it("stores snapshots under the isolated admission identity", async () => {
+    const { activeSession } = createSession();
+    const input = createBaseInput();
+    const admissionSessionId = "skill-review-admission";
+    const foregroundHandle = {} as EmbeddedAgentQueueHandle;
+    const reviewHandle = {} as EmbeddedAgentQueueHandle;
+    setActiveEmbeddedRun(sessionId, foregroundHandle);
+    setActiveEmbeddedRun(admissionSessionId, reviewHandle);
+
+    try {
+      await submitEmbeddedAttemptPrompt({
+        ...input,
+        activeSession,
+        attempt: { admissionSessionId, sessionId },
+        promptActiveSession: async () => {},
+      });
+
+      expect(getActiveEmbeddedRunSnapshot(sessionId)).toBeUndefined();
+      expect(getActiveEmbeddedRunSnapshot(admissionSessionId)).toMatchObject({
+        inFlightPrompt: "transcript prompt",
+      });
+    } finally {
+      clearActiveEmbeddedRun(admissionSessionId, reviewHandle);
+      clearActiveEmbeddedRun(sessionId, foregroundHandle);
+    }
+  });
+
   it("submits runtime-only prompts without images and acknowledges steering", async () => {
     const { activeSession, baseStreamFn, originalTransformContext } = createSession();
     const input = createBaseInput();

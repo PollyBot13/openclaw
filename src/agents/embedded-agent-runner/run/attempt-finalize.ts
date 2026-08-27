@@ -558,7 +558,13 @@ export function createEmbeddedAttemptRunAbort(input: {
   activeSession: Pick<AgentSession, "abortCompaction" | "isCompacting">;
   attempt: Pick<
     EmbeddedRunAttemptParams,
-    "onAttemptTimeout" | "runId" | "sessionFile" | "sessionId" | "sessionKey"
+    | "admissionSessionId"
+    | "admissionSessionKey"
+    | "onAttemptTimeout"
+    | "runId"
+    | "sessionFile"
+    | "sessionId"
+    | "sessionKey"
   >;
   getQueueHandle: () => EmbeddedAgentQueueHandle | undefined;
   isProbeSession: boolean;
@@ -615,10 +621,13 @@ export function createEmbeddedAttemptRunAbort(input: {
     const queueHandle = input.getQueueHandle();
     if (isTimeout && queueHandle) {
       markActiveEmbeddedRunAbandoned({
-        sessionId: input.attempt.sessionId,
+        sessionId: input.attempt.admissionSessionId ?? input.attempt.sessionId,
         handle: queueHandle,
-        sessionKey: input.attempt.sessionKey,
-        sessionFile: input.attempt.sessionFile,
+        sessionKey: input.attempt.admissionSessionKey ?? input.attempt.sessionKey,
+        sessionFile:
+          input.attempt.admissionSessionId || input.attempt.admissionSessionKey
+            ? undefined
+            : input.attempt.sessionFile,
         reason: "timeout",
       });
     }

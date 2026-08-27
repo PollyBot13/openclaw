@@ -65,8 +65,8 @@ export async function runEmbeddedAttemptExecutionPhase(
   const hookAgentId = input.setup.sessionAgentId;
   let repairedRejectedProviderReplay = false;
   const diagnosticOwner = createDiagnosticEmbeddedRunOwner({
-    sessionId: attempt.sessionId,
-    sessionKey: attempt.sessionKey,
+    sessionId: attempt.admissionSessionId ?? attempt.sessionId,
+    sessionKey: attempt.admissionSessionKey ?? attempt.sessionKey,
     runId: attempt.runId,
   });
   const mergeTerminal = (incoming: AgentRunAttemptTerminal) => {

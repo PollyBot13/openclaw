@@ -135,6 +135,54 @@ describe("worker turn launcher local placement", () => {
     expect(placements.list()).toEqual([]);
   });
 
+  it("runs a detached auxiliary turn without claiming its foreground placement", async () => {
+    seedActivePlacement();
+    const foregroundPlacement = placements.get(SESSION_ID);
+    if (foregroundPlacement?.state !== "active") {
+      throw new Error("expected active foreground placement");
+    }
+    const foregroundClaim = placements.claimTurn({
+      sessionId: SESSION_ID,
+      sessionKey: SESSION_KEY,
+      agentId: "main",
+      claimId: "foreground-claim",
+      runId: "foreground-run",
+      owner: {
+        kind: "worker",
+        environmentId: foregroundPlacement.environmentId,
+        ownerEpoch: foregroundPlacement.activeOwnerEpoch,
+      },
+    });
+    const reviewSessionId = "skill-workshop-review-admission";
+    const provider = createWorkerSessionTurnPlacementProvider({
+      environments: unusedEnvironments(),
+      placements,
+    });
+    const runLocal = vi.fn(async () => ({ meta: { durationMs: 1 } }));
+
+    try {
+      await provider.executeTurn(
+        { sessionId: reviewSessionId, agentId: "main", runId: "review-run" },
+        {
+          ...turn("review-run"),
+          admissionSessionId: reviewSessionId,
+          admissionSessionKey: `agent:main:skill-workshop-review:${reviewSessionId}`,
+          sessionPersistence: "detached",
+        },
+        runLocal,
+      );
+
+      expect(runLocal).toHaveBeenCalledOnce();
+      expect(placements.get(reviewSessionId)).toBeUndefined();
+      expect(placements.get(SESSION_ID)?.turnClaim).toMatchObject({
+        claimId: foregroundClaim.claimId,
+        runId: foregroundClaim.runId,
+      });
+    } finally {
+      placements.releaseTurn(foregroundClaim);
+    }
+  });
+
   it.each([
     ["agent id", { agentId: "other", sessionKey: SESSION_KEY }],
     ["session key", { agentId: "main", sessionKey: "agent:main:other" }],

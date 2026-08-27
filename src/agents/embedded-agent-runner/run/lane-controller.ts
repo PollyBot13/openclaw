@@ -163,12 +163,21 @@ export function createEmbeddedRunLaneController<TParams extends LaneParams>(opti
         };
         options.setParams(params);
       }
+      const admissionSessionId = params.admissionSessionId ?? params.sessionId;
+      const admissionSessionKey = params.admissionSessionKey ?? params.sessionKey;
+      const detachedAdmissionSessionId =
+        params.sessionPersistence === "detached" ? params.admissionSessionId : undefined;
       return await withAgentRunLifecycleGeneration(lifecycleGeneration, () =>
         withSessionPlacementTurnAdmission(
           {
-            sessionId: params.sessionId,
+            // A detached run with its own admission identity is a sessionless
+            // local auxiliary turn. It must not claim the semantic foreground
+            // session's durable placement while that session remains usable.
+            sessionId: detachedAdmissionSessionId ?? params.sessionId,
             ...(params.agentId ? { agentId: params.agentId } : {}),
-            ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+            ...(!detachedAdmissionSessionId && params.sessionKey
+              ? { sessionKey: params.sessionKey }
+              : {}),
             runId: params.runId,
           },
           params,
@@ -181,8 +190,8 @@ export function createEmbeddedRunLaneController<TParams extends LaneParams>(opti
             claimAgentRunContext(params.runId, {
               ...existingContext,
               agentId: params.agentId ?? existingContext?.agentId,
-              sessionKey: params.sessionKey ?? existingContext?.sessionKey,
-              sessionId: params.sessionId ?? existingContext?.sessionId,
+              sessionKey: admissionSessionKey ?? existingContext?.sessionKey,
+              sessionId: admissionSessionId,
               lifecycleGeneration,
               lastActiveAt: Date.now(),
             });

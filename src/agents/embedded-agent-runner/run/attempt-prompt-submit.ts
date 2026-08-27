@@ -69,7 +69,10 @@ type SteeringLease = {
 type TrajectoryRecorder = ReturnType<typeof createTrajectoryRuntimeRecorder>;
 
 export async function submitEmbeddedAttemptPrompt(input: {
-  attempt: Pick<EmbeddedRunAttemptParams, "sessionId" | "userTurnTranscriptRecorder">;
+  attempt: Pick<
+    EmbeddedRunAttemptParams,
+    "admissionSessionId" | "sessionId" | "userTurnTranscriptRecorder"
+  >;
   activeSession: PromptSubmissionSession;
   appendContext?: string;
   contextTokenBudget: number;
@@ -138,7 +141,7 @@ export async function submitEmbeddedAttemptPrompt(input: {
     messages: activeSession.messages,
     imagesCount: input.images.length,
   });
-  updateActiveEmbeddedRunSnapshot(attempt.sessionId, {
+  updateActiveEmbeddedRunSnapshot(attempt.admissionSessionId ?? attempt.sessionId, {
     transcriptLeafId: input.transcriptLeafId,
     messages: snapshotRecentMessages(normalizedReplayMessages),
     inFlightPrompt: input.transcriptPrompt,

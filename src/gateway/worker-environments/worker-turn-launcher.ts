@@ -503,7 +503,11 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
     },
     async executeTurn(claim, turn, runLocal, onAdmitted) {
       const current = options.placements.get(claim.sessionId);
-      if (!current && turn.modelRun === true && !claim.sessionKey?.trim()) {
+      const isDetachedAuxiliaryTurn =
+        turn.sessionPersistence === "detached" &&
+        turn.admissionSessionId === claim.sessionId &&
+        !claim.sessionKey?.trim();
+      if (!current && (turn.modelRun === true || isDetachedAuxiliaryTurn)) {
         return await runLocal();
       }
       if (!current || current.state === "local") {

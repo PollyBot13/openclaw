@@ -139,7 +139,13 @@ describe("experience review auto apply", () => {
     expect(observed).toEqual([
       ["assistant", false, false, false, undefined],
       ["tool", false, false, false, undefined],
-      ["lifecycle", false, false, false, "agent:main:main"],
+      [
+        "lifecycle",
+        false,
+        false,
+        false,
+        expect.stringMatching(/^agent:main:skill-workshop-review:incognito-/),
+      ],
     ]);
     expect(getAgentRunContext(reviewRunId)).toBeUndefined();
   });

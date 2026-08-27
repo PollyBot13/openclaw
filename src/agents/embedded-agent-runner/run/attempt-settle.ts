@@ -76,6 +76,8 @@ type StreamCleanupInput = {
 
 function cleanupEmbeddedAttemptStreamExecution(input: StreamCleanupInput): Error | undefined {
   const { attempt, state } = input;
+  const admissionSessionFile =
+    attempt.admissionSessionId || attempt.admissionSessionKey ? undefined : attempt.sessionFile;
   const terminal = projectAgentRunAttemptTerminal(state.terminal);
   input.clearAttemptTimeoutTimers();
   if (
@@ -97,10 +99,10 @@ function cleanupEmbeddedAttemptStreamExecution(input: StreamCleanupInput): Error
       "active run cleanup",
       () =>
         clearActiveEmbeddedRun(
-          attempt.sessionId,
+          attempt.admissionSessionId ?? attempt.sessionId,
           input.queueHandle,
-          attempt.sessionKey,
-          attempt.sessionFile,
+          attempt.admissionSessionKey ?? attempt.sessionKey,
+          admissionSessionFile,
         ),
     ],
   ] as const) {

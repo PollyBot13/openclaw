@@ -54,6 +54,9 @@ function prepareCatalogExecutor(
     runAbortController?: AbortController;
     sandboxSessionKey?: string;
     sessionKey?: string;
+    sessionFile?: string;
+    admissionSessionId?: string;
+    admissionSessionKey?: string;
     replyOperation?: ReplyOperation;
     onAttemptAbort?: () => void;
     abortRun?: (isTimeout?: boolean, reason?: unknown) => void;
@@ -66,6 +69,9 @@ function prepareCatalogExecutor(
       runId: "run-output-schema",
       sessionId: "session-output-schema",
       sessionKey: options?.sessionKey ?? "agent:main:main",
+      sessionFile: options?.sessionFile,
+      admissionSessionId: options?.admissionSessionId,
+      admissionSessionKey: options?.admissionSessionKey,
       replyOperation: options?.replyOperation,
       onAttemptAbort: options?.onAttemptAbort,
     } as never,
@@ -133,6 +139,21 @@ describe("prepareEmbeddedAttemptStream", () => {
     } finally {
       operation.complete();
     }
+  });
+
+  it("registers active admission under an isolated identity", () => {
+    prepareCatalogExecutor([], {
+      admissionSessionId: "review-admission-id",
+      admissionSessionKey: "agent:main:skill-workshop-review:incognito-review",
+      sessionFile: "agent:main:main",
+    });
+
+    expect(mocks.setActiveRun).toHaveBeenCalledWith(
+      "review-admission-id",
+      expect.any(Object),
+      "agent:main:skill-workshop-review:incognito-review",
+      undefined,
+    );
   });
 
   it("uses the persisted assistant entry id and closes steering during revision settlement", async () => {

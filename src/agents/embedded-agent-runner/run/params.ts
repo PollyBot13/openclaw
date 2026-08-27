@@ -97,6 +97,9 @@ export type RunEmbeddedAgentParams = {
   sessionPersistence?: "durable" | "detached";
   sessionId: string;
   sessionKey?: string;
+  /** Active-run registry and session-lane identity when admission must be isolated. */
+  admissionSessionId?: string;
+  admissionSessionKey?: string;
   /** Storage-neutral transcript/session target. Defaults to sessionId/sessionKey/agentId. */
   sessionTarget?: AgentRunSessionTarget;
   /** Immutable gateway lifecycle ownership captured when this execution was admitted. */

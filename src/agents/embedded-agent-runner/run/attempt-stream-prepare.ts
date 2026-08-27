@@ -103,6 +103,8 @@ export function prepareEmbeddedAttemptStream(input: {
   diagnosticOwner: DiagnosticEmbeddedRunOwner;
 }) {
   const attempt = input.attempt;
+  const admissionSessionFile =
+    attempt.admissionSessionId || attempt.admissionSessionKey ? undefined : attempt.sessionFile;
   const hookRunner = input.hookRunner;
   let beforeAgentFinalizeRevisionReason: string | undefined;
   let beforeAgentFinalizeRevisionEntryId: string | undefined;
@@ -306,10 +308,10 @@ export function prepareEmbeddedAttemptStream(input: {
       // Clear embedded-run activity before emitting terminal lifecycle events so
       // post-completion cleanup does not observe a logically finished run as active.
       clearActiveEmbeddedRun(
-        attempt.sessionId,
+        attempt.admissionSessionId ?? attempt.sessionId,
         getQueueHandle(),
-        attempt.sessionKey,
-        attempt.sessionFile,
+        attempt.admissionSessionKey ?? attempt.sessionKey,
+        admissionSessionFile,
       );
     },
     enforceFinalTag: attempt.enforceFinalTag,
@@ -518,7 +520,12 @@ export function prepareEmbeddedAttemptStream(input: {
     queueHandle,
     attempt.lifecycleGeneration ?? captureAgentRunLifecycleGeneration(attempt.runId),
   );
-  setActiveEmbeddedRun(attempt.sessionId, queueHandle, attempt.sessionKey, attempt.sessionFile);
+  setActiveEmbeddedRun(
+    attempt.admissionSessionId ?? attempt.sessionId,
+    queueHandle,
+    attempt.admissionSessionKey ?? attempt.sessionKey,
+    admissionSessionFile,
+  );
 
   return {
     subscription,
