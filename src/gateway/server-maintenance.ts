@@ -12,6 +12,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { sweepStaleRunContexts } from "../infra/agent-run-registry.js";
 import { pruneExpiredDeliveryQueueTombstones } from "../infra/delivery-queue-sqlite.js";
 import { pruneExpiredDevicePairSetupCompletions } from "../infra/device-bootstrap.js";
+import { getGatewaySuspendLifecycleEvidence } from "../infra/gateway-suspend-coordinator.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { pruneOrphanedDeliveryQueueMedia } from "../infra/outbound/delivery-queue-media-spool.js";
 import { generateSecureInt } from "../infra/secure-random.js";
@@ -116,6 +117,7 @@ export function startGatewayMaintenanceTimers(params: {
 
   const hostThawRecovery = createHostThawRecovery({
     nowMs: Date.now,
+    getSuspendLifecycleEvidence: getGatewaySuspendLifecycleEvidence,
     restartChannels: params.restartRunningChannels,
     refreshHealth: async () => {
       await params.refreshGatewayHealthSnapshot({ probe: true });

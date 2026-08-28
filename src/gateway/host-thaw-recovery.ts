@@ -6,6 +6,7 @@ const HOST_THAW_MIN_FROZEN_MS = 45_000;
 
 type HostThawDeps = {
   nowMs: () => number;
+  getSuspendLifecycleEvidence: () => { isHeld: boolean; resumeGeneration: number };
   restartChannels: () => Promise<void>;
   refreshHealth: () => Promise<void>;
   refreshPresence: () => void;
@@ -16,7 +17,8 @@ type HostThawDeps = {
 
 export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promise<void> } {
   let lastTickAtMs = deps.nowMs();
-  let pendingFrozenMs: number | undefined;
+  let lastResumeGeneration = deps.getSuspendLifecycleEvidence().resumeGeneration;
+  let pendingRecovery: { frozenMs: number; restartChannels: boolean } | undefined;
   let activeRecovery: Promise<void> | undefined;
 
   const runStep = async (label: string, step: () => void | Promise<void>) => {
@@ -27,13 +29,15 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
     }
   };
 
-  const recover = async (frozenMs: number) => {
+  const recover = async (frozenMs: number, restartChannels: boolean) => {
     deps.logger.info(
-      `host thaw detected: process was frozen ~${Math.round(frozenMs)}ms; restarting channels and refreshing health`,
+      restartChannels
+        ? `host thaw detected: process was frozen ~${Math.round(frozenMs)}ms; restarting channels and refreshing health`
+        : `host timing gap detected: process was frozen ~${Math.round(frozenMs)}ms; refreshing health without restarting channels`,
     );
     const recoverySteps: ReadonlyArray<readonly [string, () => void | Promise<void>]> = [
       ["event-loop reset", deps.resetEventLoopHealth],
-      ["channel restart", deps.restartChannels],
+      ...(restartChannels ? [["channel restart", deps.restartChannels] as const] : []),
       ["health refresh", deps.refreshHealth],
       ["presence refresh", deps.refreshPresence],
     ];
@@ -41,7 +45,10 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       if (deps.isAdmissionClosed()) {
         // Every recovery step is idempotent, so a partially completed thaw is
         // deliberately replayed from the start after admission reopens.
-        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, frozenMs);
+        pendingRecovery = {
+          frozenMs: Math.max(pendingRecovery?.frozenMs ?? 0, frozenMs),
+          restartChannels: pendingRecovery?.restartChannels === true || restartChannels,
+        };
         deps.logger.info("host thaw recovery deferred: gateway suspension began mid-recovery");
         return;
       }
@@ -54,17 +61,26 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       const nowMs = deps.nowMs();
       const gapMs = nowMs - lastTickAtMs;
       lastTickAtMs = nowMs;
+      const suspendEvidence = deps.getSuspendLifecycleEvidence();
+      const resumedSinceLastTick = suspendEvidence.resumeGeneration !== lastResumeGeneration;
+      lastResumeGeneration = suspendEvidence.resumeGeneration;
+      const hasExplicitWakeEvidence = suspendEvidence.isHeld || resumedSinceLastTick;
       if (gapMs >= TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS) {
-        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, gapMs - TICK_INTERVAL_MS);
+        pendingRecovery = {
+          frozenMs: Math.max(pendingRecovery?.frozenMs ?? 0, gapMs - TICK_INTERVAL_MS),
+          restartChannels: pendingRecovery?.restartChannels === true || hasExplicitWakeEvidence,
+        };
+      } else if (pendingRecovery && hasExplicitWakeEvidence) {
+        pendingRecovery.restartChannels = true;
       }
       // Suspension/restart owns the closed period. Recovery must wait rather than
       // waking channels while the controller deliberately keeps the gateway quiet.
-      if (pendingFrozenMs === undefined || deps.isAdmissionClosed() || activeRecovery) {
+      if (!pendingRecovery || deps.isAdmissionClosed() || activeRecovery) {
         return;
       }
-      const frozenMs = pendingFrozenMs;
-      pendingFrozenMs = undefined;
-      activeRecovery = recover(frozenMs);
+      const recovery = pendingRecovery;
+      pendingRecovery = undefined;
+      activeRecovery = recover(recovery.frozenMs, recovery.restartChannels);
       try {
         await activeRecovery;
       } finally {

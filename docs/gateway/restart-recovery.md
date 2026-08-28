@@ -60,16 +60,18 @@ affected session is marked for recovery.
 
 ## Host sleep and process freezes
 
-When a gateway host wakes from sleep, a virtual machine resumes, or the process
-continues after a long pause, the gateway detects the freeze within about 30
-seconds. It restarts channel connections and refreshes cached health and
-presence so clients do not wait for stale sockets or snapshots to expire.
+When a gateway host wakes from a coordinated suspension, the gateway detects
+the timer gap within about 30 seconds. It restarts channel connections and
+refreshes cached health and presence so clients do not wait for stale sockets
+or snapshots to expire. A long timer gap without suspension lifecycle evidence
+still resets event-loop diagnostics and refreshes health and presence, but does
+not restart channels; ordinary event-loop stalls must not churn live sockets.
 
-The macOS app and Linux companion cooperate with a local gateway by preparing a
-short suspension lease before the host sleeps and resuming it after wake. Remote
-gateways are not suspended when the app host sleeps. A deliberate suspension
-through `gateway.suspend.*` keeps recovery deferred until the controller resumes
-the gateway.
+The macOS app and Linux companion provide that lifecycle evidence by preparing
+a short suspension lease before the host sleeps and resuming it after wake.
+Remote gateways are not suspended when the app host sleeps. A deliberate
+suspension through `gateway.suspend.*` keeps recovery deferred until the
+controller resumes the gateway.
 
 ## How interrupted work is detected
 

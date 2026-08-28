@@ -8,8 +8,14 @@ import { TICK_INTERVAL_MS } from "./server-constants.js";
 function createHarness() {
   let nowMs = 0;
   let admissionClosed = false;
+  let suspensionHeld = false;
+  let resumeGeneration = 0;
   const deps = {
     nowMs: () => nowMs,
+    getSuspendLifecycleEvidence: () => ({
+      isHeld: suspensionHeld,
+      resumeGeneration,
+    }),
     restartChannels: vi.fn(async () => {}),
     refreshHealth: vi.fn(async () => {}),
     refreshPresence: vi.fn(),
@@ -22,6 +28,13 @@ function createHarness() {
     deps,
     setAdmissionClosed: (closed: boolean) => {
       admissionClosed = closed;
+    },
+    setSuspensionHeld: (held: boolean) => {
+      suspensionHeld = held;
+    },
+    recordResume: () => {
+      suspensionHeld = false;
+      resumeGeneration += 1;
     },
     advance: async (gapMs: number) => {
       nowMs += gapMs;
@@ -50,24 +63,29 @@ describe("host thaw recovery", () => {
     expect(harness.deps.logger.info).not.toHaveBeenCalled();
   });
 
-  it("recovers and reports the frozen duration at the threshold", async () => {
+  it("refreshes diagnostics without restarting channels on timer drift alone", async () => {
     const harness = createHarness();
 
     await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
 
-    expectRecoveryCount(harness, 1);
+    expect(harness.deps.restartChannels).not.toHaveBeenCalled();
+    expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
+    expect(harness.deps.refreshPresence).toHaveBeenCalledOnce();
+    expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledOnce();
     expect(harness.deps.logger.info).toHaveBeenCalledWith(
       expect.stringContaining(`frozen ~${HOST_THAW_MIN_FROZEN_MS}ms`),
     );
   });
 
-  it("defers a detected thaw until admission reopens and recovers once", async () => {
+  it("restarts channels after a detected thaw with explicit suspension evidence", async () => {
     const harness = createHarness();
+    harness.setSuspensionHeld(true);
     harness.setAdmissionClosed(true);
 
     await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
     expectRecoveryCount(harness, 0);
 
+    harness.recordResume();
     harness.setAdmissionClosed(false);
     await harness.advance(TICK_INTERVAL_MS);
     await harness.advance(TICK_INTERVAL_MS);
@@ -78,6 +96,7 @@ describe("host thaw recovery", () => {
   it("re-pends the full recovery when admission closes between steps", async () => {
     const harness = createHarness();
     harness.deps.resetEventLoopHealth.mockImplementationOnce(() => {
+      harness.setSuspensionHeld(true);
       harness.setAdmissionClosed(true);
     });
 
@@ -88,6 +107,7 @@ describe("host thaw recovery", () => {
     expect(harness.deps.refreshHealth).not.toHaveBeenCalled();
     expect(harness.deps.refreshPresence).not.toHaveBeenCalled();
 
+    harness.recordResume();
     harness.setAdmissionClosed(false);
     await harness.advance(TICK_INTERVAL_MS);
 
@@ -100,13 +120,36 @@ describe("host thaw recovery", () => {
     );
   });
 
-  it("recovers independently after consecutive thaws", async () => {
+  it("refreshes diagnostics independently after consecutive timer gaps", async () => {
     const harness = createHarness();
     const thawGap = TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS;
 
     await harness.advance(thawGap);
     await harness.advance(thawGap);
 
-    expectRecoveryCount(harness, 2);
+    expect(harness.deps.restartChannels).not.toHaveBeenCalled();
+    expect(harness.deps.refreshHealth).toHaveBeenCalledTimes(2);
+    expect(harness.deps.refreshPresence).toHaveBeenCalledTimes(2);
+    expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a resume observed on the same post-freeze tick as wake evidence", async () => {
+    const harness = createHarness();
+    harness.recordResume();
+
+    await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
+
+    expectRecoveryCount(harness, 1);
+  });
+
+  it("does not reuse resume evidence consumed by an earlier normal tick", async () => {
+    const harness = createHarness();
+    harness.recordResume();
+
+    await harness.advance(TICK_INTERVAL_MS);
+    await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
+
+    expect(harness.deps.restartChannels).not.toHaveBeenCalled();
+    expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
   });
 });

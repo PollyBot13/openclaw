@@ -77,6 +77,7 @@ type GatewaySuspendCoordinatorEntry = HeldGatewaySuspension | GatewaySchedulerRe
 type GatewaySuspendCoordinatorState = {
   current: GatewaySuspendCoordinatorEntry | null;
   retiredForLifecycleReset?: GatewaySuspendCoordinatorEntry | null;
+  resumeGeneration?: number;
 };
 
 const COORDINATOR_STATE = resolveGlobalSingleton(
@@ -84,8 +85,19 @@ const COORDINATOR_STATE = resolveGlobalSingleton(
   (): GatewaySuspendCoordinatorState => ({
     current: null,
     retiredForLifecycleReset: null,
+    resumeGeneration: 0,
   }),
 );
+
+export function getGatewaySuspendLifecycleEvidence(): {
+  isHeld: boolean;
+  resumeGeneration: number;
+} {
+  return {
+    isHeld: COORDINATOR_STATE.current?.kind === "held",
+    resumeGeneration: COORDINATOR_STATE.resumeGeneration ?? 0,
+  };
+}
 
 function schedulerRecoveryResult(): GatewaySchedulerRecoveryResult {
   return {
@@ -470,6 +482,7 @@ export function resumeGatewaySuspend(suspensionId: string): GatewaySuspendResume
       retryAfterMs: GATEWAY_SCHEDULER_RECOVERY_RETRY_MS,
     };
   }
+  COORDINATOR_STATE.resumeGeneration = (COORDINATOR_STATE.resumeGeneration ?? 0) + 1;
   return {
     ok: true,
     status: "running",
