@@ -2,6 +2,7 @@
 import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import { stripAnsi } from "../../../packages/terminal-core/src/ansi.js";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
+import { VERSION_BOUND_RUNTIME_PLUGIN_IDS } from "../../commands/doctor/shared/configured-runtime-plugin-installs.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../../config/types.plugins.js";
@@ -296,6 +297,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
       timeoutMs: params.timeoutMs,
       updateChannel: pluginUpdateChannel,
       coreVersion: coreVersion ?? undefined,
+      versionBoundToCorePluginIds: VERSION_BOUND_RUNTIME_PLUGIN_IDS,
       skipDisabledPlugins: true,
       syncOfficialPluginInstalls: true,
       disableOnFailure: true,
@@ -317,6 +319,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     timeoutMs: params.timeoutMs,
     updateChannel: pluginUpdateChannel,
     coreVersion: coreVersion ?? undefined,
+    versionBoundToCorePluginIds: VERSION_BOUND_RUNTIME_PLUGIN_IDS,
     skipIds: resolvePostSyncPluginUpdateSkipIds({
       switchedToClawHub: syncResult.summary.switchedToClawHub,
       switchedToNpm: syncResult.summary.switchedToNpm,
