@@ -4,9 +4,18 @@ import { TICK_INTERVAL_MS } from "./server-constants.js";
 // shorter gaps are ordinary event-loop load and must not churn channel sockets.
 const HOST_THAW_MIN_FROZEN_MS = 45_000;
 
+export type HostThawChannelRestartOutcome =
+  | { status: "completed" }
+  | {
+      status: "retry";
+      reason: "active-work" | "admission-closed" | "channel-restart-incomplete";
+    };
+
 type HostThawDeps = {
   nowMs: () => number;
-  restartChannelsIfIdle: () => Promise<boolean>;
+  restartChannelsIfIdle: (
+    mode: "new-thaw" | "deferred-retry",
+  ) => Promise<HostThawChannelRestartOutcome>;
   refreshHealth: () => Promise<void>;
   refreshPresence: () => void;
   resetEventLoopHealth: () => void;
@@ -28,11 +37,18 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
     }
   };
 
-  const restartChannels = async () => {
+  const restartChannels = async (mode: "new-thaw" | "deferred-retry") => {
     try {
-      pendingChannelRestart = !(await deps.restartChannelsIfIdle());
-      if (pendingChannelRestart) {
-        deps.logger.info("host thaw channel restart deferred: gateway still has active work");
+      const outcome = await deps.restartChannelsIfIdle(mode);
+      pendingChannelRestart = outcome.status === "retry";
+      if (outcome.status === "retry") {
+        const detail =
+          outcome.reason === "active-work"
+            ? "gateway still has active work"
+            : outcome.reason === "admission-closed"
+              ? "gateway admission is closed"
+              : "one or more channel accounts remain pending";
+        deps.logger.info(`host thaw channel restart deferred: ${detail}`);
       }
     } catch (error) {
       pendingChannelRestart = true;
@@ -59,7 +75,7 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
     if (deferForAdmission()) {
       return;
     }
-    await restartChannels();
+    await restartChannels("new-thaw");
     for (const [label, step] of [
       ["health refresh", deps.refreshHealth],
       ["presence refresh", deps.refreshPresence],
@@ -90,7 +106,8 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       }
       const frozenMs = pendingFrozenMs;
       pendingFrozenMs = undefined;
-      activeRecovery = frozenMs === undefined ? restartChannels() : recover(frozenMs);
+      activeRecovery =
+        frozenMs === undefined ? restartChannels("deferred-retry") : recover(frozenMs);
       try {
         await activeRecovery;
       } finally {

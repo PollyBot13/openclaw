@@ -36,7 +36,10 @@ import {
 import type { QueuedChatTurnMap } from "./chat-queued-turns.js";
 import { pruneStaleControlPlaneBuckets } from "./control-plane-rate-limit.js";
 import type { HealthSummary } from "./health/types.js";
-import { createHostThawRecovery } from "./host-thaw-recovery.js";
+import {
+  createHostThawRecovery,
+  type HostThawChannelRestartOutcome,
+} from "./host-thaw-recovery.js";
 import { chatAbortMarkerTimestampMs } from "./server-chat-state.js";
 import type { ChatRunState } from "./server-chat-state.js";
 import type { ChatRunEntry } from "./server-chat.js";
@@ -81,7 +84,10 @@ export function startGatewayMaintenanceTimers(params: {
     includeSensitive?: boolean;
   }) => Promise<HealthSummary>;
   logHealth: { info: (msg: string) => void; error: (msg: string) => void };
-  restartRunningChannels: (shouldContinue?: () => boolean) => Promise<void>;
+  restartRunningChannels: (
+    mode: "new-thaw" | "deferred-retry",
+    shouldContinue?: () => boolean,
+  ) => Promise<boolean>;
   activeWorkInspectors: Partial<GatewayActiveWorkInspectors>;
   refreshPresence: () => void;
   resetEventLoopHealth: () => void;
@@ -122,13 +128,15 @@ export function startGatewayMaintenanceTimers(params: {
     params.nodeSendToAllSubscribed("health", snap);
   });
 
-  const restartChannelsIfIdle = async (): Promise<boolean> => {
+  const restartChannelsIfIdle = async (
+    mode: "new-thaw" | "deferred-retry",
+  ): Promise<HostThawChannelRestartOutcome> => {
     let invalidated = false;
     const admission = tryBeginGatewaySuspendAdmission(() => {
       invalidated = true;
     });
     if (!admission) {
-      return false;
+      return { status: "retry", reason: "admission-closed" };
     }
     let snapshot: ReturnType<typeof createGatewayActiveWorkSnapshot>;
     try {
@@ -143,14 +151,16 @@ export function startGatewayMaintenanceTimers(params: {
     }
     if (!snapshot.idle) {
       admission.rollback();
-      return false;
+      return { status: "retry", reason: "active-work" };
     }
     if (!admission.commit()) {
-      return false;
+      return { status: "retry", reason: "admission-closed" };
     }
     try {
-      await params.restartRunningChannels(() => !invalidated);
-      return !invalidated;
+      const restarted = await params.restartRunningChannels(mode, () => !invalidated);
+      return restarted
+        ? { status: "completed" }
+        : { status: "retry", reason: "channel-restart-incomplete" };
     } finally {
       admission.release();
     }

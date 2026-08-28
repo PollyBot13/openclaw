@@ -8,10 +8,14 @@ const HOST_THAW_MIN_FROZEN_MS = 45_000;
 function createHarness() {
   let nowMs = 0;
   let admissionClosed = false;
-  let restartIdle = true;
+  let restartReason: "active-work" | "admission-closed" | "channel-restart-incomplete" | undefined;
   const deps = {
     nowMs: () => nowMs,
-    restartChannelsIfIdle: vi.fn(async () => restartIdle),
+    restartChannelsIfIdle: vi.fn(async () =>
+      restartReason === undefined
+        ? ({ status: "completed" } as const)
+        : ({ status: "retry", reason: restartReason } as const),
+    ),
     refreshHealth: vi.fn(async () => {}),
     refreshPresence: vi.fn(),
     resetEventLoopHealth: vi.fn(),
@@ -25,7 +29,10 @@ function createHarness() {
       admissionClosed = closed;
     },
     setRestartIdle: (idle: boolean) => {
-      restartIdle = idle;
+      restartReason = idle ? undefined : "active-work";
+    },
+    setRestartReason: (reason: typeof restartReason) => {
+      restartReason = reason;
     },
     advance: async (gapMs: number) => {
       nowMs += gapMs;
@@ -85,10 +92,29 @@ describe("host thaw recovery", () => {
     await harness.advance(TICK_INTERVAL_MS);
 
     expect(harness.deps.restartChannelsIfIdle).toHaveBeenCalledTimes(3);
+    expect(harness.deps.restartChannelsIfIdle.mock.calls).toEqual([
+      ["new-thaw"],
+      ["deferred-retry"],
+      ["deferred-retry"],
+    ]);
     expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
     expect(harness.deps.refreshPresence).toHaveBeenCalledOnce();
     expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledOnce();
     expect(harness.deps.logger.info).toHaveBeenCalledWith(
+      "host thaw channel restart deferred: gateway still has active work",
+    );
+  });
+
+  it("reports an incomplete channel restart without blaming active work", async () => {
+    const harness = createHarness();
+    harness.setRestartReason("channel-restart-incomplete");
+
+    await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
+
+    expect(harness.deps.logger.info).toHaveBeenCalledWith(
+      "host thaw channel restart deferred: one or more channel accounts remain pending",
+    );
+    expect(harness.deps.logger.info).not.toHaveBeenCalledWith(
       "host thaw channel restart deferred: gateway still has active work",
     );
   });
@@ -140,5 +166,6 @@ describe("host thaw recovery", () => {
     await harness.advance(thawGap);
 
     expectRecoveryCount(harness, 2);
+    expect(harness.deps.restartChannelsIfIdle.mock.calls).toEqual([["new-thaw"], ["new-thaw"]]);
   });
 });

@@ -185,16 +185,20 @@ describe("startGatewayMaintenanceTimers", () => {
     });
   });
 
-  it("defers a thaw restart behind active work, then fences the idle restart", async () => {
+  it("defers a thaw restart behind active work and retries a failed idle pass", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
     resetGatewayWorkAdmission();
     let activeChatRuns = 1;
-    const restartRunningChannels = vi.fn(async (shouldContinue?: () => boolean) => {
-      expect(isGatewayWorkAdmissionClosed()).toBe(true);
-      expect(shouldContinue?.()).toBe(true);
-      expect(tryBeginGatewayRootWorkAdmission()).toBeNull();
-    });
+    let restartSucceeds = false;
+    const restartRunningChannels = vi.fn(
+      async (_mode: "new-thaw" | "deferred-retry", shouldContinue?: () => boolean) => {
+        expect(isGatewayWorkAdmissionClosed()).toBe(true);
+        expect(shouldContinue?.()).toBe(true);
+        expect(tryBeginGatewayRootWorkAdmission()).toBeNull();
+        return restartSucceeds;
+      },
+    );
     const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");
     const timers = startGatewayMaintenanceTimers({
       ...createMaintenanceTimerDeps(),
@@ -214,6 +218,15 @@ describe("startGatewayMaintenanceTimers", () => {
     expect(restartRunningChannels).toHaveBeenCalledOnce();
     expect(isGatewayWorkAdmissionClosed()).toBe(false);
 
+    restartSucceeds = true;
+    await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+    expect(restartRunningChannels).toHaveBeenCalledTimes(2);
+    expect(restartRunningChannels.mock.calls.map(([mode]) => mode)).toEqual([
+      "deferred-retry",
+      "deferred-retry",
+    ]);
+    expect(isGatewayWorkAdmissionClosed()).toBe(false);
+
     await stopMaintenanceTimers(timers);
     resetGatewayWorkAdmission();
   });
@@ -221,7 +234,7 @@ describe("startGatewayMaintenanceTimers", () => {
   it("reopens admission when thaw active-work inspection fails", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
-    const restartRunningChannels = vi.fn(async () => {});
+    const restartRunningChannels = vi.fn(async () => true);
     const logHealth = { info: vi.fn(), error: vi.fn() };
     let inspectionFails = true;
     const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");
