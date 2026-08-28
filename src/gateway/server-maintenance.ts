@@ -12,13 +12,19 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { sweepStaleRunContexts } from "../infra/agent-run-registry.js";
 import { pruneExpiredDeliveryQueueTombstones } from "../infra/delivery-queue-sqlite.js";
 import { pruneExpiredDevicePairSetupCompletions } from "../infra/device-bootstrap.js";
-import { getGatewaySuspendLifecycleEvidence } from "../infra/gateway-suspend-coordinator.js";
+import {
+  createGatewayActiveWorkSnapshot,
+  type GatewayActiveWorkInspectors,
+} from "../infra/gateway-active-work.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import { pruneOrphanedDeliveryQueueMedia } from "../infra/outbound/delivery-queue-media-spool.js";
 import { generateSecureInt } from "../infra/secure-random.js";
 import { checkTelemetryUpdate } from "../infra/telemetry.js";
 import { cleanOldMedia, pruneOutboundMedia, prunePlaybackTranscodeCache } from "../media/store.js";
-import { isGatewayWorkAdmissionClosed } from "../process/gateway-work-admission.js";
+import {
+  isGatewayWorkAdmissionClosed,
+  tryBeginGatewaySuspendAdmission,
+} from "../process/gateway-work-admission.js";
 import { createLazyPromiseLoader } from "../shared/lazy-promise.js";
 import { registerSkillUsageTracking } from "../skills/workshop/curator.js";
 import {
@@ -75,7 +81,8 @@ export function startGatewayMaintenanceTimers(params: {
     includeSensitive?: boolean;
   }) => Promise<HealthSummary>;
   logHealth: { info: (msg: string) => void; error: (msg: string) => void };
-  restartRunningChannels: () => Promise<void>;
+  restartRunningChannels: (shouldContinue?: () => boolean) => Promise<void>;
+  activeWorkInspectors: Partial<GatewayActiveWorkInspectors>;
   refreshPresence: () => void;
   resetEventLoopHealth: () => void;
   dedupe: Map<string, DedupeEntry>;
@@ -115,10 +122,35 @@ export function startGatewayMaintenanceTimers(params: {
     params.nodeSendToAllSubscribed("health", snap);
   });
 
+  const restartChannelsIfIdle = async (): Promise<boolean> => {
+    let invalidated = false;
+    const admission = tryBeginGatewaySuspendAdmission(() => {
+      invalidated = true;
+    });
+    if (!admission) {
+      return false;
+    }
+    const snapshot = createGatewayActiveWorkSnapshot(params.activeWorkInspectors, {
+      ignoreTerminalSessions: true,
+    });
+    if (!snapshot.idle) {
+      admission.rollback();
+      return false;
+    }
+    if (!admission.commit()) {
+      return false;
+    }
+    try {
+      await params.restartRunningChannels(() => !invalidated);
+      return !invalidated;
+    } finally {
+      admission.release();
+    }
+  };
+
   const hostThawRecovery = createHostThawRecovery({
     nowMs: Date.now,
-    getSuspendLifecycleEvidence: getGatewaySuspendLifecycleEvidence,
-    restartChannels: params.restartRunningChannels,
+    restartChannelsIfIdle,
     refreshHealth: async () => {
       await params.refreshGatewayHealthSnapshot({ probe: true });
     },

@@ -190,9 +190,9 @@ export async function startGatewayCoreRuntime(input: {
         getPresenceVersion,
         getHealthVersion,
         refreshGatewayHealthSnapshot: refreshGatewayHealthSnapshotWithRuntime,
-        restartRunningChannels: async () =>
+        restartRunningChannels: async (shouldContinue = () => !isGatewayWorkAdmissionClosed()) =>
           await restartRunningChannelAccounts(channelManager, {
-            shouldContinue: () => !isGatewayWorkAdmissionClosed(),
+            shouldContinue,
             onError: (message) => logHealth.error(message),
           }),
         refreshPresence: () =>

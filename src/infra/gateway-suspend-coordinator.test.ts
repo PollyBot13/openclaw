@@ -22,7 +22,6 @@ import {
   type GatewayActiveWorkInspectors,
 } from "./gateway-active-work.js";
 import {
-  getGatewaySuspendLifecycleEvidence,
   getGatewaySuspendStatus,
   prepareGatewaySuspend,
   resetGatewaySuspendCoordinatorForLifecycleRestart,
@@ -67,34 +66,6 @@ afterEach(() => {
 });
 
 describe("gateway suspend coordinator", () => {
-  it("records only successful explicit resumes as wake evidence", () => {
-    const initialGeneration = getGatewaySuspendLifecycleEvidence().resumeGeneration;
-    const result = prepareGatewaySuspend({
-      requestId: "request-wake-evidence",
-      pauseScheduling: vi.fn(),
-      resumeScheduling: vi.fn(),
-      inspect: inspectors(),
-      createSuspensionId: () => "suspension-wake-evidence",
-    });
-
-    expect(result).toMatchObject({ status: "ready" });
-    expect(getGatewaySuspendLifecycleEvidence()).toEqual({
-      isHeld: true,
-      resumeGeneration: initialGeneration,
-    });
-    expect(resumeGatewaySuspend("wrong-id")).toEqual({
-      ok: false,
-      reason: "suspension-mismatch",
-    });
-    expect(getGatewaySuspendLifecycleEvidence().resumeGeneration).toBe(initialGeneration);
-
-    expect(resumeGatewaySuspend("suspension-wake-evidence")).toMatchObject({ resumed: true });
-    expect(getGatewaySuspendLifecycleEvidence()).toEqual({
-      isHeld: false,
-      resumeGeneration: initialGeneration + 1,
-    });
-  });
-
   it.each([false, true])(
     "lifecycle reset resumes a held scheduler before admission is cleared (drain: %s)",
     (drain) => {

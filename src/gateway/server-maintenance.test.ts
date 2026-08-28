@@ -2,10 +2,15 @@
 // stale chat buffers, expired runs, health summaries, and timer disposal.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedWorktrees } from "../agents/worktrees/service.js";
+import {
+  isGatewayWorkAdmissionClosed,
+  resetGatewayWorkAdmission,
+  tryBeginGatewayRootWorkAdmission,
+} from "../process/gateway-work-admission.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import type { HealthSummary } from "./health/types.js";
 import { createChatAbortMarker } from "./server-chat-state.js";
-import { DEDUPE_MAX, DEDUPE_TTL_MS } from "./server-constants.js";
+import { DEDUPE_MAX, DEDUPE_TTL_MS, TICK_INTERVAL_MS } from "./server-constants.js";
 import { pendingChatSendDedupeKey } from "./server-shared.js";
 import { createGatewayMaintenanceStateForTest } from "./test-helpers.maintenance-state.js";
 
@@ -165,6 +170,7 @@ async function stopMaintenanceTimers(timers: {
 
 describe("startGatewayMaintenanceTimers", () => {
   afterEach(() => {
+    resetGatewayWorkAdmission();
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -177,6 +183,39 @@ describe("startGatewayMaintenanceTimers", () => {
       deletedFileCount: 0,
       retainedCount: 0,
     });
+  });
+
+  it("defers a thaw restart behind active work, then fences the idle restart", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
+    resetGatewayWorkAdmission();
+    let activeChatRuns = 1;
+    const restartRunningChannels = vi.fn(async (shouldContinue?: () => boolean) => {
+      expect(isGatewayWorkAdmissionClosed()).toBe(true);
+      expect(shouldContinue?.()).toBe(true);
+      expect(tryBeginGatewayRootWorkAdmission()).toBeNull();
+    });
+    const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");
+    const timers = startGatewayMaintenanceTimers({
+      ...createMaintenanceTimerDeps(),
+      restartRunningChannels,
+      activeWorkInspectors: {
+        getChatRuns: () => activeChatRuns,
+      },
+    });
+
+    vi.setSystemTime(Date.now() + TICK_INTERVAL_MS + 45_000);
+    await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+    expect(restartRunningChannels).not.toHaveBeenCalled();
+    expect(isGatewayWorkAdmissionClosed()).toBe(false);
+
+    activeChatRuns = 0;
+    await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+    expect(restartRunningChannels).toHaveBeenCalledOnce();
+    expect(isGatewayWorkAdmissionClosed()).toBe(false);
+
+    await stopMaintenanceTimers(timers);
+    resetGatewayWorkAdmission();
   });
 
   it("does not run media cleanup before the lifecycle owner activates it", async () => {

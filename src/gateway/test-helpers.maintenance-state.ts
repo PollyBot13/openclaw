@@ -19,6 +19,7 @@ export function createGatewayMaintenanceStateForTest(params?: {
       params?.healthSummary ?? ({ ok: true } as HealthSummary),
     logHealth: { info: () => {}, error: () => {} },
     restartRunningChannels: async () => {},
+    activeWorkInspectors: {},
     refreshPresence: () => {},
     resetEventLoopHealth: () => {},
     dedupe: new Map(),

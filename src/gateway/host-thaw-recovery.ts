@@ -6,8 +6,7 @@ const HOST_THAW_MIN_FROZEN_MS = 45_000;
 
 type HostThawDeps = {
   nowMs: () => number;
-  getSuspendLifecycleEvidence: () => { isHeld: boolean; resumeGeneration: number };
-  restartChannels: () => Promise<void>;
+  restartChannelsIfIdle: () => Promise<boolean>;
   refreshHealth: () => Promise<void>;
   refreshPresence: () => void;
   resetEventLoopHealth: () => void;
@@ -17,8 +16,7 @@ type HostThawDeps = {
 
 export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promise<void> } {
   let lastTickAtMs = deps.nowMs();
-  let lastResumeGeneration = deps.getSuspendLifecycleEvidence().resumeGeneration;
-  let pendingRecovery: { frozenMs: number; restartChannels: boolean } | undefined;
+  let pendingFrozenMs: number | undefined;
   let activeRecovery: Promise<void> | undefined;
 
   const runStep = async (label: string, step: () => void | Promise<void>) => {
@@ -29,27 +27,38 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
     }
   };
 
-  const recover = async (frozenMs: number, restartChannels: boolean) => {
+  const recover = async (frozenMs: number) => {
     deps.logger.info(
-      restartChannels
-        ? `host thaw detected: process was frozen ~${Math.round(frozenMs)}ms; restarting channels and refreshing health`
-        : `host timing gap detected: process was frozen ~${Math.round(frozenMs)}ms; refreshing health without restarting channels`,
+      `host timing gap detected: process was frozen ~${Math.round(frozenMs)}ms; restarting channels when idle and refreshing health`,
     );
-    const recoverySteps: ReadonlyArray<readonly [string, () => void | Promise<void>]> = [
-      ["event-loop reset", deps.resetEventLoopHealth],
-      ...(restartChannels ? [["channel restart", deps.restartChannels] as const] : []),
+    const deferForAdmission = () => {
+      if (deps.isAdmissionClosed()) {
+        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, frozenMs);
+        deps.logger.info("host thaw recovery deferred: gateway suspension began mid-recovery");
+        return true;
+      }
+      return false;
+    };
+    if (deferForAdmission()) {
+      return;
+    }
+    await runStep("event-loop reset", deps.resetEventLoopHealth);
+    if (deferForAdmission()) {
+      return;
+    }
+    try {
+      if (!(await deps.restartChannelsIfIdle())) {
+        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, frozenMs);
+        deps.logger.info("host thaw channel restart deferred: gateway still has active work");
+      }
+    } catch (error) {
+      deps.logger.error(`host thaw channel restart failed: ${String(error)}`);
+    }
+    for (const [label, step] of [
       ["health refresh", deps.refreshHealth],
       ["presence refresh", deps.refreshPresence],
-    ];
-    for (const [label, step] of recoverySteps) {
-      if (deps.isAdmissionClosed()) {
-        // Every recovery step is idempotent, so a partially completed thaw is
-        // deliberately replayed from the start after admission reopens.
-        pendingRecovery = {
-          frozenMs: Math.max(pendingRecovery?.frozenMs ?? 0, frozenMs),
-          restartChannels: pendingRecovery?.restartChannels === true || restartChannels,
-        };
-        deps.logger.info("host thaw recovery deferred: gateway suspension began mid-recovery");
+    ] as const) {
+      if (deferForAdmission()) {
         return;
       }
       await runStep(label, step);
@@ -61,26 +70,17 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       const nowMs = deps.nowMs();
       const gapMs = nowMs - lastTickAtMs;
       lastTickAtMs = nowMs;
-      const suspendEvidence = deps.getSuspendLifecycleEvidence();
-      const resumedSinceLastTick = suspendEvidence.resumeGeneration !== lastResumeGeneration;
-      lastResumeGeneration = suspendEvidence.resumeGeneration;
-      const hasExplicitWakeEvidence = suspendEvidence.isHeld || resumedSinceLastTick;
       if (gapMs >= TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS) {
-        pendingRecovery = {
-          frozenMs: Math.max(pendingRecovery?.frozenMs ?? 0, gapMs - TICK_INTERVAL_MS),
-          restartChannels: pendingRecovery?.restartChannels === true || hasExplicitWakeEvidence,
-        };
-      } else if (pendingRecovery && hasExplicitWakeEvidence) {
-        pendingRecovery.restartChannels = true;
+        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, gapMs - TICK_INTERVAL_MS);
       }
       // Suspension/restart owns the closed period. Recovery must wait rather than
       // waking channels while the controller deliberately keeps the gateway quiet.
-      if (!pendingRecovery || deps.isAdmissionClosed() || activeRecovery) {
+      if (pendingFrozenMs === undefined || deps.isAdmissionClosed() || activeRecovery) {
         return;
       }
-      const recovery = pendingRecovery;
-      pendingRecovery = undefined;
-      activeRecovery = recover(recovery.frozenMs, recovery.restartChannels);
+      const frozenMs = pendingFrozenMs;
+      pendingFrozenMs = undefined;
+      activeRecovery = recover(frozenMs);
       try {
         await activeRecovery;
       } finally {
