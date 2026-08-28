@@ -72,11 +72,22 @@ describe("host thaw recovery", () => {
     await harness.advance(TICK_INTERVAL_MS + HOST_THAW_MIN_FROZEN_MS);
     expect(harness.deps.restartChannelsIfIdle).toHaveBeenCalledOnce();
     expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
+    expect(harness.deps.refreshPresence).toHaveBeenCalledOnce();
+    expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledOnce();
+
+    await harness.advance(TICK_INTERVAL_MS);
+    expect(harness.deps.restartChannelsIfIdle).toHaveBeenCalledTimes(2);
+    expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
+    expect(harness.deps.refreshPresence).toHaveBeenCalledOnce();
+    expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledOnce();
 
     harness.setRestartIdle(true);
     await harness.advance(TICK_INTERVAL_MS);
 
-    expect(harness.deps.restartChannelsIfIdle).toHaveBeenCalledTimes(2);
+    expect(harness.deps.restartChannelsIfIdle).toHaveBeenCalledTimes(3);
+    expect(harness.deps.refreshHealth).toHaveBeenCalledOnce();
+    expect(harness.deps.refreshPresence).toHaveBeenCalledOnce();
+    expect(harness.deps.resetEventLoopHealth).toHaveBeenCalledOnce();
     expect(harness.deps.logger.info).toHaveBeenCalledWith(
       "host thaw channel restart deferred: gateway still has active work",
     );

@@ -17,6 +17,7 @@ type HostThawDeps = {
 export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promise<void> } {
   let lastTickAtMs = deps.nowMs();
   let pendingFrozenMs: number | undefined;
+  let pendingChannelRestart = false;
   let activeRecovery: Promise<void> | undefined;
 
   const runStep = async (label: string, step: () => void | Promise<void>) => {
@@ -24,6 +25,17 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       await step();
     } catch (error) {
       deps.logger.error(`host thaw ${label} failed: ${String(error)}`);
+    }
+  };
+
+  const restartChannels = async () => {
+    try {
+      pendingChannelRestart = !(await deps.restartChannelsIfIdle());
+      if (pendingChannelRestart) {
+        deps.logger.info("host thaw channel restart deferred: gateway still has active work");
+      }
+    } catch (error) {
+      deps.logger.error(`host thaw channel restart failed: ${String(error)}`);
     }
   };
 
@@ -46,14 +58,7 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
     if (deferForAdmission()) {
       return;
     }
-    try {
-      if (!(await deps.restartChannelsIfIdle())) {
-        pendingFrozenMs = Math.max(pendingFrozenMs ?? 0, frozenMs);
-        deps.logger.info("host thaw channel restart deferred: gateway still has active work");
-      }
-    } catch (error) {
-      deps.logger.error(`host thaw channel restart failed: ${String(error)}`);
-    }
+    await restartChannels();
     for (const [label, step] of [
       ["health refresh", deps.refreshHealth],
       ["presence refresh", deps.refreshPresence],
@@ -75,12 +80,16 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
       }
       // Suspension/restart owns the closed period. Recovery must wait rather than
       // waking channels while the controller deliberately keeps the gateway quiet.
-      if (pendingFrozenMs === undefined || deps.isAdmissionClosed() || activeRecovery) {
+      if (
+        (pendingFrozenMs === undefined && !pendingChannelRestart) ||
+        deps.isAdmissionClosed() ||
+        activeRecovery
+      ) {
         return;
       }
       const frozenMs = pendingFrozenMs;
       pendingFrozenMs = undefined;
-      activeRecovery = recover(frozenMs);
+      activeRecovery = frozenMs === undefined ? restartChannels() : recover(frozenMs);
       try {
         await activeRecovery;
       } finally {
