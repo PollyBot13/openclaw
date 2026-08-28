@@ -130,9 +130,17 @@ export function startGatewayMaintenanceTimers(params: {
     if (!admission) {
       return false;
     }
-    const snapshot = createGatewayActiveWorkSnapshot(params.activeWorkInspectors, {
-      ignoreTerminalSessions: true,
-    });
+    let snapshot: ReturnType<typeof createGatewayActiveWorkSnapshot>;
+    try {
+      snapshot = createGatewayActiveWorkSnapshot(params.activeWorkInspectors, {
+        ignoreTerminalSessions: true,
+      });
+    } catch (error) {
+      // Inspection runs while admission is preparing. Never strand that global
+      // fence closed when an inspector fails before the restart can commit.
+      admission.rollback();
+      throw error;
+    }
     if (!snapshot.idle) {
       admission.rollback();
       return false;

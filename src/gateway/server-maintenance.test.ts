@@ -218,6 +218,44 @@ describe("startGatewayMaintenanceTimers", () => {
     resetGatewayWorkAdmission();
   });
 
+  it("reopens admission when thaw active-work inspection fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T00:00:00Z"));
+    const restartRunningChannels = vi.fn(async () => {});
+    const logHealth = { info: vi.fn(), error: vi.fn() };
+    let inspectionFails = true;
+    const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");
+    const timers = startGatewayMaintenanceTimers({
+      ...createMaintenanceTimerDeps(),
+      logHealth,
+      restartRunningChannels,
+      activeWorkInspectors: {
+        getChatRuns: () => {
+          if (inspectionFails) {
+            throw new Error("inspection failed");
+          }
+          return 0;
+        },
+      },
+    });
+
+    vi.setSystemTime(Date.now() + TICK_INTERVAL_MS + 45_000);
+    await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+
+    expect(restartRunningChannels).not.toHaveBeenCalled();
+    expect(isGatewayWorkAdmissionClosed()).toBe(false);
+    expect(logHealth.error).toHaveBeenCalledWith(
+      "host thaw channel restart failed: Error: inspection failed",
+    );
+
+    inspectionFails = false;
+    await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS);
+    expect(restartRunningChannels).toHaveBeenCalledOnce();
+    expect(isGatewayWorkAdmissionClosed()).toBe(false);
+
+    await stopMaintenanceTimers(timers);
+  });
+
   it("does not run media cleanup before the lifecycle owner activates it", async () => {
     vi.useFakeTimers();
     const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");

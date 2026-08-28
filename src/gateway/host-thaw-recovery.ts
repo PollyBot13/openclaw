@@ -35,6 +35,7 @@ export function createHostThawRecovery(deps: HostThawDeps): { tick: () => Promis
         deps.logger.info("host thaw channel restart deferred: gateway still has active work");
       }
     } catch (error) {
+      pendingChannelRestart = true;
       deps.logger.error(`host thaw channel restart failed: ${String(error)}`);
     }
   };
