@@ -103,6 +103,7 @@ type FinishUpdateParams = Parameters<typeof finishUpdate>[0];
 const stdinIsTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (stdinIsTTYDescriptor) {
     Object.defineProperty(process.stdin, "isTTY", stdinIsTTYDescriptor);
   } else {
@@ -979,6 +980,19 @@ describe("failed Git update recovery restart", () => {
     expect(output).toContain("resolve the reported changes");
     expect(output).toContain("rerun `openclaw update`");
     expect(output).toContain("Keep the gateway stopped until the update succeeds");
+  });
+
+  it("preserves the active profile in unsafe recovery guidance", async () => {
+    vi.stubEnv("OPENCLAW_PROFILE", "work");
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
+
+    await finishFailedUpdate(
+      failedResult({ serviceRestartSafe: false, reason: "rollback-checkout-dirty" }),
+    );
+
+    const output = log.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("rerun `openclaw --profile work update`");
+    expect(output).not.toContain("rerun `openclaw update`");
   });
 
   it("does not claim an unsafe recovery stopped a service that was already down", async () => {

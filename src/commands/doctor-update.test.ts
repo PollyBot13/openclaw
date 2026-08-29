@@ -163,6 +163,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   if (originalStdinIsTtyDescriptor) {
     Object.defineProperty(process.stdin, "isTTY", originalStdinIsTtyDescriptor);
@@ -812,6 +813,27 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     expect(recoveryNote).toContain("resolve the reported changes");
     expect(recoveryNote).not.toContain("remains stopped");
     expect(recoveryNote).not.toContain("Keep the gateway stopped");
+  });
+
+  it("preserves the active profile in unsafe recovery guidance", async () => {
+    vi.stubEnv("OPENCLAW_PROFILE", "work");
+    mockGitCheckout();
+    mockManagedService({
+      verdict: { kind: "owned", refreshDefinition: true, fingerprint: "opaque" },
+    });
+    mockUpdateResult({
+      status: "error",
+      mode: "git",
+      root: "/repo/link",
+      recovery: { serviceRestartSafe: false, reason: "rollback-checkout-dirty" },
+    });
+
+    await runOffer({ confirm: vi.fn().mockResolvedValue(true) });
+
+    expect(mocks.note).toHaveBeenCalledWith(
+      expect.stringContaining("rerun `openclaw --profile work update`"),
+      "Update",
+    );
   });
 
   it("leaves a running gateway alone when service repair is externally managed", async () => {
