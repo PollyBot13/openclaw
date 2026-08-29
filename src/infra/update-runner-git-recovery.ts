@@ -11,6 +11,7 @@ import { runStep } from "./update-runner-command.js";
 import {
   resolveBuildEnv,
   resolveInstallEnv,
+  gitCleanCheckArgs,
   shouldInstallWithoutScriptsOnWindows,
 } from "./update-runner-git-commands.js";
 import type { CommandRunner, UpdateStepResult } from "./update-runner-types.js";
@@ -106,6 +107,25 @@ export async function rebuildRolledBackGitRuntime(params: {
     );
     if (!built) {
       return appendFailure("build-failed", "failed to rebuild the original checkout");
+    }
+
+    const cleanCheck = await runStep({
+      runCommand: params.runCommand,
+      name: "git rollback build clean check",
+      argv: gitCleanCheckArgs(params.gitRoot),
+      cwd: params.gitRoot,
+      timeoutMs: params.timeoutMs,
+      stepIndex: 0,
+      totalSteps: 1,
+      results: params.steps,
+    });
+    if (cleanCheck.exitCode !== 0 || cleanCheck.stdoutTail?.trim()) {
+      return appendFailure(
+        "runtime-verification-failed",
+        cleanCheck.exitCode !== 0
+          ? "failed to verify rollback checkout cleanliness"
+          : `rollback build left checkout dirty: ${cleanCheck.stdoutTail?.trim()}`,
+      );
     }
 
     const runtimeErrors = await collectGitRuntimeErrors({

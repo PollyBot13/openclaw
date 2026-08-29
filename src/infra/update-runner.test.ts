@@ -2031,7 +2031,7 @@ describe("runGatewayUpdate", () => {
           " M extensions/browser/chrome-extension/modules/copilot-runtime.js\n?? generated-build-output.tmp",
       }),
     );
-    expect(calls.filter((call) => call === statusCommand)).toHaveLength(2);
+    expect(calls.filter((call) => call === statusCommand)).toHaveLength(3);
     expect(calls).not.toContain("pnpm ui:build");
     expect(calls).toContain(`git -C ${tempDir} reset --hard`);
     expect(calls).toContain(`git -C ${tempDir} clean -fd -e dist/control-ui/`);
@@ -3364,11 +3364,27 @@ describe("runGatewayUpdate", () => {
   });
 
   it.each([
-    { bundle: "complete", missingRollbackStartupAsset: false, serviceRestartSafe: true },
-    { bundle: "incomplete", missingRollbackStartupAsset: true, serviceRestartSafe: false },
+    {
+      bundle: "complete",
+      missingRollbackStartupAsset: false,
+      rollbackBuildDirty: false,
+      serviceRestartSafe: true,
+    },
+    {
+      bundle: "incomplete",
+      missingRollbackStartupAsset: true,
+      rollbackBuildDirty: false,
+      serviceRestartSafe: false,
+    },
+    {
+      bundle: "dirty rollback build",
+      missingRollbackStartupAsset: false,
+      rollbackBuildDirty: true,
+      serviceRestartSafe: false,
+    },
   ])(
     "rolls pnpm 12 back to 11 and allows restart only with a $bundle startup bundle",
-    async ({ missingRollbackStartupAsset, serviceRestartSafe }) => {
+    async ({ missingRollbackStartupAsset, rollbackBuildDirty, serviceRestartSafe }) => {
       await setupGitCheckout({ packageManager: "pnpm@11.22.0" });
       const beforeSha = "a".repeat(40);
       const targetSha = "b".repeat(40);
@@ -3378,6 +3394,7 @@ describe("runGatewayUpdate", () => {
       const calls: string[] = [];
       const buildEnvs: NodeJS.ProcessEnv[] = [];
       const managerVersions: string[] = [];
+      const statusCommand = `git -C ${tempDir} status --porcelain -- :!dist/control-ui/`;
       const doctorNodePath = await resolveStableNodePath(process.execPath);
       const doctorCommand = `${doctorNodePath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`;
       const writeRuntime = async (head: string) => {
@@ -3452,6 +3469,9 @@ describe("runGatewayUpdate", () => {
           await writeRuntime(currentHead);
           return toCommandResult();
         }
+        if (key === statusCommand && rollbackBuildDirty && buildCount >= 2) {
+          return toCommandResult({ stdout: " M pnpm-lock.yaml\n" });
+        }
         if (key === doctorCommand) {
           return toCommandResult({ code: 1, stderr: "doctor failed after build" });
         }
@@ -3491,6 +3511,15 @@ describe("runGatewayUpdate", () => {
         name: "git rollback runtime verify",
         exitCode: serviceRestartSafe ? 0 : 1,
       });
+      if (rollbackBuildDirty) {
+        expect(result.steps).toContainEqual(
+          expect.objectContaining({
+            name: "git rollback build clean check",
+            exitCode: 0,
+            stdoutTail: " M pnpm-lock.yaml",
+          }),
+        );
+      }
       expect(calls.indexOf(doctorCommand)).toBeLessThan(
         calls.lastIndexOf(`git -C ${tempDir} rev-parse HEAD`),
       );
