@@ -158,12 +158,17 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
     note(resultDetails.join("\n"), "Update result");
     if (result.status !== "ok") {
       if (result.recovery?.serviceRestartSafe === false) {
-        if (inspection?.stopped) {
-          note(
-            `Managed gateway remains stopped because update recovery could not prove a runnable installation (${result.recovery.reason}).\n${resolveUnsafeUpdateRecoveryGuidance(result.recovery.reason)}`,
-            "Update",
-          );
-        }
+        const managedGatewayStopped = inspection?.stopped === true;
+        const summary = managedGatewayStopped
+          ? `Managed gateway remains stopped because update recovery could not prove a runnable installation (${result.recovery.reason}).`
+          : `Update recovery could not prove a runnable installation (${result.recovery.reason}).`;
+        const keepStopped = managedGatewayStopped
+          ? "\nKeep the gateway stopped until the update succeeds."
+          : "";
+        note(
+          `${summary}\n${resolveUnsafeUpdateRecoveryGuidance(result.recovery.reason)}${keepStopped}`,
+          "Update",
+        );
       } else {
         await serviceLifecycle?.maybeRestartServiceAfterFailedMutableUpdate({
           root: result.root,

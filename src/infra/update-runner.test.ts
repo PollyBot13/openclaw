@@ -3367,24 +3367,30 @@ describe("runGatewayUpdate", () => {
     {
       bundle: "complete",
       missingRollbackStartupAsset: false,
-      rollbackBuildDirty: false,
+      rollbackBuildStatus: null,
       serviceRestartSafe: true,
     },
     {
       bundle: "incomplete",
       missingRollbackStartupAsset: true,
-      rollbackBuildDirty: false,
+      rollbackBuildStatus: null,
       serviceRestartSafe: false,
     },
     {
       bundle: "dirty rollback build",
       missingRollbackStartupAsset: false,
-      rollbackBuildDirty: true,
+      rollbackBuildStatus: " M pnpm-lock.yaml\n",
+      serviceRestartSafe: false,
+    },
+    {
+      bundle: "untracked rollback output",
+      missingRollbackStartupAsset: false,
+      rollbackBuildStatus: "?? generated.tmp\n",
       serviceRestartSafe: false,
     },
   ])(
     "rolls pnpm 12 back to 11 and allows restart only with a $bundle startup bundle",
-    async ({ missingRollbackStartupAsset, rollbackBuildDirty, serviceRestartSafe }) => {
+    async ({ missingRollbackStartupAsset, rollbackBuildStatus, serviceRestartSafe }) => {
       await setupGitCheckout({ packageManager: "pnpm@11.22.0" });
       const beforeSha = "a".repeat(40);
       const targetSha = "b".repeat(40);
@@ -3469,8 +3475,8 @@ describe("runGatewayUpdate", () => {
           await writeRuntime(currentHead);
           return toCommandResult();
         }
-        if (key === statusCommand && rollbackBuildDirty && buildCount >= 2) {
-          return toCommandResult({ stdout: " M pnpm-lock.yaml\n" });
+        if (key === statusCommand && rollbackBuildStatus && buildCount >= 2) {
+          return toCommandResult({ stdout: rollbackBuildStatus });
         }
         if (key === doctorCommand) {
           return toCommandResult({ code: 1, stderr: "doctor failed after build" });
@@ -3498,7 +3504,7 @@ describe("runGatewayUpdate", () => {
           ? { serviceRestartSafe: true }
           : {
               serviceRestartSafe: false,
-              reason: rollbackBuildDirty
+              reason: rollbackBuildStatus
                 ? "rollback-checkout-dirty"
                 : "runtime-verification-failed",
             },
@@ -3516,12 +3522,12 @@ describe("runGatewayUpdate", () => {
         name: "git rollback runtime verify",
         exitCode: serviceRestartSafe ? 0 : 1,
       });
-      if (rollbackBuildDirty) {
+      if (rollbackBuildStatus) {
         expect(result.steps).toContainEqual(
           expect.objectContaining({
             name: "git rollback build clean check",
             exitCode: 0,
-            stdoutTail: " M pnpm-lock.yaml",
+            stdoutTail: rollbackBuildStatus.trimEnd(),
           }),
         );
       }

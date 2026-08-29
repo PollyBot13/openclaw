@@ -785,6 +785,33 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       expect.stringContaining("rerun `openclaw update`"),
       "Update",
     );
+    expect(mocks.note).toHaveBeenCalledWith(
+      expect.stringContaining("Keep the gateway stopped until the update succeeds"),
+      "Update",
+    );
+  });
+
+  it("shows repair guidance without claiming an already-stopped service changed state", async () => {
+    mockGitCheckout();
+    mockManagedService({
+      verdict: { kind: "owned", refreshDefinition: true, fingerprint: "opaque" },
+      running: false,
+    });
+    mockUpdateResult({
+      status: "error",
+      mode: "git",
+      root: "/repo/link",
+      recovery: { serviceRestartSafe: false, reason: "rollback-checkout-dirty" },
+    });
+
+    await runOffer({ confirm: vi.fn().mockResolvedValue(true) });
+
+    const recoveryNote = mocks.note.mock.calls.find((call) =>
+      String(call[0]).includes("rollback-checkout-dirty"),
+    )?.[0];
+    expect(recoveryNote).toContain("resolve the reported changes");
+    expect(recoveryNote).not.toContain("remains stopped");
+    expect(recoveryNote).not.toContain("Keep the gateway stopped");
   });
 
   it("leaves a running gateway alone when service repair is externally managed", async () => {
