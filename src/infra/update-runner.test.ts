@@ -3496,7 +3496,12 @@ describe("runGatewayUpdate", () => {
         reason: "doctor-failed",
         recovery: serviceRestartSafe
           ? { serviceRestartSafe: true }
-          : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+          : {
+              serviceRestartSafe: false,
+              reason: rollbackBuildDirty
+                ? "rollback-checkout-dirty"
+                : "runtime-verification-failed",
+            },
       });
       expect(buildCount).toBe(2);
       expect(buildEnvs).toEqual([

@@ -20,6 +20,7 @@ type RecoveryReason =
   | "manager-unavailable"
   | "deps-install-failed"
   | "build-failed"
+  | "rollback-checkout-dirty"
   | "runtime-verification-failed";
 
 type GitRuntimeRecovery =
@@ -119,12 +120,16 @@ export async function rebuildRolledBackGitRuntime(params: {
       totalSteps: 1,
       results: params.steps,
     });
-    if (cleanCheck.exitCode !== 0 || cleanCheck.stdoutTail?.trim()) {
+    if (cleanCheck.exitCode !== 0) {
       return appendFailure(
         "runtime-verification-failed",
-        cleanCheck.exitCode !== 0
-          ? "failed to verify rollback checkout cleanliness"
-          : `rollback build left checkout dirty: ${cleanCheck.stdoutTail?.trim()}`,
+        "failed to verify rollback checkout cleanliness",
+      );
+    }
+    if (cleanCheck.stdoutTail?.trim()) {
+      return appendFailure(
+        "rollback-checkout-dirty",
+        `rollback build left checkout dirty: ${cleanCheck.stdoutTail.trim()}`,
       );
     }
 

@@ -956,5 +956,24 @@ describe("failed Git update recovery restart", () => {
 
     expect(mocks.restart).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Managed gateway remains stopped"));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("repair the checkout or installation"),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("rerun `openclaw update`"));
+  });
+
+  it("explains how to recover from a dirty rollback checkout", async () => {
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
+
+    await finishFailedUpdate(
+      failedResult({ serviceRestartSafe: false, reason: "rollback-checkout-dirty" }),
+    );
+
+    const output = log.mock.calls.flat().map(String).join("\n");
+    expect(mocks.restart).not.toHaveBeenCalled();
+    expect(output).toContain("git status --short");
+    expect(output).toContain("resolve the tracked changes");
+    expect(output).toContain("rerun `openclaw update`");
+    expect(output).toContain("Keep the gateway stopped until the update succeeds");
   });
 });
