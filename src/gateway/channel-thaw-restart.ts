@@ -65,12 +65,17 @@ export async function restartRunningChannelAccounts(
       return [...failedTargets, ...targets.slice(index)];
     }
     try {
-      const current = manager.getRuntimeSnapshot().channelAccounts[channelId]?.[accountId];
-      if (current) {
-        await manager.stopChannel(channelId, accountId, { manual: false });
-        if (!opts.shouldContinue()) {
-          return [...failedTargets, target, ...targets.slice(index + 1)];
-        }
+      let current = manager.getRuntimeSnapshot().channelAccounts[channelId]?.[accountId];
+      if (!current) {
+        continue;
+      }
+      await manager.stopChannel(channelId, accountId, { manual: false });
+      if (!opts.shouldContinue()) {
+        return [...failedTargets, target, ...targets.slice(index + 1)];
+      }
+      current = manager.getRuntimeSnapshot().channelAccounts[channelId]?.[accountId];
+      if (!current) {
+        continue;
       }
       let startOutcome = await manager.startChannelAccountForRecovery(channelId, accountId, {
         preserveManualStop: true,

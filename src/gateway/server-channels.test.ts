@@ -1216,6 +1216,53 @@ describe("server-channels auto restart", () => {
     ).toBe(true);
   });
 
+  it("discards a deferred thaw target removed from the current account list", async () => {
+    let accountIds = ["removed"];
+    let failStart = false;
+    const startAccount = vi.fn(
+      async (context: ChannelGatewayContext<TestAccount>) =>
+        await new Promise<void>((resolve) => {
+          context.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+    installTestRegistry(
+      createTestPlugin({
+        listAccountIds: () => accountIds,
+        isConfigured: async () => {
+          if (failStart) {
+            throw new Error("start preflight failed");
+          }
+          return true;
+        },
+        startAccount,
+      }),
+    );
+    const manager = createManager();
+    await manager.startChannels();
+    await vi.waitFor(() => expect(startAccount).toHaveBeenCalledOnce());
+
+    failStart = true;
+    const failedTargets = await restartRunningChannelAccounts(manager, {
+      shouldContinue: () => true,
+      onError: () => {},
+    });
+    expect(failedTargets).toEqual([{ channelId: "discord", accountId: "removed" }]);
+
+    accountIds = [];
+    failStart = false;
+    const errors: string[] = [];
+    const second = await restartRunningChannelAccounts(
+      manager,
+      { shouldContinue: () => true, onError: (message) => errors.push(message) },
+      { kind: "deferred-retry", targets: failedTargets },
+    );
+
+    expect(second).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(startAccount).toHaveBeenCalledOnce();
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.removed).toBeUndefined();
+  });
+
   it.each(["disabled", "unconfigured"] as const)(
     "does not retain an account that becomes %s during host-thaw recovery",
     async (skipReason) => {
