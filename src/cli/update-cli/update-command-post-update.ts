@@ -57,6 +57,7 @@ import {
   tryInstallShellCompletion,
   type PreManagedServiceStop,
 } from "./update-command-service.js";
+import { resolveUnsafeUpdateRecoveryGuidance } from "./update-recovery-guidance.js";
 
 const CLI_NAME = resolveCliName();
 
@@ -129,19 +130,9 @@ export async function finishUpdate(params: {
             `Managed gateway remains stopped because update recovery could not prove a runnable installation (${params.result.recovery.reason}).`,
           ),
         );
-        if (params.result.recovery.reason === "rollback-checkout-dirty") {
-          defaultRuntime.log(
-            theme.muted(
-              "Inspect the checkout with `git status --short`, resolve the tracked changes, then rerun `openclaw update`. Keep the gateway stopped until the update succeeds.",
-            ),
-          );
-        } else {
-          defaultRuntime.log(
-            theme.muted(
-              "Review the failed recovery step above, repair the checkout or installation, then rerun `openclaw update`. Keep the gateway stopped until the update succeeds.",
-            ),
-          );
-        }
+        defaultRuntime.log(
+          theme.muted(resolveUnsafeUpdateRecoveryGuidance(params.result.recovery.reason)),
+        );
       }
     } else {
       await maybeRestartServiceAfterFailedMutableUpdate({

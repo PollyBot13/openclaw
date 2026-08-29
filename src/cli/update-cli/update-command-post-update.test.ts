@@ -886,10 +886,10 @@ function failedResult(recovery: UpdateRunResult["recovery"]): UpdateRunResult {
   };
 }
 
-async function finishFailedUpdate(result: UpdateRunResult): Promise<void> {
+async function finishFailedUpdate(result: UpdateRunResult, json = false): Promise<void> {
   await finishUpdate({
     result,
-    opts: {},
+    opts: { json },
     showProgress: false,
     preManagedServiceStop: { stopped: true, serviceEnv: {} },
     controlPlaneUpdateSentinelMeta: undefined,
@@ -971,9 +971,24 @@ describe("failed Git update recovery restart", () => {
 
     const output = log.mock.calls.flat().map(String).join("\n");
     expect(mocks.restart).not.toHaveBeenCalled();
+    expect(output).toContain("From the update root shown above");
     expect(output).toContain("git status --short");
     expect(output).toContain("resolve the tracked changes");
     expect(output).toContain("rerun `openclaw update`");
     expect(output).toContain("Keep the gateway stopped until the update succeeds");
+  });
+
+  it("keeps structured JSON recovery free of prose guidance", async () => {
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => undefined);
+    const result = failedResult({
+      serviceRestartSafe: false,
+      reason: "rollback-checkout-dirty",
+    });
+
+    await finishFailedUpdate(result, true);
+
+    expect(mocks.printResult).toHaveBeenCalledWith(result, expect.objectContaining({ json: true }));
+    expect(mocks.restart).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
   });
 });

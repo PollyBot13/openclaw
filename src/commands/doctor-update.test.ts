@@ -239,7 +239,10 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     mode: "git";
     root: string;
     after?: { version: string; buildId?: string };
-    recovery?: { serviceRestartSafe: false; reason: "source-rollback-failed" };
+    recovery?: {
+      serviceRestartSafe: false;
+      reason: "source-rollback-failed" | "rollback-checkout-dirty";
+    };
   }) {
     mocks.runGatewayUpdate.mockImplementation(
       async ({
@@ -750,7 +753,16 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     });
   });
 
-  it("does not restart a stopped service when source rollback could not be verified", async () => {
+  it.each([
+    {
+      reason: "source-rollback-failed" as const,
+      guidance: "repair the checkout or installation",
+    },
+    {
+      reason: "rollback-checkout-dirty" as const,
+      guidance: "From the update root shown above",
+    },
+  ])("does not restart a stopped service after $reason", async ({ reason, guidance }) => {
     mockGitCheckout();
     mockManagedService({
       verdict: { kind: "owned", refreshDefinition: true, fingerprint: "opaque" },
@@ -759,7 +771,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       status: "error",
       mode: "git",
       root: "/repo/link",
-      recovery: { serviceRestartSafe: false, reason: "source-rollback-failed" },
+      recovery: { serviceRestartSafe: false, reason },
     });
 
     await runOffer({ confirm: vi.fn().mockResolvedValue(true) });
@@ -767,6 +779,12 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     expect(mocks.stopGatewayService).toHaveBeenCalledOnce();
     expect(mocks.maybeRestartServiceAfterFailedMutableUpdate).not.toHaveBeenCalled();
     expect(mocks.restartUpdatedGateway).not.toHaveBeenCalled();
+    expect(mocks.note).toHaveBeenCalledWith(expect.stringContaining(`(${reason})`), "Update");
+    expect(mocks.note).toHaveBeenCalledWith(expect.stringContaining(guidance), "Update");
+    expect(mocks.note).toHaveBeenCalledWith(
+      expect.stringContaining("rerun `openclaw update`"),
+      "Update",
+    );
   });
 
   it("leaves a running gateway alone when service repair is externally managed", async () => {

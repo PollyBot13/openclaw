@@ -5,6 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import { note } from "../../packages/terminal-core/src/note.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { createUpdateProgress } from "../cli/update-cli/progress.js";
+import { resolveUnsafeUpdateRecoveryGuidance } from "../cli/update-cli/update-recovery-guidance.js";
 import { isDefaultInstallIdentity } from "../config/paths.js";
 import { readGatewayServiceState, resolveGatewayService } from "../daemon/service.js";
 import { isTruthyEnvValue } from "../infra/env.js";
@@ -156,7 +157,14 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
     ].filter(Boolean);
     note(resultDetails.join("\n"), "Update result");
     if (result.status !== "ok") {
-      if (result.recovery?.serviceRestartSafe !== false) {
+      if (result.recovery?.serviceRestartSafe === false) {
+        if (inspection?.stopped) {
+          note(
+            `Managed gateway remains stopped because update recovery could not prove a runnable installation (${result.recovery.reason}).\n${resolveUnsafeUpdateRecoveryGuidance(result.recovery.reason)}`,
+            "Update",
+          );
+        }
+      } else {
         await serviceLifecycle?.maybeRestartServiceAfterFailedMutableUpdate({
           root: result.root,
           preManagedServiceStop: inspection,
