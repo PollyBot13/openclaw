@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { filterStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { normalizePluginsConfig, resolveEffectivePluginActivationState } from "./config-state.js";
 import type {
   MemoryCorpusSupplement,
   MemoryCorpusSupplementRegistration,
@@ -18,6 +19,7 @@ import type {
   MemoryPromptSupplementRegistration,
   PreparedMemoryPromptSection,
 } from "./registry-contribution-types.js";
+import type { PluginRegistry } from "./registry-types.js";
 import { requireActivePluginRegistry, resolveDirectPluginRegistrationOwner } from "./runtime.js";
 
 const log = createSubsystemLogger("plugins/memory-state");
@@ -99,6 +101,45 @@ export function getMemoryCapabilityRegistration(): MemoryPluginCapabilityRegistr
 
 export function listMemoryCorpusSupplements(): MemoryCorpusSupplementRegistration[] {
   return [...requireActivePluginRegistry().memoryCorpusSupplements];
+}
+
+/** Copies root-owned corpus supplements into a same-workspace scoped registry. */
+export function adoptRuntimeMemoryCorpusSupplementRegistrations(
+  targetRegistry: PluginRegistry,
+  runtimeRegistry: PluginRegistry,
+  config: OpenClawConfig,
+): PluginRegistry {
+  const normalizedConfig = normalizePluginsConfig(config.plugins);
+  const supplements = [...targetRegistry.memoryCorpusSupplements];
+  let changed = false;
+  for (const registration of runtimeRegistry.memoryCorpusSupplements) {
+    if (supplements.some((candidate) => candidate.pluginId === registration.pluginId)) {
+      continue;
+    }
+    const targetOwner = targetRegistry.plugins.find(
+      (plugin) => plugin.id === registration.pluginId,
+    );
+    const runtimeOwner = runtimeRegistry.plugins.find(
+      (plugin) => plugin.id === registration.pluginId,
+    );
+    if (
+      runtimeOwner?.status !== "loaded" ||
+      !resolveEffectivePluginActivationState({
+        id: runtimeOwner.id,
+        origin: runtimeOwner.origin,
+        config: normalizedConfig,
+        rootConfig: config,
+        enabledByDefault: runtimeOwner.activationSource === "default",
+      }).enabled ||
+      (targetOwner &&
+        (targetOwner.status !== "loaded" || targetOwner.source !== runtimeOwner.source))
+    ) {
+      continue;
+    }
+    supplements.push(registration);
+    changed = true;
+  }
+  return changed ? { ...targetRegistry, memoryCorpusSupplements: supplements } : targetRegistry;
 }
 export function registerMemoryPromptSupplement(
   requestedPluginId: string,

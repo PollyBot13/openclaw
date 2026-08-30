@@ -8,10 +8,14 @@ import {
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { extractPluginInstallRecordsFromInstalledPluginIndex } from "../plugins/installed-plugin-index-install-records.js";
 import { loadPluginRegistryHandle } from "../plugins/loader.js";
+import { adoptRuntimeMemoryCorpusSupplementRegistrations } from "../plugins/memory-state.js";
 import { loadPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
-import { getActivePluginRegistry } from "../plugins/runtime.js";
+import {
+  getActivePluginRegistry,
+  getActivePluginRegistryWorkspaceDir,
+} from "../plugins/runtime.js";
 import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeRegistryScope,
@@ -151,5 +155,14 @@ export async function withAgentPluginRegistry<T>(params: {
     config: params.config,
     workspaceDir: params.workspaceDir,
   });
-  return await withPluginRuntimeRegistryScope(pluginRegistry, params.run);
+  const activeRegistry = getActivePluginRegistry();
+  const scopedRegistry =
+    activeRegistry && getActivePluginRegistryWorkspaceDir() === resolveUserPath(params.workspaceDir)
+      ? adoptRuntimeMemoryCorpusSupplementRegistrations(
+          pluginRegistry,
+          activeRegistry,
+          params.config,
+        )
+      : pluginRegistry;
+  return await withPluginRuntimeRegistryScope(scopedRegistry, params.run);
 }

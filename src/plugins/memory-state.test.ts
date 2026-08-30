@@ -1,6 +1,7 @@
 // Covers plugin-backed memory state registration and reset behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  adoptRuntimeMemoryCorpusSupplementRegistrations,
   buildMemoryPromptSection,
   clearMemoryPluginState,
   getMemoryCapabilityRegistration,
@@ -19,6 +20,7 @@ import {
 } from "./memory-state.test-fixtures.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import { withPluginRegistrationContext } from "./runtime.js";
+import { createPluginRecord } from "./status.test-helpers.js";
 
 function createMemoryRuntime() {
   return {
@@ -419,6 +421,22 @@ describe("memory plugin state", () => {
     await expect(
       listMemoryCorpusSupplements()[0]?.supplement.search({ query: "alpha" }),
     ).resolves.toEqual([{ corpus: "wiki", path: "sources/alpha.md", score: 1, snippet: "x" }]);
+  });
+
+  it("does not adopt a corpus supplement across conflicting plugin owners", () => {
+    const supplement = { search: async () => [], get: async () => null };
+    const root = createEmptyPluginRegistry();
+    root.plugins.push(createPluginRecord({ id: "memory-wiki", source: "/root/wiki.js" }));
+    root.memoryCorpusSupplements.push({ pluginId: "memory-wiki", supplement });
+    const scoped = createEmptyPluginRegistry();
+    scoped.plugins.push(createPluginRecord({ id: "memory-wiki", source: "/shadow/wiki.js" }));
+
+    expect(
+      adoptRuntimeMemoryCorpusSupplementRegistrations(scoped, root, {
+        plugins: { allow: ["memory-wiki"], entries: { "memory-wiki": { enabled: true } } },
+      }),
+    ).toBe(scoped);
+    expect(scoped.memoryCorpusSupplements).toEqual([]);
   });
 
   it("clearMemoryPluginState resets both registries", () => {
