@@ -197,6 +197,7 @@ type TaskJobPlan = {
 type AgentTaskMigrationPlan = {
   monitorJobId: string;
   scratchRevision: number;
+  sourceSha256?: string;
   strippedContent: string;
   jobs: TaskJobPlan[];
 };
@@ -355,7 +356,7 @@ function commitAgentTaskMigration(params: {
           .set({
             content: params.plan.strippedContent,
             revision: params.plan.scratchRevision + 1,
-            source_sha256: null,
+            source_sha256: params.plan.sourceSha256 ?? null,
             updated_at_ms: params.nowMs,
           })
           .where("store_key", "=", storeKey)
@@ -551,6 +552,9 @@ export async function maybeMigrateHeartbeatTasksToCron(params: {
     const plan: AgentTaskMigrationPlan = {
       monitorJobId: monitor.jobId,
       scratchRevision,
+      ...(monitor.state.scratch?.sourceSha256
+        ? { sourceSha256: monitor.state.scratch.sourceSha256 }
+        : {}),
       strippedContent: document.strippedContent,
       jobs: jobPlans,
     };
