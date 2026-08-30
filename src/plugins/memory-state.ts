@@ -103,25 +103,36 @@ export function listMemoryCorpusSupplements(): MemoryCorpusSupplementRegistratio
   return [...requireActivePluginRegistry().memoryCorpusSupplements];
 }
 
-/** Copies root-owned corpus supplements into a same-workspace scoped registry. */
-export function adoptRuntimeMemoryCorpusSupplementRegistrations(
+function adoptEligibleRuntimeMemoryRegistrations<T extends { pluginId: string }>(
+  target: T[],
+  runtime: readonly T[],
+  canAdopt: (pluginId: string) => boolean,
+): T[] {
+  const pluginIds = new Set(target.map((registration) => registration.pluginId));
+  let adopted: T[] | undefined;
+  for (const registration of runtime) {
+    if (pluginIds.has(registration.pluginId) || !canAdopt(registration.pluginId)) {
+      continue;
+    }
+    (adopted ??= [...target]).push(registration);
+    pluginIds.add(registration.pluginId);
+  }
+  return adopted ?? target;
+}
+
+/**
+ * Discovery scopes cannot safely rerun full memory plugin setup.
+ * Reuse exact root sidecars only while activation and source ownership still match.
+ */
+export function adoptRuntimeMemoryRegistrations(
   targetRegistry: PluginRegistry,
   runtimeRegistry: PluginRegistry,
   config: OpenClawConfig,
 ): PluginRegistry {
   const normalizedConfig = normalizePluginsConfig(config.plugins);
-  const supplements = [...targetRegistry.memoryCorpusSupplements];
-  let changed = false;
-  for (const registration of runtimeRegistry.memoryCorpusSupplements) {
-    if (supplements.some((candidate) => candidate.pluginId === registration.pluginId)) {
-      continue;
-    }
-    const targetOwner = targetRegistry.plugins.find(
-      (plugin) => plugin.id === registration.pluginId,
-    );
-    const runtimeOwner = runtimeRegistry.plugins.find(
-      (plugin) => plugin.id === registration.pluginId,
-    );
+  const canAdopt = (pluginId: string) => {
+    const targetOwner = targetRegistry.plugins.find((plugin) => plugin.id === pluginId);
+    const runtimeOwner = runtimeRegistry.plugins.find((plugin) => plugin.id === pluginId);
     if (
       runtimeOwner?.status !== "loaded" ||
       !resolveEffectivePluginActivationState({
@@ -134,12 +145,35 @@ export function adoptRuntimeMemoryCorpusSupplementRegistrations(
       (targetOwner &&
         (targetOwner.status !== "loaded" || targetOwner.source !== runtimeOwner.source))
     ) {
-      continue;
+      return false;
     }
-    supplements.push(registration);
-    changed = true;
-  }
-  return changed ? { ...targetRegistry, memoryCorpusSupplements: supplements } : targetRegistry;
+    return true;
+  };
+  const memoryCorpusSupplements = adoptEligibleRuntimeMemoryRegistrations(
+    targetRegistry.memoryCorpusSupplements,
+    runtimeRegistry.memoryCorpusSupplements,
+    canAdopt,
+  );
+  const memoryPromptPreparations = adoptEligibleRuntimeMemoryRegistrations(
+    targetRegistry.memoryPromptPreparations,
+    runtimeRegistry.memoryPromptPreparations,
+    canAdopt,
+  );
+  const memoryPromptSupplements = adoptEligibleRuntimeMemoryRegistrations(
+    targetRegistry.memoryPromptSupplements,
+    runtimeRegistry.memoryPromptSupplements,
+    canAdopt,
+  );
+  return memoryCorpusSupplements === targetRegistry.memoryCorpusSupplements &&
+    memoryPromptPreparations === targetRegistry.memoryPromptPreparations &&
+    memoryPromptSupplements === targetRegistry.memoryPromptSupplements
+    ? targetRegistry
+    : {
+        ...targetRegistry,
+        memoryCorpusSupplements,
+        memoryPromptPreparations,
+        memoryPromptSupplements,
+      };
 }
 export function registerMemoryPromptSupplement(
   requestedPluginId: string,

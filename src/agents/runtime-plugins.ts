@@ -1,3 +1,4 @@
+import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { adoptRuntimeContextEngineRegistrations } from "../context-engine/registry.js";
 import {
@@ -8,7 +9,7 @@ import {
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { extractPluginInstallRecordsFromInstalledPluginIndex } from "../plugins/installed-plugin-index-install-records.js";
 import { loadPluginRegistryHandle } from "../plugins/loader.js";
-import { adoptRuntimeMemoryCorpusSupplementRegistrations } from "../plugins/memory-state.js";
+import { adoptRuntimeMemoryRegistrations } from "../plugins/memory-state.js";
 import { loadPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
@@ -150,18 +151,33 @@ export async function withAgentPluginRegistry<T>(params: {
   if (getPluginRuntimeGatewayRequestScope()?.pluginRegistry) {
     return await params.run();
   }
+  const metadataSnapshot = normalizePluginsConfig(params.config.plugins).enabled
+    ? loadPluginMetadataSnapshot({
+        config: params.config,
+        env: process.env,
+        workspaceDir: params.workspaceDir,
+      })
+    : undefined;
   const pluginRegistry = loadAgentRuntimePluginRegistryHandle({
     basePluginIds: [],
     config: params.config,
+    ...(metadataSnapshot ? { metadataSnapshot } : {}),
     workspaceDir: params.workspaceDir,
   });
   const activeRegistry = getActivePluginRegistry();
   const scopedRegistry =
-    activeRegistry && getActivePluginRegistryWorkspaceDir() === resolveUserPath(params.workspaceDir)
-      ? adoptRuntimeMemoryCorpusSupplementRegistrations(
+    activeRegistry &&
+    metadataSnapshot &&
+    getActivePluginRegistryWorkspaceDir() === resolveUserPath(params.workspaceDir)
+      ? adoptRuntimeMemoryRegistrations(
           pluginRegistry,
           activeRegistry,
-          params.config,
+          applyPluginAutoEnable({
+            config: params.config,
+            env: process.env,
+            discovery: metadataSnapshot.discovery,
+            manifestRegistry: metadataSnapshot.manifestRegistry,
+          }).config,
         )
       : pluginRegistry;
   return await withPluginRuntimeRegistryScope(scopedRegistry, params.run);
