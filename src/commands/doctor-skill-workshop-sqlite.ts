@@ -182,7 +182,24 @@ async function migrateProposal(params: {
   return result;
 }
 
-type OrphanDisposition = "removed-empty" | "quarantined";
+type OrphanDisposition = { kind: "removed-empty" } | { kind: "quarantined"; recoveryPath: string };
+
+async function firstFreeRecoveryProposalPath(params: {
+  proposalId: string;
+  recoveryProposalsDir: string;
+}): Promise<{ absolutePath: string; relativePath: string }> {
+  for (let index = 1; ; index++) {
+    const suffix = index === 1 ? "" : `.${index}`;
+    const name = `${params.proposalId}${suffix}`;
+    const absolutePath = path.join(params.recoveryProposalsDir, name);
+    if (!(await pathExists(absolutePath))) {
+      return {
+        absolutePath,
+        relativePath: `${RECOVERY_PROPOSALS_DIR}/${name}`,
+      };
+    }
+  }
+}
 
 /**
  * Reconcile a confirmed-incomplete legacy proposal directory that cannot be
@@ -199,25 +216,17 @@ async function reconcileIncompleteProposal(params: {
   const entries = await stateRoot.list(params.proposalDir, { withFileTypes: true });
   if (entries.length === 0) {
     await stateRoot.remove(params.proposalDir);
-    return "removed-empty";
+    return { kind: "removed-empty" };
   }
   const recoveryProposalsDir = path.join(params.stateDir, RECOVERY_PROPOSALS_DIR);
   await fs.mkdir(recoveryProposalsDir, { recursive: true });
-  // The recovery archive is Doctor-owned: clear any stale quarantine of the same
-  // proposal before moving the current one, then atomically relocate the whole
-  // tree so no artifact is dropped. removePathWithinRoot expects a root-relative
-  // path, not an absolute one.
-  const destination = path.join(recoveryProposalsDir, params.proposalId);
-  const destinationRelative = `${RECOVERY_PROPOSALS_DIR}/${params.proposalId}`;
-  await removePathWithinRoot({ rootDir: params.stateDir, relativePath: destinationRelative }).catch(
-    (error: unknown) => {
-      if (!isMissingPathError(error)) {
-        throw error;
-      }
-    },
-  );
-  await fs.rename(path.join(params.stateDir, params.proposalDir), destination);
-  return "quarantined";
+  // Keep every earlier recovery archive when the same proposal ID recurs.
+  const destination = await firstFreeRecoveryProposalPath({
+    proposalId: params.proposalId,
+    recoveryProposalsDir,
+  });
+  await fs.rename(path.join(params.stateDir, params.proposalDir), destination.absolutePath);
+  return { kind: "quarantined", recoveryPath: destination.relativePath };
 }
 
 /** Import verified legacy proposal sidecars, then remove only the imported JSON metadata. */
@@ -288,9 +297,9 @@ export async function migrateLegacySkillWorkshopProposals(params: {
           stateDir,
         });
         changes.push(
-          disposition === "removed-empty"
+          disposition.kind === "removed-empty"
             ? `Removed empty legacy Skill Workshop proposal directory ${proposalId}.`
-            : `Quarantined incomplete Skill Workshop proposal ${proposalId} to ${RECOVERY_PROPOSALS_DIR}/${proposalId} for manual recovery.`,
+            : `Quarantined incomplete Skill Workshop proposal ${proposalId} to ${disposition.recoveryPath} for manual recovery.`,
         );
       } catch (reconcileError) {
         warnings.push(

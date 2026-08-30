@@ -401,11 +401,25 @@ describe("doctor Skill Workshop SQLite migration", () => {
     const workspaceDir = await tempDirs.make("openclaw-workshop-missing-json-");
     const proposalId = "missing-json-workshop-20260829-1234567890";
     const proposalDir = path.join(testState.stateDir, "skill-workshop", "proposals", proposalId);
+    const recoveryDir = path.join(
+      testState.stateDir,
+      "skill-workshop",
+      "recovery",
+      "proposals",
+      proposalId,
+    );
     // Leftover review artifact without the required proposal.json / PROPOSAL.md.
     await fs.mkdir(path.join(proposalDir, "references"), { recursive: true });
     await fs.writeFile(
       path.join(proposalDir, "references", "proof.md"),
       "# Orphan proof\n",
+      "utf8",
+    );
+    // A prior recovery archive with the same proposal ID must never be replaced.
+    await fs.mkdir(path.join(recoveryDir, "references"), { recursive: true });
+    await fs.writeFile(
+      path.join(recoveryDir, "references", "proof.md"),
+      "# Earlier orphan proof\n",
       "utf8",
     );
 
@@ -421,11 +435,14 @@ describe("doctor Skill Workshop SQLite migration", () => {
 
     expect(result).toMatchObject({ detected: 1, migrated: 0, warnings: [] });
     expect(result.changes.join("\n")).toContain(
-      `Quarantined incomplete Skill Workshop proposal ${proposalId}`,
+      `Quarantined incomplete Skill Workshop proposal ${proposalId} to skill-workshop/recovery/proposals/${proposalId}.2`,
     );
     // The source is out of active discovery (no repeat warning on the next run).
     await expect(fs.access(proposalDir)).rejects.toThrow();
-    // Remaining artifacts are preserved under the Doctor recovery archive.
+    // Both the earlier archive and the newly recovered artifacts are preserved.
+    await expect(
+      fs.readFile(path.join(recoveryDir, "references", "proof.md"), "utf8"),
+    ).resolves.toBe("# Earlier orphan proof\n");
     await expect(
       fs.access(
         path.join(
@@ -433,12 +450,24 @@ describe("doctor Skill Workshop SQLite migration", () => {
           "skill-workshop",
           "recovery",
           "proposals",
-          proposalId,
+          `${proposalId}.2`,
           "references",
           "proof.md",
         ),
       ),
     ).resolves.toBeUndefined();
+
+    await expect(
+      migrateLegacySkillWorkshopProposals({
+        config: {
+          agents: {
+            entries: {
+              main: { default: true, workspace: workspaceDir },
+            },
+          },
+        },
+      }),
+    ).resolves.toEqual({ changes: [], warnings: [], detected: 0, migrated: 0 });
   });
 
   it("quarantines a legacy directory with proposal.json but no PROPOSAL.md", async () => {
