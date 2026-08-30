@@ -127,67 +127,26 @@ describe("plugins cli policy mutations", () => {
     });
   });
 
-  it("binds explicit enablement approval to the installed artifact's reviewed surface", async () => {
-    await withTempDir("openclaw-cli-capability-review-", async (rootDir) => {
-      const fixture = createColdPluginFixture({ rootDir, pluginId: "alpha" });
-      const { recordPluginManifestInstallOwner } =
-        await import("../plugins/manifest-install-owner.js");
-      loadPluginManifestRegistryMock.mockReturnValue({
-        plugins: [
-          recordPluginManifestInstallOwner(
-            {
-              id: "alpha",
-              channels: [fixture.channelId],
-              providers: [fixture.providerId],
-              cliBackends: [],
-              skills: [],
-              hooks: [],
-              origin: "global",
-              rootDir,
-              source: fixture.runtimeSource,
-              manifestPath: `${rootDir}/openclaw.plugin.json`,
-            },
-            "alpha",
-          ),
-        ],
-        diagnostics: [],
-      });
-      const sourceConfig = {
-        plugins: { entries: { alpha: { enabled: false } } },
-      } as OpenClawConfig;
-      pluginCliConfigMock.mockReturnValue(sourceConfig);
-      setInstalledPluginIndexInstallRecords({
-        alpha: { source: "npm", spec: "@acme/alpha", installPath: rootDir },
-      });
-      mockPluginRegistry(["alpha"]);
-
-      await runPluginsCommand(["plugins", "enable", "alpha", "--accept-capabilities"]);
-
-      const { resolvePluginArtifactDeclaredSurface } =
-        await import("../plugins/capability-consent.js");
-      const { computeDeclaredSurfaceHash } = await import("../plugins/capability-summary.js");
-      const acceptedRecord =
-        writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock.mock.calls[0]?.[0]?.alpha;
-      expect(acceptedRecord?.acceptedSurfaceHash).toBe(
-        computeDeclaredSurfaceHash(resolvePluginArtifactDeclaredSurface(rootDir)),
-      );
-      expect(replaceConfigFileMock).toHaveBeenCalledOnce();
-      expect(promptYesNoMock).not.toHaveBeenCalled();
-    });
-  });
-
   it.each([
     {
+      name: "binds explicit approval for a disabled installed plugin",
+      enabled: false,
+      commandArgs: ["plugins", "enable", "alpha", "--accept-capabilities"],
+      expectsConsent: true,
+    },
+    {
       name: "records explicit capability consent for an already-enabled installed plugin",
+      enabled: true,
       commandArgs: ["plugins", "enable", "alpha", "--accept-capabilities"],
       expectsConsent: true,
     },
     {
       name: "preserves no-option re-enable compatibility for an already-enabled installed plugin",
+      enabled: true,
       commandArgs: ["plugins", "enable", "alpha"],
       expectsConsent: false,
     },
-  ])("$name", async ({ commandArgs, expectsConsent }) => {
+  ])("$name", async ({ commandArgs, enabled, expectsConsent }) => {
     await withTempDir("openclaw-cli-capability-consent-enabled-", async (rootDir) => {
       const fixture = createColdPluginFixture({ rootDir, pluginId: "alpha" });
       const { recordPluginManifestInstallOwner } =
@@ -213,14 +172,14 @@ describe("plugins cli policy mutations", () => {
         diagnostics: [],
       });
       const sourceConfig = {
-        plugins: { entries: { alpha: { enabled: true } } },
+        plugins: { entries: { alpha: { enabled } } },
       } as OpenClawConfig;
       pluginCliConfigMock.mockReturnValue(sourceConfig);
       setInstalledPluginIndexInstallRecords({
         alpha: { source: "npm", spec: "@acme/alpha", installPath: rootDir },
       });
       buildPluginRegistrySnapshotReportMock.mockReturnValue({
-        plugins: [{ id: "alpha", enabled: true }],
+        plugins: [{ id: "alpha", enabled }],
         diagnostics: [],
         registrySource: "derived",
         registryDiagnostics: [],
