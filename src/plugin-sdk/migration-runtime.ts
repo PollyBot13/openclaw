@@ -105,9 +105,11 @@ export function withCachedMigrationConfigRuntime(
   };
 }
 
-async function backupExistingMigrationTarget(
+/** Back up an existing migration target within the report's item backup directory. */
+export async function backupMigrationItemTarget(
   target: string,
   reportDir: string,
+  opts: { dereference?: boolean } = {},
 ): Promise<string | undefined> {
   if (!(await pathExists(target))) {
     return undefined;
@@ -121,7 +123,11 @@ async function backupExistingMigrationTarget(
     .slice(0, 12);
   const backupDir = await fs.mkdtemp(path.join(backupRoot, `${Date.now()}-${targetHash}-`));
   const backupPath = path.join(backupDir, path.basename(target));
-  await fs.cp(target, backupPath, { recursive: true, force: true });
+  await fs.cp(target, backupPath, {
+    recursive: true,
+    force: true,
+    ...(opts.dereference === undefined ? {} : { dereference: opts.dereference }),
+  });
   return backupPath;
 }
 
@@ -295,7 +301,7 @@ export async function copyMigrationFileItem(
       return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
     }
     const backupPath = opts.overwrite
-      ? await backupExistingMigrationTarget(item.target, reportDir)
+      ? await backupMigrationItemTarget(item.target, reportDir)
       : undefined;
     await fs.mkdir(path.dirname(item.target), { recursive: true });
     await fs.cp(item.source, item.target, {
