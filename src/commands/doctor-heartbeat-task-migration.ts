@@ -28,7 +28,7 @@ import { getCronStoreKysely } from "../cron/store/schema.js";
 import type { CronJob } from "../cron/types.js";
 import type { HealthFinding } from "../flows/health-checks.js";
 import { formatErrorMessage as errorMessage } from "../infra/errors.js";
-import { resolveHeartbeatAgents } from "../infra/heartbeat-config.js";
+import { resolveHeartbeatAgents, resolveHeartbeatIntervalMs } from "../infra/heartbeat-config.js";
 import { resolveHeartbeatSession } from "../infra/heartbeat-runner-session.js";
 import { executeSqliteQuerySync } from "../infra/kysely-sync.js";
 import {
@@ -41,6 +41,12 @@ import { analyzeLegacyHeartbeatTasks, type LegacyHeartbeatTask } from "./heartbe
 const HEARTBEAT_TASK_MIGRATION_CHECK_ID = "core/doctor/heartbeat-task-cron-migration";
 
 type HeartbeatTaskMigrationResult = { changes: string[]; warnings: string[] };
+
+function resolveHeartbeatTaskMigrationAgents(cfg: OpenClawConfig) {
+  return resolveHeartbeatAgents(cfg).filter(
+    (agent) => resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat) !== null,
+  );
+}
 
 type ValidatedHeartbeatTask = {
   task: LegacyHeartbeatTask;
@@ -97,7 +103,7 @@ export async function collectHeartbeatTaskMigrationFindings(
 ): Promise<readonly HealthFinding[]> {
   const storePath = resolveCronJobsStorePathFromConfig(cfg, env);
   const findings: HealthFinding[] = [];
-  for (const agent of resolveHeartbeatAgents(cfg)) {
+  for (const agent of resolveHeartbeatTaskMigrationAgents(cfg)) {
     let monitor: ReturnType<typeof readHeartbeatMonitorScratchReadOnly>;
     try {
       monitor = readHeartbeatMonitorScratchReadOnly(storePath, agent.agentId, { env });
@@ -423,7 +429,7 @@ export async function maybeMigrateHeartbeatTasksToCron(params: {
     scratchRevision: number;
     validatedTasks: ValidatedHeartbeatTask[];
   }> = [];
-  for (const agent of resolveHeartbeatAgents(params.cfg)) {
+  for (const agent of resolveHeartbeatTaskMigrationAgents(params.cfg)) {
     let monitor: ReturnType<typeof readHeartbeatMonitorScratch>;
     try {
       monitor = readHeartbeatMonitorScratch(storePath, agent.agentId, { env });
