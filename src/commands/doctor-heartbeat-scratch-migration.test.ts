@@ -73,6 +73,18 @@ async function loadMonitor(cfg?: OpenClawConfig) {
   return { monitor, storePath };
 }
 
+function sharedHeartbeatConfig(workspace: string, ollamaEvery = "0m") {
+  return {
+    agents: {
+      defaults: { workspace },
+      list: [
+        { id: "main", workspace, heartbeat: { every: "30m" } },
+        { id: "ollama", workspace, heartbeat: { every: ollamaEvery } },
+      ],
+    },
+  } as OpenClawConfig;
+}
+
 describe("HEARTBEAT.md cron scratch migration", () => {
   it("previews without mutation, then migrates, archives, and reruns idempotently", async () => {
     const fixture = await createFixture();
@@ -205,15 +217,7 @@ describe("HEARTBEAT.md cron scratch migration", () => {
 
   it("copies into enabled scratch while retaining a file shared with a disabled agent", async () => {
     const fixture = await createFixture();
-    const cfg = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const cfg = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, "shared checklist\n", "utf8");
 
     await expect(collectHeartbeatScratchMigrationFindings(cfg)).resolves.toEqual([]);
@@ -239,28 +243,12 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     const fixture = await createFixture();
     const source =
       "# Checklist\n\ntasks:\n  - name: inbox\n    interval: 1h\n    prompt: Check inbox\n";
-    const mixed = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const mixed = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, source, "utf8");
 
     await maybeMigrateHeartbeatFilesToScratch({ cfg: mixed, shouldRepair: true });
     await maybeMigrateHeartbeatTasksToCron({ cfg: mixed, shouldRepair: true });
-    const enabled = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const enabled = sharedHeartbeatConfig(fixture.workspace, "30m");
 
     const result = await maybeMigrateHeartbeatFilesToScratch({
       cfg: enabled,
@@ -280,27 +268,11 @@ describe("HEARTBEAT.md cron scratch migration", () => {
 
   it("imports a changed retained source into a re-enabled owner without overwriting its peer", async () => {
     const fixture = await createFixture();
-    const mixed = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const mixed = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, "original checklist\n", "utf8");
     await maybeMigrateHeartbeatFilesToScratch({ cfg: mixed, shouldRepair: true });
     await fs.writeFile(fixture.heartbeatPath, "updated checklist\n", "utf8");
-    const enabled = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const enabled = sharedHeartbeatConfig(fixture.workspace, "30m");
 
     const result = await maybeMigrateHeartbeatFilesToScratch({
       cfg: enabled,
@@ -308,6 +280,8 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     });
 
     expect(result.changes).toHaveLength(1);
+    expect(result.changes[0]).toContain("another heartbeat owner's scratch was left unchanged");
+    expect(result.changes[0]).not.toContain("disabled");
     expect(result.warnings.join("\n")).toContain("already has different cron scratch");
     await expect(fs.readFile(fixture.heartbeatPath, "utf8")).resolves.toBe("updated checklist\n");
     const storePath = resolveCronJobsStorePath();
@@ -323,15 +297,7 @@ describe("HEARTBEAT.md cron scratch migration", () => {
 
   it("does not import stale bytes while retaining a shared disabled-owner file", async () => {
     const fixture = await createFixture();
-    const cfg = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const cfg = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, "planned content\n", "utf8");
     const rename = fs.rename.bind(fs);
     vi.spyOn(fs, "rename").mockImplementationOnce(async (from, to) => {
@@ -352,15 +318,7 @@ describe("HEARTBEAT.md cron scratch migration", () => {
 
   it("rolls back retained scratch when the claimed inode changes after acquisition", async () => {
     const fixture = await createFixture();
-    const cfg = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const cfg = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, "planned content\n", "utf8");
     const sourceHandle = await fs.open(fixture.heartbeatPath, "r+");
     const link = fs.link.bind(fs);
@@ -389,15 +347,7 @@ describe("HEARTBEAT.md cron scratch migration", () => {
 
   it("rolls back retained scratch when the claimed inode changes during restoration", async () => {
     const fixture = await createFixture();
-    const cfg = {
-      agents: {
-        defaults: { workspace: fixture.workspace },
-        list: [
-          { id: "main", workspace: fixture.workspace, heartbeat: { every: "30m" } },
-          { id: "ollama", workspace: fixture.workspace, heartbeat: { every: "0m" } },
-        ],
-      },
-    } as OpenClawConfig;
+    const cfg = sharedHeartbeatConfig(fixture.workspace);
     await fs.writeFile(fixture.heartbeatPath, "planned content\n", "utf8");
     const sourceHandle = await fs.open(fixture.heartbeatPath, "r+");
     const link = fs.link.bind(fs);

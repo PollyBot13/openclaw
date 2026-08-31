@@ -42,25 +42,21 @@ type HeartbeatSource = {
   sha256: string;
 };
 
-function resolveHeartbeatScratchMigrationAgents(cfg: OpenClawConfig) {
-  return resolveHeartbeatAgents(cfg).filter(
-    (agent) => resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat) !== null,
-  );
-}
-
-async function resolveDisabledHeartbeatSourceEntryKeys(cfg: OpenClawConfig) {
-  const entryKeys = new Set<string>();
+async function resolveHeartbeatScratchMigrationOwners(cfg: OpenClawConfig) {
+  const migrationAgents: ReturnType<typeof resolveHeartbeatAgents> = [];
+  const disabledEntryKeys = new Set<string>();
   for (const agent of resolveHeartbeatAgents(cfg)) {
     if (resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat) !== null) {
+      migrationAgents.push(agent);
       continue;
     }
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agent.agentId);
     const workspaceRealPath = await fs
       .realpath(workspaceDir)
       .catch(() => path.resolve(workspaceDir));
-    entryKeys.add(path.join(workspaceRealPath, LEGACY_HEARTBEAT_FILENAME));
+    disabledEntryKeys.add(path.join(workspaceRealPath, LEGACY_HEARTBEAT_FILENAME));
   }
-  return entryKeys;
+  return { migrationAgents, disabledEntryKeys };
 }
 
 async function readHeartbeatSource(
@@ -400,8 +396,8 @@ export async function collectHeartbeatScratchMigrationFindings(
   cfg: OpenClawConfig,
 ): Promise<readonly HealthFinding[]> {
   const findings: HealthFinding[] = [];
-  const disabledEntryKeys = await resolveDisabledHeartbeatSourceEntryKeys(cfg);
-  for (const agent of resolveHeartbeatScratchMigrationAgents(cfg)) {
+  const { migrationAgents, disabledEntryKeys } = await resolveHeartbeatScratchMigrationOwners(cfg);
+  for (const agent of migrationAgents) {
     const heartbeatPath = path.join(
       resolveAgentWorkspaceDir(cfg, agent.agentId),
       LEGACY_HEARTBEAT_FILENAME,
@@ -447,8 +443,9 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
   const storePath = resolveCronJobsStorePathFromConfig(params.cfg, env);
   const changes: string[] = [];
   const warnings: string[] = [];
-  const migrationAgents = resolveHeartbeatScratchMigrationAgents(params.cfg);
-  const disabledEntryKeys = await resolveDisabledHeartbeatSourceEntryKeys(params.cfg);
+  const { migrationAgents, disabledEntryKeys } = await resolveHeartbeatScratchMigrationOwners(
+    params.cfg,
+  );
   if (!params.shouldRepair) {
     for (const agent of migrationAgents) {
       try {
@@ -527,7 +524,7 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
     // concurrent edit in between surfaces as a conflict, never an overwrite.
     let keepSource = retainSource;
     const importAgents: [string, CronJob][] = [];
-    const scratchWritesNeeded = new Set<string>();
+    let scratchWriteNeeded = false;
     const plannedRevisionByJobId = new Map<string, number>();
     for (const [agentId, monitor] of agents) {
       const state = readCronJobScratchState(storePath, monitor.id, { env });
@@ -548,11 +545,11 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
       } else {
         importAgents.push([agentId, monitor]);
         if (current?.sourceSha256 !== source.sha256) {
-          scratchWritesNeeded.add(monitor.id);
+          scratchWriteNeeded = true;
         }
       }
     }
-    if (importAgents.length === 0 || (keepSource && scratchWritesNeeded.size === 0)) {
+    if (importAgents.length === 0 || (keepSource && !scratchWriteNeeded)) {
       continue;
     }
 
@@ -594,8 +591,8 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
     for (const [agentId, monitor] of importAgents) {
       try {
         const state = readCronJobScratchState(storePath, monitor.id, { env });
-        let wroteScratch = false;
-        if (state.scratch?.sourceSha256 !== source.sha256) {
+        const shouldWriteScratch = state.scratch?.sourceSha256 !== source.sha256;
+        if (shouldWriteScratch) {
           const write = writeCronJobScratch({
             storePath,
             jobId: monitor.id,
@@ -613,16 +610,15 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
             previous: state.scratch,
             newRevision: write.currentRevision,
           });
-          wroteScratch = true;
         }
         const verified = readCronJobScratchState(storePath, monitor.id, { env }).scratch;
         if (!verified || verified.sourceSha256 !== source.sha256) {
           throw new Error("scratch verification failed after write");
         }
-        if (!keepSource || wroteScratch) {
+        if (!keepSource || shouldWriteScratch) {
           groupChanges.push(
             keepSource
-              ? `Copied ${shortenHomePath(source.path)} into cron scratch for ${monitor.displayName ?? monitor.name}; retained the shared legacy file because a heartbeat owner is disabled.`
+              ? `Copied ${shortenHomePath(source.path)} into cron scratch for ${monitor.displayName ?? monitor.name}; retained the shared legacy file because ${retainSource ? "a heartbeat owner is disabled" : "another heartbeat owner's scratch was left unchanged"}.`
               : `Migrated ${shortenHomePath(source.path)} into cron scratch for ${monitor.displayName ?? monitor.name}.`,
           );
         }
