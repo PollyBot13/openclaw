@@ -130,8 +130,9 @@ build tooling to support standard decorators.
 
 Built with Codex, Claude, or another AI tool? **Welcome!** No AI-assistance
 label or disclosure is required. Keep the engineering bar unchanged: the
-contributor owns the problem, intended behavior, scope, and submitted result,
-while the agent should own the technical investigation and verification.
+contributor understands the submitted code and owns the problem, intended
+behavior, scope, and submitted result, while the agent should own the technical
+investigation and verification.
 
 For a review-ready AI-assisted contribution:
 
