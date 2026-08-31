@@ -2203,6 +2203,26 @@ describe("doctor health contributions", () => {
     });
   });
 
+  it("still renews generated exec approvals after declining an unrelated migration", async () => {
+    const contribution = requireDoctorContribution("doctor:legacy-state");
+    mocks.detectLegacyStateMigrations.mockResolvedValue({
+      preview: ["legacy sessions"],
+      warnings: [],
+      notices: [],
+    });
+    const ctx = createDoctorContext({
+      cfg: {},
+      configResult: {},
+      shouldRepair: false,
+      options: { repair: true },
+    });
+
+    await contribution.run(ctx);
+
+    expect(mocks.runLegacyStateMigrations).not.toHaveBeenCalled();
+    expect(mocks.repairObsoleteGeneratedExecApprovals).toHaveBeenCalledOnce();
+  });
+
   it("prints legacy state migration notices during manual doctor runs", async () => {
     const contribution = requireDoctorContribution("doctor:legacy-state");
     const detected = { preview: ["legacy sessions"], warnings: [], notices: [] };
