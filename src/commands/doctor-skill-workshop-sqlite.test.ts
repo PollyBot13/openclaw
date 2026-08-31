@@ -397,68 +397,41 @@ describe("doctor Skill Workshop SQLite migration", () => {
     await expect(fs.access(path.join(ambiguousDir, "proposal.json"))).resolves.toBeUndefined();
   });
 
-  it("quarantines a non-empty legacy directory missing proposal.json so Doctor converges", async () => {
-    const workspaceDir = await tempDirs.make("openclaw-workshop-missing-json-");
-    const proposalId = "missing-json-workshop-20260829-1234567890";
-    const proposalDir = path.join(testState.stateDir, "skill-workshop", "proposals", proposalId);
-    const recoveryDir = path.join(
-      testState.stateDir,
-      "skill-workshop",
-      "recovery",
-      "proposals",
-      proposalId,
-    );
-    // Leftover review artifact without the required proposal.json / PROPOSAL.md.
-    await fs.mkdir(path.join(proposalDir, "references"), { recursive: true });
-    await fs.writeFile(
-      path.join(proposalDir, "references", "proof.md"),
-      "# Orphan proof\n",
-      "utf8",
-    );
-    // A prior recovery archive with the same proposal ID must never be replaced.
-    await fs.mkdir(path.join(recoveryDir, "references"), { recursive: true });
-    await fs.writeFile(
-      path.join(recoveryDir, "references", "proof.md"),
-      "# Earlier orphan proof\n",
-      "utf8",
-    );
+  it.each([{ collision: "directory" }, { collision: "file" }] as const)(
+    "quarantines a non-empty legacy directory without replacing an existing recovery $collision",
+    async ({ collision }) => {
+      const workspaceDir = await tempDirs.make("openclaw-workshop-missing-json-");
+      const proposalId = `missing-json-${collision}-workshop-20260829-1234567890`;
+      const proposalDir = path.join(testState.stateDir, "skill-workshop", "proposals", proposalId);
+      const recoveryDir = path.join(
+        testState.stateDir,
+        "skill-workshop",
+        "recovery",
+        "proposals",
+        proposalId,
+      );
+      const nextRecoveryDir = `${recoveryDir}.2`;
+      // Leftover review artifact without the required proposal.json / PROPOSAL.md.
+      await fs.mkdir(path.join(proposalDir, "references"), { recursive: true });
+      await fs.writeFile(
+        path.join(proposalDir, "references", "proof.md"),
+        "# Orphan proof\n",
+        "utf8",
+      );
+      // A prior recovery entry with the same proposal ID must never be replaced.
+      if (collision === "directory") {
+        await fs.mkdir(path.join(recoveryDir, "references"), { recursive: true });
+        await fs.writeFile(
+          path.join(recoveryDir, "references", "proof.md"),
+          "# Earlier orphan proof\n",
+          "utf8",
+        );
+      } else {
+        await fs.mkdir(path.dirname(recoveryDir), { recursive: true });
+        await fs.writeFile(recoveryDir, "earlier recovery marker\n", "utf8");
+      }
 
-    const result = await migrateLegacySkillWorkshopProposals({
-      config: {
-        agents: {
-          entries: {
-            main: { default: true, workspace: workspaceDir },
-          },
-        },
-      },
-    });
-
-    expect(result).toMatchObject({ detected: 1, migrated: 0, warnings: [] });
-    expect(result.changes.join("\n")).toContain(
-      `Quarantined incomplete Skill Workshop proposal ${proposalId} to skill-workshop/recovery/proposals/${proposalId}.2`,
-    );
-    // The source is out of active discovery (no repeat warning on the next run).
-    await expect(fs.access(proposalDir)).rejects.toThrow();
-    // Both the earlier archive and the newly recovered artifacts are preserved.
-    await expect(
-      fs.readFile(path.join(recoveryDir, "references", "proof.md"), "utf8"),
-    ).resolves.toBe("# Earlier orphan proof\n");
-    await expect(
-      fs.access(
-        path.join(
-          testState.stateDir,
-          "skill-workshop",
-          "recovery",
-          "proposals",
-          `${proposalId}.2`,
-          "references",
-          "proof.md",
-        ),
-      ),
-    ).resolves.toBeUndefined();
-
-    await expect(
-      migrateLegacySkillWorkshopProposals({
+      const result = await migrateLegacySkillWorkshopProposals({
         config: {
           agents: {
             entries: {
@@ -466,9 +439,39 @@ describe("doctor Skill Workshop SQLite migration", () => {
             },
           },
         },
-      }),
-    ).resolves.toEqual({ changes: [], warnings: [], detected: 0, migrated: 0 });
-  });
+      });
+
+      expect(result).toMatchObject({ detected: 1, migrated: 0, warnings: [] });
+      expect(result.changes.join("\n")).toContain(
+        `Quarantined incomplete Skill Workshop proposal ${proposalId} to skill-workshop/recovery/proposals/${proposalId}.2`,
+      );
+      // The source is out of active discovery (no repeat warning on the next run).
+      await expect(fs.access(proposalDir)).rejects.toThrow();
+      // Both the earlier recovery entry and the newly recovered artifacts are preserved.
+      if (collision === "directory") {
+        await expect(
+          fs.readFile(path.join(recoveryDir, "references", "proof.md"), "utf8"),
+        ).resolves.toBe("# Earlier orphan proof\n");
+      } else {
+        await expect(fs.readFile(recoveryDir, "utf8")).resolves.toBe("earlier recovery marker\n");
+      }
+      await expect(
+        fs.access(path.join(nextRecoveryDir, "references", "proof.md")),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        migrateLegacySkillWorkshopProposals({
+          config: {
+            agents: {
+              entries: {
+                main: { default: true, workspace: workspaceDir },
+              },
+            },
+          },
+        }),
+      ).resolves.toEqual({ changes: [], warnings: [], detected: 0, migrated: 0 });
+    },
+  );
 
   it("quarantines a legacy directory with proposal.json but no PROPOSAL.md", async () => {
     const workspaceDir = await tempDirs.make("openclaw-workshop-missing-draft-");
