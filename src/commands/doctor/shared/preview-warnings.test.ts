@@ -79,6 +79,10 @@ const commandSecretState = vi.hoisted(() => ({
   diagnostics: [] as string[],
 }));
 
+const unconfiguredAgentDatabaseState = vi.hoisted(() => ({
+  warnings: [] as string[],
+}));
+
 const tempRoots = new Set<string>();
 
 vi.mock("../../../cli/command-secret-gateway.js", () => ({
@@ -92,6 +96,12 @@ vi.mock("../../../cli/command-secret-gateway.js", () => ({
 
 vi.mock("../../../cli/command-secret-targets.js", () => ({
   getConfiguredChannelsCommandSecretTargetIds: vi.fn(() => commandSecretState.targetIds),
+}));
+
+vi.mock("../../doctor-unconfigured-agent-databases.js", () => ({
+  collectRetainedUnconfiguredAgentDatabaseWarnings: vi.fn(
+    () => unconfiguredAgentDatabaseState.warnings,
+  ),
 }));
 
 vi.mock("../channel-capabilities.js", () => {
@@ -399,6 +409,7 @@ describe("doctor preview warnings", () => {
     commandSecretState.targetIds = new Set<string>();
     commandSecretState.resolvedConfig = undefined;
     commandSecretState.diagnostics = [];
+    unconfiguredAgentDatabaseState.warnings = [];
   });
 
   afterEach(() => {
@@ -440,6 +451,20 @@ describe("doctor preview warnings", () => {
 
     expect(notes.infoNotes.join("\n")).toContain("Personal Codex CLI assets found");
     expect(notes.warningNotes.join("\n")).not.toContain("Personal Codex CLI assets found");
+  });
+
+  it("includes retained unconfigured agent database warnings", async () => {
+    unconfiguredAgentDatabaseState.warnings = [
+      '- Retained unconfigured agent database "phantom" at /tmp/phantom.sqlite.',
+    ];
+
+    const notes = await collectDoctorPreviewNotes({
+      cfg: {},
+      doctorFixCommand: "openclaw doctor --fix",
+      env: {},
+    });
+
+    expect(notes.warningNotes).toContain(unconfiguredAgentDatabaseState.warnings[0]);
   });
 
   it("collects provider and shared preview warnings", async () => {
