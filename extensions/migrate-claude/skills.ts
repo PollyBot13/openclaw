@@ -11,7 +11,7 @@ import {
 import { backupMigrationItemTarget } from "openclaw/plugin-sdk/migration-runtime";
 import type { MigrationItem } from "openclaw/plugin-sdk/plugin-entry";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-import { exists, readText, sanitizeName } from "./helpers.js";
+import { exists, sanitizeName } from "./helpers.js";
 import type { ClaudeSource } from "./source.js";
 import type { PlannedTargets } from "./targets.js";
 
@@ -174,7 +174,7 @@ export async function applyGeneratedSkillItem(
   if (!item.source || !item.target) {
     return markMigrationItemError(item, MIGRATION_REASON_MISSING_SOURCE_OR_TARGET);
   }
-  let backupPath: string | undefined;
+  let result = item;
   try {
     const targetExists = await exists(item.target);
     if (targetExists && !opts.overwrite) {
@@ -189,22 +189,20 @@ export async function applyGeneratedSkillItem(
     const content = generatedCommandSkillContent({
       skillName,
       sourceLabel,
-      commandContent: (await readText(item.source)) ?? "",
+      commandContent: await fs.readFile(item.source, "utf8"),
     });
-    backupPath = targetExists
+    const backupPath = targetExists
       ? await backupMigrationItemTarget(item.target, reportDir, { dereference: true })
       : undefined;
+    // Keep the recovery path when a subsequent write fails.
+    result = {
+      ...item,
+      details: { ...item.details, ...(backupPath ? { backupPath } : {}) },
+    };
     await fs.mkdir(item.target, { recursive: true });
     await fs.writeFile(path.join(item.target, "SKILL.md"), content, "utf8");
-    return {
-      ...item,
-      status: "migrated",
-      details: { ...item.details, ...(backupPath ? { backupPath } : {}) },
-    };
+    return { ...result, status: "migrated" };
   } catch (err) {
-    return {
-      ...markMigrationItemError(item, err instanceof Error ? err.message : String(err)),
-      details: { ...item.details, ...(backupPath ? { backupPath } : {}) },
-    };
+    return markMigrationItemError(result, err instanceof Error ? err.message : String(err));
   }
 }

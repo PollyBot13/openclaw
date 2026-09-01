@@ -731,6 +731,48 @@ describe("Claude migration provider", () => {
     ).toBe(backupPath);
   });
 
+  it.each([false, true])(
+    "reports a removed command source without changing its generated skill (overwrite: %s)",
+    async (overwrite) => {
+      const root = testWorkspace.dir;
+      const source = path.join(root, "project");
+      const sourceFile = path.join(source, ".claude", "commands", "ship.md");
+      const workspaceDir = path.join(root, "workspace");
+      const targetDir = path.join(workspaceDir, "skills", "claude-command-ship");
+      const targetFile = path.join(targetDir, "SKILL.md");
+      const reportDir = path.join(root, "report");
+      await writeFile(sourceFile, "Ship safely.\n");
+      if (overwrite) {
+        await writeFile(targetFile, "# Local skill\n");
+      }
+      const provider = buildClaudeMigrationProvider();
+      const context = makeContext({
+        source,
+        stateDir: path.join(root, "state"),
+        workspaceDir,
+        reportDir,
+        overwrite,
+      });
+      const plan = await provider.plan(context);
+      await fs.unlink(sourceFile);
+
+      const result = await provider.apply(context, plan);
+
+      const item = planItemById(result.items, "skill:claude-command-ship");
+      expect(item).toMatchObject({ status: "error", reason: expect.stringContaining("ENOENT") });
+      expect(result.summary).toMatchObject({ migrated: 0, errors: 1 });
+      expect(item.details?.backupPath).toBeUndefined();
+      if (overwrite) {
+        await expect(fs.readFile(targetFile, "utf8")).resolves.toBe("# Local skill\n");
+      } else {
+        await expect(fs.access(targetDir)).rejects.toThrow();
+      }
+      const report = JSON.parse(await fs.readFile(path.join(reportDir, "report.json"), "utf8"));
+      expect(planItemById(report.items, item.id)).toEqual(item);
+      await expect(fs.access(path.join(reportDir, "item-backups"))).rejects.toThrow();
+    },
+  );
+
   it("reports the generated skill backup when the overwrite fails", async () => {
     const root = testWorkspace.dir;
     const source = path.join(root, "project");
