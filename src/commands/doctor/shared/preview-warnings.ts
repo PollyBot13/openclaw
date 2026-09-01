@@ -719,9 +719,6 @@ export async function collectDoctorPreviewNotes(params: {
   const hasChannelConfig = hasChannels(params.cfg);
   const hasPluginConfig = hasPlugins(params.cfg);
 
-  const { collectRetainedUnconfiguredAgentDatabaseWarnings } =
-    await import("../../doctor-unconfigured-agent-databases.js");
-  warnings.push(...collectRetainedUnconfiguredAgentDatabaseWarnings({ cfg: params.cfg, env }));
   warnings.push(...collectVisibleReplyToolPolicyWarnings(params.cfg));
   warnings.push(...collectChannelBoundMessageToolPolicyWarnings(params.cfg));
   warnings.push(...collectProfileConfiguredToolSectionWarnings(params.cfg));

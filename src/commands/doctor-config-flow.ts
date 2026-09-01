@@ -588,6 +588,16 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
     });
   }
 
+  const { collectRetainedUnconfiguredAgentDatabaseWarnings } =
+    await import("./doctor-unconfigured-agent-databases.js");
+  const retainedAgentDatabaseWarnings = collectRetainedUnconfiguredAgentDatabaseWarnings({
+    cfg: state.candidate,
+    env: process.env,
+  });
+  if (retainedAgentDatabaseWarnings.length > 0) {
+    note(sanitizeDoctorNote(retainedAgentDatabaseWarnings.join("\n")), "Doctor warnings");
+  }
+
   const mutableAllowlistWarnings = collectMutableAllowlistWarnings
     ? await runWithCurrentPluginMetadata(state.candidate, () =>
         collectMutableAllowlistWarnings({
