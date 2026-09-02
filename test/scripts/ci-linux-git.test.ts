@@ -258,6 +258,28 @@ linuxIt.each(preflightCases)(
   55_000,
 );
 
+linuxIt.each([
+  { job: "checks-fast-core", task: "bundled-protocol" },
+  { job: "check-shard", task: "guards" },
+  { job: "check-shard", task: "npm-lock" },
+])("$job checkout owns $task base history before credential cleanup", async ({ job }) => {
+  const report = await runCiGitStep({
+    job,
+    env: { CHECKOUT_BASE_SHA: base },
+    fetchResults: [0],
+  });
+  expect(report.code).toBe(0);
+  const checkoutFetch = report.fetches.find(({ args }) =>
+    args.includes(`+${candidate}:refs/remotes/origin/ci-target`),
+  );
+  expect(checkoutFetch?.args).toEqual(
+    expect.arrayContaining([
+      `+${candidate}:refs/remotes/origin/ci-target`,
+      `+${base}:refs/remotes/origin/ci-ratchet-base`,
+    ]),
+  );
+});
+
 const historyProfiles: {
   job: string;
   step: string;
@@ -327,58 +349,6 @@ linuxIt.each(
   55_000,
 );
 
-const prefetchedHistoryProfiles = [
-  {
-    job: "checks-fast-core",
-    step: "Run ${{ matrix.task }} (${{ matrix.runtime }})",
-    env: { TASK: "bundled-protocol" },
-    target: "refs/remotes/origin/protocol-since-base",
-    consumer: "protocol:check",
-  },
-  {
-    job: "check-shard",
-    step: "Run check shard",
-    env: { TASK: "guards" },
-    target: "refs/remotes/origin/ci-base",
-    consumer: "scripts/report-test-temp-creations.mjs",
-  },
-  {
-    job: "check-shard",
-    step: "Run check shard",
-    env: { TASK: "npm-lock" },
-    target: "refs/remotes/origin/npm-lock-base",
-    consumer: "deps:npm-lock:check:changed",
-  },
-];
-
-linuxIt.each(prefetchedHistoryProfiles)(
-  "$job/$step publishes prefetched history before consumption ($target)",
-  async ({ job, step, env, target, consumer }) => {
-    const report = await runCiGitStep({
-      job,
-      step,
-      env,
-      fetchResults: [],
-      prepare: true,
-      poisonPython: true,
-    });
-    expect(report.code).toBe(0);
-    expect(report.fetches).toEqual([]);
-    expect(
-      report.commands.some(
-        ({ tool, args }) => tool === "git" && args.join(" ") === `update-ref ${target} ${base}`,
-      ),
-    ).toBe(true);
-    expect(report.commands.some(({ tool, args }) => tool !== "git" && args[0] === consumer)).toBe(
-      true,
-    );
-    if (env.TASK === "npm-lock") {
-      expect(report.commands.some(({ args }) => args[0] === "deps:npm-lock:check")).toBe(false);
-    }
-  },
-  55_000,
-);
-
 linuxIt(
   "ratchet retries a stale merge parent before checkout and base publication",
   async () => {
@@ -409,22 +379,6 @@ linuxIt(
   },
   55_000,
 );
-
-linuxIt("npm-lock falls back to a full sweep when its local ref cannot be published", async () => {
-  const report = await runCiGitStep({
-    job: "check-shard",
-    step: "Run check shard",
-    env: { TASK: "npm-lock" },
-    fetchResults: [],
-    gitFault: { match: "update-ref refs/remotes/origin/npm-lock-base", code: 23 },
-    prepare: true,
-  });
-  expect(report.code).toBe(0);
-  expect(report.fetches).toEqual([]);
-  expect(report.commands.filter(({ tool }) => tool === "pnpm").map(({ args }) => args)).toEqual([
-    ["deps:npm-lock:check"],
-  ]);
-});
 
 posixIt(
   "fetches the CI harness without a second full-repository snapshot",

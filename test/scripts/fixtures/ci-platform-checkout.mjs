@@ -852,9 +852,6 @@ async function command() {
       fs.writeSync(1, object.text);
     }
     process.exit(object ? ((operation === "cat-file" ? object.probe : object.code) ?? 0) : 1);
-  } else if (operation === "update-ref") {
-    boundary("update-ref");
-    saveRef(cwd, args[0], resolveRef(cwd, args[1]));
   } else if (operation === "rev-parse") {
     boundary("rev-parse");
     if (args[0] === "--verify") {
