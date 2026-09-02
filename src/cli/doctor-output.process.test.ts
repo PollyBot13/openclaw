@@ -248,8 +248,9 @@ describe("Doctor report process output", () => {
       };
       const externalDatabase = {
         agentId: "external",
-        path: path.join(root, "external", "retired.sqlite"),
+        path: path.join(root, `external\n${String.fromCharCode(0x1b)}[31mforged`, "retired.sqlite"),
       };
+      const sanitizedExternalPath = path.join(root, "externalforged", "retired.sqlite");
       const retainedDatabases = [retainedDatabase, externalDatabase];
       for (const databaseCase of retainedDatabases) {
         const retained = openOpenClawAgentDatabase({
@@ -283,7 +284,8 @@ describe("Doctor report process output", () => {
       expect(output).toContain("retired or manually managed agent state.");
       expect(output).not.toContain('Retained unconfigured agent database "main"');
       expect(output).toContain("Skipped foreign agent database");
-      expect(output).toContain(externalDatabase.path);
+      expect(output).toContain(sanitizedExternalPath);
+      expect(output).not.toContain(externalDatabase.path);
       for (const databaseCase of retainedDatabases) {
         expect(fs.existsSync(databaseCase.path)).toBe(true);
         const database = new DatabaseSync(databaseCase.path, { readOnly: true });

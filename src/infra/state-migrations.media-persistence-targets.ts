@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { resolveAgentSessionDirsFromAgentsDirSync } from "../agents/session-dirs.js";
 import { resolveStateDir } from "../config/paths.js";
 import { isSessionArchiveArtifactName } from "../config/sessions/artifacts.js";
@@ -129,7 +130,7 @@ export function discoverAgentDatabaseMigrationTargets(params: {
     );
     if (realPath && !isInsideActiveStateDir && !isConfiguredPath) {
       discard(candidate);
-      const warning = `Skipped foreign agent database ${pathname}; it is outside the active state directory and is not a configured session store.`;
+      const warning = `Skipped foreign agent database ${sanitizeForLog(pathname)}; it is outside the active state directory and is not a configured session store.`;
       warnings.push(warning);
       externalWarnings.push(warning);
       continue;
