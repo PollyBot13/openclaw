@@ -221,69 +221,93 @@ describe("Doctor report process output", () => {
     expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).not.toHaveProperty("heartbeat");
   }, 120_000);
 
-  it("explains and preserves a retained custom agent database in preview and repair", () => {
-    const root = tempDirs.make("openclaw-doctor-retained-database-");
-    const stateDir = path.join(root, "state");
-    const configPath = path.join(root, "openclaw.json");
-    const loaderPath = writeDoctorTestLoader(root);
-    const env = { OPENCLAW_STATE_DIR: stateDir };
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      `${JSON.stringify({
-        agents: {
-          ownership: "explicit",
-          defaults: { heartbeat: { every: "30m" } },
-          entries: { main: {} },
-        },
-      })}\n`,
-    );
-    openOpenClawAgentDatabase({ agentId: "main", env });
-    const databasePath = path.join(stateDir, "retired.sqlite");
-    const retained = openOpenClawAgentDatabase({ agentId: "retired", env, path: databasePath });
-    retained.db
-      .prepare(
-        `INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run("agent:retired:proof", "proof-session", "{}", 1);
-    closeOpenClawAgentDatabasesForTest();
-    closeOpenClawStateDatabaseForTest();
-    const expectedRow = {
-      session_key: "agent:retired:proof",
-      current_session_id: "proof-session",
-      entry_json: "{}",
-      updated_at: 1,
-    };
-
+  it("explains and preserves retained custom agent databases in preview and repair", () => {
     for (const repair of [false, true]) {
+      const root = tempDirs.make(
+        `openclaw-doctor-retained-database-${repair ? "repair" : "preview"}-`,
+      );
+      const stateDir = path.join(root, "state");
+      const configPath = path.join(root, "openclaw.json");
+      const loaderPath = writeDoctorTestLoader(root);
+      const env = { OPENCLAW_STATE_DIR: stateDir };
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        `${JSON.stringify({
+          agents: {
+            ownership: "explicit",
+            defaults: { heartbeat: { every: "30m" } },
+            entries: { main: {} },
+          },
+        })}\n`,
+      );
+      openOpenClawAgentDatabase({ agentId: "main", env });
+      const retainedDatabase = {
+        agentId: "retired",
+        path: path.join(stateDir, "retired.sqlite"),
+      };
+      const externalDatabase = {
+        agentId: "external",
+        path: path.join(root, "external", "retired.sqlite"),
+      };
+      const retainedDatabases = [retainedDatabase, externalDatabase];
+      for (const databaseCase of retainedDatabases) {
+        const retained = openOpenClawAgentDatabase({
+          agentId: databaseCase.agentId,
+          env,
+          path: databaseCase.path,
+        });
+        retained.db
+          .prepare(
+            `INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at)
+             VALUES (?, ?, ?, ?)`,
+          )
+          .run(
+            `agent:${databaseCase.agentId}:proof`,
+            `${databaseCase.agentId}-proof-session`,
+            "{}",
+            1,
+          );
+      }
+      closeOpenClawAgentDatabasesForTest();
+      closeOpenClawStateDatabaseForTest();
+
       const result = runDoctor({ root, configPath, loaderPath, repair });
       const output = `${result.stderr}\n${result.stdout}`;
       expect(result.error, output).toBeUndefined();
       expect(result.signal, output).toBeNull();
       expect(result.status, output).toBe(0);
       expect(output).toContain('Retained unconfigured agent database "retired" at');
-      expect(output).toContain(databasePath);
+      expect(output).toContain(retainedDatabase.path);
       expect(output).toContain("Doctor will not remove it automatically because it may contain");
       expect(output).toContain("retired or manually managed agent state.");
       expect(output).not.toContain('Retained unconfigured agent database "main"');
-      expect(fs.existsSync(databasePath)).toBe(true);
-      const database = new DatabaseSync(databasePath, { readOnly: true });
-      try {
-        expect(
-          database
-            .prepare(
-              `SELECT session_key, current_session_id, entry_json, updated_at
-               FROM session_nodes WHERE session_key = ?`,
-            )
-            .get("agent:retired:proof"),
-        ).toEqual(expectedRow);
-      } finally {
-        database.close();
+      expect(output).toContain("Skipped foreign agent database");
+      expect(output).toContain(externalDatabase.path);
+      for (const databaseCase of retainedDatabases) {
+        expect(fs.existsSync(databaseCase.path)).toBe(true);
+        const database = new DatabaseSync(databaseCase.path, { readOnly: true });
+        try {
+          expect(
+            database
+              .prepare(
+                `SELECT session_key, current_session_id, entry_json, updated_at
+                 FROM session_nodes WHERE session_key = ?`,
+              )
+              .get(`agent:${databaseCase.agentId}:proof`),
+          ).toEqual({
+            session_key: `agent:${databaseCase.agentId}:proof`,
+            current_session_id: `${databaseCase.agentId}-proof-session`,
+            entry_json: "{}",
+            updated_at: 1,
+          });
+        } finally {
+          database.close();
+        }
       }
-      expect(listOpenClawRegisteredAgentDatabases({ env })).toContainEqual(
-        expect.objectContaining({ agentId: "retired", path: databasePath }),
-      );
+      const registeredDatabases = listOpenClawRegisteredAgentDatabases({ env });
+      expect(registeredDatabases).toContainEqual(expect.objectContaining(retainedDatabase));
+      expect(registeredDatabases).not.toContainEqual(expect.objectContaining(externalDatabase));
     }
   }, 120_000);
 
