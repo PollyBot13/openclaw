@@ -26,9 +26,6 @@ const runDoctorRepairSequenceMock = vi.hoisted(() => vi.fn());
 const createDoctorPluginMetadataSnapshotScopeParamsMock = vi.hoisted(() => vi.fn());
 const runDoctorConfigPreflightOptionsMock = vi.hoisted(() => vi.fn());
 const collectDoctorPreviewNotesParamsMock = vi.hoisted(() => vi.fn());
-const collectRetainedUnconfiguredAgentDatabaseWarningsMock = vi.hoisted(() =>
-  vi.fn<(params: { cfg: OpenClawConfig; env: NodeJS.ProcessEnv }) => string[]>(() => []),
-);
 const prepareTailscaleConfigMigrationMock = vi.hoisted(() =>
   vi.fn(({ cfg }: { cfg: OpenClawConfig }) => ({
     config: cfg,
@@ -279,12 +276,6 @@ vi.mock("../gateway/call.js", () => ({
 
 vi.mock("./doctor-tailscale.js", () => ({
   prepareTailscaleConfigMigration: prepareTailscaleConfigMigrationMock,
-}));
-
-vi.mock("./doctor-unconfigured-agent-databases.js", () => ({
-  collectRetainedUnconfiguredAgentDatabaseWarnings: (
-    params: Parameters<typeof collectRetainedUnconfiguredAgentDatabaseWarningsMock>[0],
-  ) => collectRetainedUnconfiguredAgentDatabaseWarningsMock(params),
 }));
 
 vi.mock("./doctor/repair-sequencing.js", async () => {
@@ -1603,8 +1594,6 @@ describe("doctor config flow", () => {
     runDoctorRepairSequenceMock.mockReset();
     createDoctorPluginMetadataSnapshotScopeParamsMock.mockClear();
     collectDoctorPreviewNotesParamsMock.mockClear();
-    collectRetainedUnconfiguredAgentDatabaseWarningsMock.mockClear();
-    collectRetainedUnconfiguredAgentDatabaseWarningsMock.mockReturnValue([]);
     prepareTailscaleConfigMigrationMock.mockClear();
     prepareTailscaleConfigMigrationMock.mockImplementation(({ cfg }) => ({
       config: cfg,
@@ -2110,35 +2099,6 @@ describe("doctor config flow", () => {
     expect(scopeParams.getBaseSnapshot()?.index.installRecords).not.toHaveProperty("google-meet");
     result.invalidatePluginMetadataSnapshot();
     expect(scopeParams.getBaseSnapshot()).toBeUndefined();
-  });
-
-  it.each([
-    { repair: false, mode: "preview" },
-    { repair: true, mode: "repair" },
-  ])("reports retained unconfigured databases during $mode", async ({ repair }) => {
-    const warning =
-      '- Retained unconfigured agent database "retired" at /tmp/retired.sqlite. Doctor will not remove it automatically.';
-    collectRetainedUnconfiguredAgentDatabaseWarningsMock.mockReturnValue([warning]);
-    if (repair) {
-      runDoctorRepairSequenceMock.mockImplementation(async (params: { state: unknown }) => ({
-        state: params.state,
-        changeNotes: [],
-        warningNotes: [],
-        authProfilesRepaired: false,
-      }));
-    }
-
-    await runDoctorConfigWithInput({
-      config: {},
-      repair,
-      run: loadAndMaybeMigrateDoctorConfig,
-    });
-
-    expect(collectRetainedUnconfiguredAgentDatabaseWarningsMock).toHaveBeenCalledWith({
-      cfg: expect.any(Object),
-      env: process.env,
-    });
-    expect(terminalNoteMock).toHaveBeenCalledWith(warning, "Doctor warnings");
   });
 
   it("does not treat noninteractive doctor fix as plugin capability consent", async () => {
