@@ -40,7 +40,7 @@ export function collectRetainedUnconfiguredAgentDatabaseWarnings(params: {
       registeredAgentDatabases,
       env,
     });
-    return discovery.targets.flatMap((target) => {
+    const retainedDatabaseWarnings = discovery.targets.flatMap((target) => {
       if (target.source === "configured" || isDefaultAgentDatabasePath(target.realPath, stateDir)) {
         return [];
       }
@@ -48,6 +48,7 @@ export function collectRetainedUnconfiguredAgentDatabaseWarnings(params: {
         `- Retained unconfigured agent database "${sanitizeForLog(target.agentId)}" at ${sanitizeForLog(target.path)}. Doctor will not remove it automatically because it may contain retired or manually managed agent state.`,
       ];
     });
+    return [...retainedDatabaseWarnings, ...discovery.externalWarnings];
   } catch (error) {
     return [
       `- Could not inspect retained unconfigured agent databases: ${sanitizeForLog(formatErrorMessage(error))}`,
