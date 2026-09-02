@@ -282,30 +282,6 @@ const historyProfiles: {
     depth: 2,
     consumer: "",
   },
-  {
-    job: "checks-fast-core",
-    step: "Run ${{ matrix.task }} (${{ matrix.runtime }})",
-    env: { TASK: "bundled-protocol" },
-    target: `+${base}:refs/remotes/origin/protocol-since-base`,
-    depth: 1,
-    consumer: "protocol:check",
-  },
-  {
-    job: "check-shard",
-    step: "Run check shard",
-    env: { TASK: "guards" },
-    target: `+${base}:refs/remotes/origin/ci-base`,
-    depth: 1,
-    consumer: "scripts/report-test-temp-creations.mjs",
-  },
-  {
-    job: "check-shard",
-    step: "Run check shard",
-    env: { TASK: "npm-lock" },
-    target: `+${base}:refs/remotes/origin/npm-lock-base`,
-    depth: 1,
-    consumer: "deps:npm-lock:check:changed",
-  },
 ];
 
 linuxIt.each(
@@ -351,6 +327,58 @@ linuxIt.each(
   55_000,
 );
 
+const prefetchedHistoryProfiles = [
+  {
+    job: "checks-fast-core",
+    step: "Run ${{ matrix.task }} (${{ matrix.runtime }})",
+    env: { TASK: "bundled-protocol" },
+    target: "refs/remotes/origin/protocol-since-base",
+    consumer: "protocol:check",
+  },
+  {
+    job: "check-shard",
+    step: "Run check shard",
+    env: { TASK: "guards" },
+    target: "refs/remotes/origin/ci-base",
+    consumer: "scripts/report-test-temp-creations.mjs",
+  },
+  {
+    job: "check-shard",
+    step: "Run check shard",
+    env: { TASK: "npm-lock" },
+    target: "refs/remotes/origin/npm-lock-base",
+    consumer: "deps:npm-lock:check:changed",
+  },
+];
+
+linuxIt.each(prefetchedHistoryProfiles)(
+  "$job/$step publishes prefetched history before consumption ($target)",
+  async ({ job, step, env, target, consumer }) => {
+    const report = await runCiGitStep({
+      job,
+      step,
+      env,
+      fetchResults: [],
+      prepare: true,
+      poisonPython: true,
+    });
+    expect(report.code).toBe(0);
+    expect(report.fetches).toEqual([]);
+    expect(
+      report.commands.some(
+        ({ tool, args }) => tool === "git" && args.join(" ") === `update-ref ${target} ${base}`,
+      ),
+    ).toBe(true);
+    expect(report.commands.some(({ tool, args }) => tool !== "git" && args[0] === consumer)).toBe(
+      true,
+    );
+    if (env.TASK === "npm-lock") {
+      expect(report.commands.some(({ args }) => args[0] === "deps:npm-lock:check")).toBe(false);
+    }
+  },
+  55_000,
+);
+
 linuxIt(
   "ratchet retries a stale merge parent before checkout and base publication",
   async () => {
@@ -382,43 +410,21 @@ linuxIt(
   55_000,
 );
 
-linuxIt(
-  "cancellation during raw Git timeout cleanup prevents npm-lock fallback",
-  async () => {
-    const report = await runCiGitStep({
-      job: "check-shard",
-      step: "Run check shard",
-      env: { TASK: "npm-lock" },
-      fetchResults: ["hang"],
-      prepare: true,
-      cancelDuringCleanup: true,
-    });
-    expect(report.cancelledDuringCleanup).toBe(true);
-    expect(report.code).toBe(143);
-    expect(report.fetches).toHaveLength(1);
-    expect(report.commands.filter(({ tool }) => tool === "pnpm")).toEqual([]);
-  },
-  55_000,
-);
-
-linuxIt.each([23, "hang"] satisfies FetchResult[])(
-  "npm-lock safely falls back to a full sweep after joined fetch failure (%s)",
-  async (failure) => {
-    const report = await runCiGitStep({
-      job: "check-shard",
-      step: "Run check shard",
-      env: { TASK: "npm-lock" },
-      fetchResults: [failure],
-      prepare: true,
-    });
-    expect(report.code).toBe(0);
-    expect(report.fetches).toHaveLength(1);
-    expect(report.commands.filter(({ tool }) => tool === "pnpm").map(({ args }) => args)).toEqual([
-      ["deps:npm-lock:check"],
-    ]);
-  },
-  55_000,
-);
+linuxIt("npm-lock falls back to a full sweep when its local ref cannot be published", async () => {
+  const report = await runCiGitStep({
+    job: "check-shard",
+    step: "Run check shard",
+    env: { TASK: "npm-lock" },
+    fetchResults: [],
+    gitFault: { match: "update-ref refs/remotes/origin/npm-lock-base", code: 23 },
+    prepare: true,
+  });
+  expect(report.code).toBe(0);
+  expect(report.fetches).toEqual([]);
+  expect(report.commands.filter(({ tool }) => tool === "pnpm").map(({ args }) => args)).toEqual([
+    ["deps:npm-lock:check"],
+  ]);
+});
 
 posixIt(
   "fetches the CI harness without a second full-repository snapshot",

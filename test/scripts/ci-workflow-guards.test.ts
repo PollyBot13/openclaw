@@ -8756,8 +8756,11 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(checkShardStep.env.PR_BASE_SHA).toBe(
       "${{ github.event_name == 'pull_request' && needs.preflight.outputs.diff_base_revision || '' }}",
     );
+    expect(parsedWorkflow.jobs["check-shard"].env.CHECKOUT_GIT_COMMITS_JSON).toBe(
+      "${{ (matrix.task == 'guards' || matrix.task == 'npm-lock') && needs.preflight.outputs.diff_base_revision != '' && format('[\"{0}\"]', needs.preflight.outputs.diff_base_revision) || '[]' }}",
+    );
     expect(checkShardStep.run).toContain(
-      'python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 120 fetch --no-tags --depth=1 origin "+${PR_BASE_SHA}:refs/remotes/origin/ci-base"',
+      'python3 -I -S "$RUNNER_TEMP/ci-git-owner.py" --checkout-git 0 update-ref refs/remotes/origin/ci-base "$PR_BASE_SHA"',
     );
   });
 
@@ -9262,6 +9265,9 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(checksFastJob.env.CHECKOUT_BASE_SHA).toBe(
       "${{ (matrix.task == 'baseline-ratchets' || startsWith(matrix.task, 'release-lint-')) && needs.preflight.outputs.diff_base_revision || '' }}",
     );
+    expect(checksFastJob.env.CHECKOUT_GIT_COMMITS_JSON).toBe(
+      "${{ matrix.task == 'bundled-protocol' && needs.preflight.outputs.diff_base_revision != '' && format('[\"{0}\"]', needs.preflight.outputs.diff_base_revision) || '[]' }}",
+    );
     expect(checkout.env.CHECKOUT_SHA).toBe("${{ needs.preflight.outputs.checkout_revision }}");
     expect(releaseGateMerge.if).toBe(
       "(matrix.task == 'baseline-ratchets' || startsWith(matrix.task, 'release-lint-')) && github.event_name == 'workflow_dispatch' && inputs.release_gate",
@@ -9315,7 +9321,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     );
     expect(checksFastRun.run).not.toContain("PROTOCOL_MANUAL_BASE_SHA");
     expect(checksFastRun.run).toContain(
-      '"+${PROTOCOL_SINCE_BASE_SHA}:refs/remotes/origin/protocol-since-base"',
+      'refs/remotes/origin/protocol-since-base "$PROTOCOL_SINCE_BASE_SHA"',
     );
     expect(checksFastRun.run).toContain(
       'base_ref="${RATCHET_BASE_REF:-refs/remotes/origin/ci-ratchet-base}"',
