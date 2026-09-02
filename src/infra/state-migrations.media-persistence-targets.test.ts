@@ -203,7 +203,7 @@ describe("media persistence migration targets", () => {
     const result = await migrateLegacyMediaPersistence({ env });
 
     expect(result.warnings).toContain(
-      `Retained unconfigured agent database "main" at ${databasePath}. Doctor will not remove it automatically because it may contain retired or manually managed agent state. It is outside the active state directory and is not a configured session store.`,
+      `Skipped foreign agent database ${databasePath}; it is outside the active state directory and is not a configured session store.`,
     );
     expect(
       listOpenClawRegisteredAgentDatabases({
@@ -293,7 +293,7 @@ describe("media persistence migration targets", () => {
     });
 
     expect(result.warnings).toContain(
-      `Retained unconfigured agent database "old" at ${databasePath}. Doctor will not remove it automatically because it may contain retired or manually managed agent state. It is outside the active state directory and is not a configured session store.`,
+      `Skipped foreign agent database ${databasePath}; it is outside the active state directory and is not a configured session store.`,
     );
     expect(readUserVersion(databasePath)).toBe(OPENCLAW_AGENT_SCHEMA_VERSION);
     expect(

@@ -129,7 +129,7 @@ export function discoverAgentDatabaseMigrationTargets(params: {
     if (realPath && !isInsideActiveStateDir && !isConfiguredPath) {
       discard(candidate);
       warnings.push(
-        `Retained unconfigured agent database "${candidate.agentId}" at ${pathname}. Doctor will not remove it automatically because it may contain retired or manually managed agent state. It is outside the active state directory and is not a configured session store.`,
+        `Skipped foreign agent database ${pathname}; it is outside the active state directory and is not a configured session store.`,
       );
       continue;
     }
