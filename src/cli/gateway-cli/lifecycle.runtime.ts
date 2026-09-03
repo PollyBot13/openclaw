@@ -24,6 +24,7 @@ export {
   consumeGatewayRestartIntentSync,
 } from "../../infra/restart-intent.js";
 export { writeGatewayRestartHandoffSync } from "../../infra/restart-handoff.js";
+export { LAUNCH_AGENT_EXIT_TIMEOUT_SECONDS } from "../../daemon/launchd-plist.js";
 export {
   cancelManagedServiceUpdateHandoff,
   claimManagedServiceUpdateHandoff,

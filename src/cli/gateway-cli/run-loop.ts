@@ -45,6 +45,7 @@ const LAUNCHD_SUPERVISED_RESTART_EXIT_DELAY_MS = 1500;
 const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 300_000;
 const RESTART_DRAIN_STILL_PENDING_WARN_MS = 30_000;
 const RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS = 10_000;
+const LAUNCHD_SHUTDOWN_RESERVE_MS = 5_000;
 const UPDATE_RESPAWN_HEALTH_TIMEOUT_MS = 10_000;
 const UPDATE_RESPAWN_HEALTH_POLL_MS = 200;
 const LOG_FLUSH_EXIT_TIMEOUT_MS = 4_000;
@@ -54,6 +55,7 @@ type GatewayRunSignalAction = "stop" | "restart";
 type GatewayRunSignalRequest = {
   action: GatewayRunSignalAction;
   signal: string;
+  launchdShutdownDeadlineAt?: number;
   restartReason?: string;
   restartIntent?: GatewayRestartIntent;
   hostedStop?: ReturnType<typeof createGatewayHostLifecycle>;
@@ -159,6 +161,7 @@ export async function runGatewayLoop(params: {
   let pendingStartupForceExitTimer: ReturnType<typeof setTimeout> | null = null;
   let restartDrainingMarked = false;
   let startupFailedWithoutServerHandle = false;
+  let exitRequested = false;
   const processInstanceId = randomUUID();
   const waitForHealthyChild = params.waitForHealthyChild ?? waitForHealthyGatewayChild;
   const getManagedUpdateOwner = () =>
@@ -177,6 +180,7 @@ export async function runGatewayLoop(params: {
     process.removeListener("SIGUSR1", onSigusr1);
   };
   const exitProcess = (code: number) => {
+    exitRequested = true;
     void hostLifecycle?.retire();
     cleanupSignals();
     params.runtime.exit(code);
@@ -318,22 +322,30 @@ export async function runGatewayLoop(params: {
       return false;
     }
   };
-  const forceExitAfterStabilityBundle = async (reason: string) => {
+  const forceExitAfterStabilityBundle = async (
+    reason: string,
+    options: { exitOnActiveManagedCancellation?: boolean } = {},
+  ) => {
     void hostLifecycle?.retire();
     try {
       writeStabilityBundle(reason);
     } finally {
       const owner = getManagedUpdateOwner();
-      if (owner) {
-        forceActiveRestartExit?.();
-      }
-      const restoration = await cancelManagedUpdateHandoffBeforeRecovery(owner);
-      if (restoration) {
+      if (owner && options.exitOnActiveManagedCancellation) {
+        gatewayLog.error(
+          "launchd shutdown deadline reached with managed update handoff ownership; exiting for supervisor recovery",
+        );
         params.completeBoot?.({ outcome: "forced_stop", reason });
-        if (restoration === "restart-after-exit") {
-          await exitProcessAfterLogFlush(1, owner, "restore");
-        } else {
-          exitProcess(1);
+        exitProcess(1);
+      } else {
+        const restoration = await cancelManagedUpdateHandoffBeforeRecovery(owner);
+        if (restoration) {
+          params.completeBoot?.({ outcome: "forced_stop", reason });
+          if (restoration === "restart-after-exit") {
+            await exitProcessAfterLogFlush(1, owner, "restore");
+          } else {
+            exitProcess(1);
+          }
         }
       }
     }
@@ -516,7 +528,11 @@ export async function runGatewayLoop(params: {
     clearTimeout(pendingStartupForceExitTimer ?? undefined);
     pendingStartupForceExitTimer = null;
   };
-  const armPendingStartupForceExitTimer = () => {
+  const resolveRequestShutdownTimeoutMs = (request: GatewayRunSignalRequest) =>
+    request.launchdShutdownDeadlineAt === undefined
+      ? SHUTDOWN_TIMEOUT_MS
+      : Math.max(0, request.launchdShutdownDeadlineAt - Date.now());
+  const armPendingStartupForceExitTimer = (request: GatewayRunSignalRequest) => {
     if (pendingStartupForceExitTimer) {
       return;
     }
@@ -525,8 +541,10 @@ export async function runGatewayLoop(params: {
       gatewayLog.error(
         "startup restart request timed out before gateway returned a close handle; exiting for supervisor recovery",
       );
-      void forceExitAfterStabilityBundle("gateway.restart_startup_request_timeout");
-    }, SHUTDOWN_TIMEOUT_MS);
+      void forceExitAfterStabilityBundle("gateway.restart_startup_request_timeout", {
+        exitOnActiveManagedCancellation: request.launchdShutdownDeadlineAt !== undefined,
+      });
+    }, resolveRequestShutdownTimeoutMs(request));
     pendingStartupForceExitTimer.unref?.();
   };
   const resolveRestartDrainTimeoutMs = (
@@ -610,6 +628,8 @@ export async function runGatewayLoop(params: {
   const runAcceptedRequest = (acceptedRequest: GatewayRunSignalRequest) => {
     const { action, restartIntent } = acceptedRequest;
     const isRestart = action === "restart";
+    const isLaunchdSigtermRestart = acceptedRequest.launchdShutdownDeadlineAt !== undefined;
+    const resolveRestartShutdownTimeoutMs = () => resolveRequestShutdownTimeoutMs(acceptedRequest);
     if (isRestart) {
       activeRestartRequest = acceptedRequest;
     } else {
@@ -625,6 +645,10 @@ export async function runGatewayLoop(params: {
         gatewayLog.error("shutdown timed out; exiting without full cleanup");
         void forceExitAfterStabilityBundle(
           isRestart ? "gateway.restart_shutdown_timeout" : "gateway.stop_shutdown_timeout",
+          {
+            exitOnActiveManagedCancellation:
+              acceptedRequest.launchdShutdownDeadlineAt !== undefined,
+          },
         );
       }, forceExitMs);
       if (params.ownsProcessLifecycle === true) {
@@ -647,8 +671,8 @@ export async function runGatewayLoop(params: {
     if (isRestart) {
       forceActiveRestartExit = () => {
         clearForceExitTimer();
-        if (!getManagedUpdateOwner()) {
-          armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
+        if (acceptedRequest.launchdShutdownDeadlineAt !== undefined || !getManagedUpdateOwner()) {
+          armForceExitTimer(resolveRestartShutdownTimeoutMs());
         }
       };
     }
@@ -661,7 +685,16 @@ export async function runGatewayLoop(params: {
         | "restart-after-exit"
         | undefined;
       let shutdownFailed = false;
-      const restartDrainTimeoutMs = isRestart ? resolveRestartDrainTimeoutMs(restartIntent) : 0;
+      const requestedRestartDrainTimeoutMs = isRestart
+        ? resolveRestartDrainTimeoutMs(restartIntent)
+        : 0;
+      const restartShutdownTimeoutMs = resolveRestartShutdownTimeoutMs();
+      const restartDrainTimeoutMs = isLaunchdSigtermRestart
+        ? Math.min(
+            requestedRestartDrainTimeoutMs ?? restartShutdownTimeoutMs,
+            Math.max(0, restartShutdownTimeoutMs - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS),
+          )
+        : requestedRestartDrainTimeoutMs;
       const restartDrainDeadlineAt =
         isRestart && restartDrainTimeoutMs !== undefined
           ? Date.now() + restartDrainTimeoutMs
@@ -669,6 +702,8 @@ export async function runGatewayLoop(params: {
       // Managed helpers must reach native parking before either exit watchdog can arm.
       if (!isRestart) {
         armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
+      } else if (isLaunchdSigtermRestart && !getManagedUpdateOwner()) {
+        armForceExitTimer(restartShutdownTimeoutMs);
       } else if (restartDrainTimeoutMs !== undefined && !getManagedUpdateOwner()) {
         // Allow extra time for draining active turns on explicitly capped restarts.
         armForceExitTimer(restartDrainTimeoutMs + SHUTDOWN_TIMEOUT_MS);
@@ -798,7 +833,6 @@ export async function runGatewayLoop(params: {
               throw new Error("managed update helper lost exact ownership during service parking");
             }
           } catch (err) {
-            clearForceExitTimer();
             gatewayLog.error(
               `managed update handoff could not park ${supervisorMode}: ${String(err)}`,
             );
@@ -820,7 +854,7 @@ export async function runGatewayLoop(params: {
           !forceExitTimer &&
           (!managedUpdateOwner || managedUpdateCancellation === "restored-in-process")
         ) {
-          armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
+          armForceExitTimer(resolveRestartShutdownTimeoutMs());
         }
         const closeDrainTimeoutMs = !isRestart
           ? null
@@ -853,8 +887,16 @@ export async function runGatewayLoop(params: {
               );
             }
           } finally {
-            clearForceExitTimer();
-            forceActiveRestartExit = null;
+            if (
+              acceptedRequest.launchdShutdownDeadlineAt === undefined ||
+              !shuttingDown ||
+              exitRequested
+            ) {
+              clearForceExitTimer();
+            }
+            if (!shuttingDown || exitRequested) {
+              forceActiveRestartExit = null;
+            }
           }
         } else if (acceptedRequest.hostedStop) {
           try {
@@ -894,10 +936,37 @@ export async function runGatewayLoop(params: {
     restartReason?: string,
     restartIntent?: GatewayRestartIntent,
     hostedStop?: ReturnType<typeof createGatewayHostLifecycle>,
+    receivedAt = Date.now(),
   ) => {
-    const acceptedRequest = { action, signal, restartReason, restartIntent, hostedStop };
+    const launchdSignalDeadlineAt =
+      signal === "SIGTERM" && supervisorMode === "launchd"
+        ? receivedAt +
+          eagerLifecycleRuntime.LAUNCH_AGENT_EXIT_TIMEOUT_SECONDS * 1_000 -
+          LAUNCHD_SHUTDOWN_RESERVE_MS
+        : undefined;
+    const launchdShutdownDeadlineAt = action === "restart" ? launchdSignalDeadlineAt : undefined;
+    const acceptedRequest = {
+      action,
+      signal,
+      launchdShutdownDeadlineAt,
+      restartReason,
+      restartIntent,
+      hostedStop,
+    };
     if (shuttingDown) {
       const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
+      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
+        currentRestartRequest.launchdShutdownDeadlineAt = Math.min(
+          currentRestartRequest.launchdShutdownDeadlineAt ?? Number.POSITIVE_INFINITY,
+          launchdSignalDeadlineAt,
+        );
+        if (pendingStartupRequest) {
+          clearPendingStartupForceExitTimer();
+          armPendingStartupForceExitTimer(currentRestartRequest);
+        } else {
+          forceActiveRestartExit?.();
+        }
+      }
       if (
         action === "restart" &&
         isUpdateProcessRestartReason(restartReason) &&
@@ -927,6 +996,10 @@ export async function runGatewayLoop(params: {
           forceActiveRestartExit?.();
         }
         gatewayLog.info(`received ${signal} during shutdown; upgrading to ${restartReason}`);
+        return;
+      }
+      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
+        gatewayLog.info(`received ${signal} during shutdown; enforcing launchd deadline`);
         return;
       }
       if (action === "stop" && pendingStartupRequest && !server) {
@@ -968,13 +1041,14 @@ export async function runGatewayLoop(params: {
     }
     if (!server || !restartResolver) {
       pendingStartupRequest = acceptedRequest;
-      armPendingStartupForceExitTimer();
+      armPendingStartupForceExitTimer(acceptedRequest);
       return;
     }
     runAcceptedRequest(acceptedRequest);
   };
 
   const onSigterm = () => {
+    const receivedAt = Date.now();
     // Debug-level: every accepted signal is announced by request()'s
     // "received <signal>; ..." line, so an info pre-log would double up.
     gatewayLog.debug("signal SIGTERM received");
@@ -992,10 +1066,12 @@ export async function runGatewayLoop(params: {
         "SIGTERM",
         restartIntent?.reason,
         restartIntent ?? undefined,
+        undefined,
+        receivedAt,
       );
     })().catch((err: unknown) => {
       gatewayLog.error(`failed to handle SIGTERM: ${String(err)}`);
-      request("stop", "SIGTERM");
+      request("stop", "SIGTERM", undefined, undefined, undefined, receivedAt);
     });
   };
   const onSigint = () => {

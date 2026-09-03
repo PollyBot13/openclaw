@@ -367,6 +367,27 @@ async function withIsolatedSignals(
   }
 }
 
+async function withManagedLaunchdUpdateRestart(
+  run: Parameters<typeof withIsolatedSignals>[0],
+  signalOrder: "sigterm-first" | "sigusr1-first" = "sigterm-first",
+) {
+  consumeGatewayRestartIntentPayloadSync
+    .mockReturnValueOnce({})
+    .mockReturnValueOnce(signalOrder === "sigterm-first" ? { reason: "update.auto" } : null);
+  consumeGatewaySigusr1RestartIntent.mockReturnValueOnce({
+    reason: "update.auto",
+    successorOwner: managedUpdateSuccessorOwner,
+  });
+  setPlatform("darwin");
+  process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
+  vi.useFakeTimers();
+  try {
+    await withIsolatedSignals(run);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 function createRuntimeWithExitSignal(exitCallOrder?: string[]) {
   let resolveExit: (code: number) => void = () => {};
   const exited = new Promise<number>((resolve) => {
@@ -482,6 +503,30 @@ async function createSignaledLoopHarness(exitCallOrder?: string[], ownsProcessLi
   const { loopPromise } = await runLoopWithStart({ start, runtime, ownsProcessLifecycle });
   await waitForStart(started);
   return { close, start, runtime, exited, loopPromise };
+}
+
+async function createOwnedLoop(close: GatewayCloseFn = createCloseMock()) {
+  const { start, started } = createSignaledStart(close);
+  const lifecycle = createRuntimeWithExitSignal();
+  await runLoopWithStart({ start, runtime: lifecycle.runtime, ownsProcessLifecycle: true });
+  await vi.advanceTimersByTimeAsync(0);
+  await started;
+  return { start, ...lifecycle };
+}
+
+function blockActiveWorkDrain() {
+  const snapshot = createActiveWorkSnapshot({ activeTasks: 1 }, [
+    { kind: "task", count: 1, message: "1 active background task run(s)" },
+  ]);
+  createGatewayActiveWorkSnapshot.mockReturnValue(snapshot);
+  let release = () => {};
+  waitForGatewayActiveWork.mockImplementationOnce((_timeoutMs, options) =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+      options?.onSnapshot?.(snapshot);
+    }).then(() => ({ drained: true, snapshot: idleActiveWorkSnapshot })),
+  );
+  return () => release();
 }
 
 function expectRestartHandoffCall(expected: {
@@ -1523,6 +1568,126 @@ describe("runGatewayLoop", () => {
     });
   });
 
+  it("keeps launchd SIGTERM restart inside the original ExitTimeOut deadline", async () => {
+    vi.clearAllMocks();
+    const close = vi.fn<GatewayCloseFn>(() => new Promise<void>(() => {}));
+
+    await withManagedLaunchdUpdateRestart(async ({ captureSignal }) => {
+      const { runtime, exited } = await createOwnedLoop(close);
+
+      captureSignal("SIGTERM")();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBeLessThanOrEqual(5_000);
+      expectRestartCloseCall(close, 5_000);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      captureSignal("SIGUSR1")();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.exit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(exited).resolves.toBe(1);
+      expect(gatewayLog.info).toHaveBeenCalledWith(
+        "received SIGUSR1 during shutdown; upgrading to update.auto",
+      );
+    });
+  });
+
+  it("retains the launchd deadline when managed handoff cancellation stalls", async () => {
+    vi.clearAllMocks();
+    requestManagedServiceUpdateHandoffPark.mockResolvedValueOnce(false);
+    cancelManagedServiceUpdateHandoff.mockImplementationOnce(() => new Promise(() => {}));
+    const releaseDrain = blockActiveWorkDrain();
+
+    try {
+      await withManagedLaunchdUpdateRestart(async ({ captureSignal }) => {
+        const { runtime } = await createOwnedLoop();
+
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(10_000);
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(0);
+        releaseDrain();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(requestManagedServiceUpdateHandoffPark).toHaveBeenCalledExactlyOnceWith(
+          managedUpdateSuccessorOwner,
+        );
+        expect(cancelManagedServiceUpdateHandoff).toHaveBeenCalledExactlyOnceWith(
+          managedUpdateSuccessorOwner,
+        );
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(runtime.exit).toHaveBeenCalledWith(1);
+        expect(cancelManagedServiceUpdateHandoff).toHaveBeenCalledTimes(1);
+        expect(gatewayLog.error).toHaveBeenCalledWith(
+          "launchd shutdown deadline reached with managed update handoff ownership; exiting for supervisor recovery",
+        );
+      });
+    } finally {
+      releaseDrain();
+    }
+  });
+
+  it("bounds a managed restart when launchd SIGTERM follows SIGUSR1", async () => {
+    vi.clearAllMocks();
+    let releasePark: () => void = () => {};
+    requestManagedServiceUpdateHandoffPark.mockImplementationOnce(() =>
+      new Promise<void>((resolve) => {
+        releasePark = resolve;
+      }).then(() => true),
+    );
+
+    try {
+      await withManagedLaunchdUpdateRestart(async ({ captureSignal }) => {
+        const { runtime } = await createOwnedLoop();
+
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(requestManagedServiceUpdateHandoffPark).toHaveBeenCalledOnce();
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(15_000);
+
+        expect(runtime.exit).toHaveBeenCalledWith(1);
+      }, "sigusr1-first");
+    } finally {
+      releasePark();
+    }
+  });
+
+  it.each(["sigterm-first", "sigusr1-first"] as const)(
+    "bounds failed final handoff recovery when %s",
+    async (signalOrder) => {
+      vi.clearAllMocks();
+      commitManagedServiceUpdateHandoff.mockResolvedValueOnce(false);
+      cancelManagedServiceUpdateHandoff.mockResolvedValueOnce(false);
+      const releaseDrain = blockActiveWorkDrain();
+
+      await withManagedLaunchdUpdateRestart(async ({ captureSignal }) => {
+        const { runtime } = await createOwnedLoop();
+
+        if (signalOrder === "sigterm-first") {
+          captureSignal("SIGTERM")();
+          await vi.advanceTimersByTimeAsync(10_000);
+        }
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(0);
+        releaseDrain();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(commitManagedServiceUpdateHandoff).toHaveBeenCalledOnce();
+        expect(cancelManagedServiceUpdateHandoff).toHaveBeenCalledOnce();
+        if (signalOrder === "sigusr1-first") {
+          captureSignal("SIGTERM")();
+        }
+        await vi.advanceTimersByTimeAsync(signalOrder === "sigterm-first" ? 5_000 : 15_000);
+
+        expect(runtime.exit).toHaveBeenCalledWith(1);
+      }, signalOrder);
+    },
+  );
+
   it("uses restart intent wait overrides for SIGTERM drain", async () => {
     vi.clearAllMocks();
     consumeGatewayRestartIntentPayloadSync.mockReturnValueOnce({ waitMs: 2_500 });
@@ -2064,6 +2229,46 @@ describe("runGatewayLoop", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("exits at the queued launchd deadline when managed handoff cancellation would stall", async () => {
+    vi.clearAllMocks();
+    cancelManagedServiceUpdateHandoff.mockImplementationOnce(() => new Promise(() => {}));
+
+    await withManagedLaunchdUpdateRestart(async ({ captureSignal }) => {
+      let markStartupEntered: () => void = () => {};
+      const startupEntered = new Promise<void>((resolve) => {
+        markStartupEntered = resolve;
+      });
+      const { runtime, exited } = createRuntimeWithExitSignal();
+      const start = vi.fn(async () => {
+        markStartupEntered();
+        await new Promise<void>(() => {});
+        return createGatewayServer(vi.fn(async () => {}));
+      });
+
+      const { runGatewayLoop } = await import("./run-loop.js");
+      void runGatewayLoop({
+        start: start as unknown as Parameters<typeof runGatewayLoop>[0]["start"],
+        runtime: runtime as unknown as Parameters<typeof runGatewayLoop>[0]["runtime"],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await startupEntered;
+
+      captureSignal("SIGTERM")();
+      await vi.advanceTimersByTimeAsync(10_000);
+      captureSignal("SIGUSR1")();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(runtime.exit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(exited).resolves.toBe(1);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(cancelManagedServiceUpdateHandoff).not.toHaveBeenCalled();
+      expect(gatewayLog.error).toHaveBeenCalledWith(
+        "launchd shutdown deadline reached with managed update handoff ownership; exiting for supervisor recovery",
+      );
+    });
   });
 
   it("processes SIGINT immediately before startup returns a server", async () => {
