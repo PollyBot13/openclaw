@@ -1421,6 +1421,8 @@ describe("spawnAcpDirect", () => {
     globalSubagentThinking?: ThinkLevel;
     thinking?: ThinkLevel;
     expectedThinking?: ThinkLevel;
+    expectedThinkingExplicit?: boolean;
+    backend?: string;
   }>([
     {
       scenario: "configured primary model with global thinking default",
@@ -1462,6 +1464,28 @@ describe("spawnAcpDirect", () => {
       expectedThinking: "high",
     },
     {
+      scenario: "explicit max thinking for Codex",
+      globalSubagentThinking: "low",
+      thinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: true,
+    },
+    {
+      scenario: "inherited max thinking for Codex",
+      model: "openai/gpt-5.6-sol",
+      globalSubagentThinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: false,
+    },
+    {
+      scenario: "inherited max thinking for Codex on another ACP backend",
+      model: "openai/gpt-5.6-sol",
+      globalSubagentThinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: false,
+      backend: "alternate",
+    },
+    {
       scenario: "harness defaults without an owner or model override",
       globalThinking: "high",
     },
@@ -1476,6 +1500,8 @@ describe("spawnAcpDirect", () => {
       globalSubagentThinking,
       thinking,
       expectedThinking,
+      expectedThinkingExplicit,
+      backend,
     }) => {
       replaceSpawnConfig({
         ...createDefaultSpawnConfig(),
@@ -1483,7 +1509,10 @@ describe("spawnAcpDirect", () => {
           list: [
             {
               id: "codex-acp",
-              runtime: { type: "acp", acp: { agent: "codex" } },
+              runtime: {
+                type: "acp",
+                acp: { agent: "codex", ...(backend ? { backend } : {}) },
+              },
               model,
               thinkingDefault: ownerThinking,
               subagents: { thinking: subagentThinking },
@@ -1511,6 +1540,10 @@ describe("spawnAcpDirect", () => {
       expectAcceptedSpawn(result);
       expectInitializeSessionFields({
         agent: "codex",
+        backendId: backend ?? "acpx",
+        ...(expectedThinkingExplicit !== undefined
+          ? { thinkingExplicit: expectedThinkingExplicit }
+          : {}),
         runtimeOptions:
           model || expectedThinking
             ? {

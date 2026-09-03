@@ -37,7 +37,6 @@ import { splitModelRef } from "./subagent-spawn-plan.js";
 import { resolveSubagentThinkingOverride } from "./subagent-spawn-thinking.js";
 
 const ACP_RUNTIME_TIMEOUT_MAX_SECONDS = 24 * 60 * 60;
-
 export function resolveAcpSessionMode(mode: "run" | "session"): AcpRuntimeSessionMode {
   return mode === "session" ? "persistent" : "oneshot";
 }
@@ -96,10 +95,16 @@ export function resolveAcpSpawnRuntimeOptions(params: {
   thinking?: string;
   runTimeoutSeconds?: number;
 }):
-  | { ok: true; runtimeOptions?: AcpSpawnRuntimeOptions; modelExplicit: boolean }
+  | {
+      ok: true;
+      runtimeOptions?: AcpSpawnRuntimeOptions;
+      modelExplicit: boolean;
+      thinkingExplicit: boolean;
+    }
   | { ok: false; error: string } {
   const policyAgentId = params.configAgentId ?? params.targetAgentId;
   const modelExplicit = normalizeOptionalString(params.model) !== undefined;
+  const thinkingExplicit = normalizeOptionalString(params.thinking) !== undefined;
   const rawModel = resolveConfiguredSubagentSpawnModelSelection({
     cfg: params.cfg,
     agentId: policyAgentId,
@@ -139,7 +144,6 @@ export function resolveAcpSpawnRuntimeOptions(params: {
       });
     }
   }
-
   const timeoutSeconds = resolveAcpRuntimeTimeoutSeconds(params.runTimeoutSeconds);
   const runtimeOptions =
     model || thinking || timeoutSeconds
@@ -149,7 +153,7 @@ export function resolveAcpSpawnRuntimeOptions(params: {
           ...(timeoutSeconds ? { timeoutSeconds } : {}),
         }
       : undefined;
-  return { ok: true, runtimeOptions, modelExplicit };
+  return { ok: true, runtimeOptions, modelExplicit, thinkingExplicit };
 }
 
 export async function initializeAcpSpawnRuntime(params: {
@@ -161,6 +165,7 @@ export async function initializeAcpSpawnRuntime(params: {
   resumeSessionId?: string;
   runtimeOptions?: AcpSpawnRuntimeOptions;
   modelExplicit?: boolean;
+  thinkingExplicit?: boolean;
   cwd?: string;
 }): Promise<AcpSpawnInitializedRuntime> {
   const storePath = resolveSessionStorePathCore(params.cfg.session?.store, {
@@ -193,6 +198,7 @@ export async function initializeAcpSpawnRuntime(params: {
     resumeSessionId: params.resumeSessionId,
     runtimeOptions: params.runtimeOptions,
     modelExplicit: params.modelExplicit,
+    thinkingExplicit: params.thinkingExplicit,
     cwd: params.cwd,
     backendId: params.backendId,
   });
