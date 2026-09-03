@@ -90,11 +90,17 @@ extension ChannelsStore {
         while true {
             self.configLoadingSourceKey = requestSourceKey
             do {
+                let route = try await GatewayConnection.shared.captureRequiredRoute()
                 let snap: ConfigSnapshot = try await GatewayConnection.shared.requestDecoded(
                     method: .configGet,
                     params: nil,
-                    timeoutMs: 10000)
-                self.applyConfigSnapshot(snap, sourceKey: requestSourceKey, force: requestForce)
+                    timeoutMs: 10000,
+                    ifCurrentRoute: route)
+                self.applyConfigSnapshot(
+                    snap,
+                    sourceKey: requestSourceKey,
+                    force: requestForce,
+                    saveSource: .gateway(baseHash: snap.hash?.nonEmpty, route: route))
             } catch {
                 self.configStatus = error.localizedDescription
             }
@@ -107,13 +113,26 @@ extension ChannelsStore {
         }
     }
 
-    func applyConfigSnapshot(_ snap: ConfigSnapshot, sourceKey: String, force: Bool) {
+    func applyConfigSnapshot(
+        _ snap: ConfigSnapshot,
+        sourceKey: String,
+        force: Bool,
+        saveSource: ConfigStore.SaveSource? = nil)
+    {
         guard self.configSourceKey == sourceKey else { return }
         guard force || !self.configDirty else { return }
 
         self.configStatus = snap.valid == false
             ? "Config invalid; fix it in ~/.openclaw/openclaw.json."
             : nil
+        let exists = snap.exists ?? true
+        self.configSaveSource = if snap.valid != false,
+                                   !exists || (snap.hash?.nonEmpty != nil && snap.config != nil)
+        {
+            saveSource
+        } else {
+            nil
+        }
         self.configRoot = snap.config?.mapValues { $0.foundationValue } ?? [:]
         self.configDraft = cloneConfigValue(self.configRoot) as? [String: Any] ?? self.configRoot
         self.configDirty = false
@@ -216,7 +235,12 @@ extension ChannelsStore {
         defer { self.isSavingConfig = false }
 
         do {
-            try await ConfigStore.save(self.configDraft)
+            guard let source = self.configSaveSource else {
+                throw NSError(domain: "ChannelsStore", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Gateway config read did not return a revision.",
+                ])
+            }
+            try await ConfigStore.save(self.configDraft, source: source)
             await self.loadConfig()
         } catch {
             self.configStatus = error.localizedDescription
@@ -251,6 +275,7 @@ extension ChannelsStore {
         self.configDraft = [:]
         self.configDirty = false
         self.configLoaded = false
+        self.configSaveSource = nil
         self.configSourceKey = sourceKey
     }
 

@@ -10,6 +10,7 @@ struct StatusMenuHeaderView: View {
     @Bindable private var devicePairingPrompter = DevicePairingApprovalPrompter.shared
     @AppStorage(cameraEnabledKey, store: AppDefaults.standard) private var cameraEnabled = false
     @State private var browserEnabled = true
+    @State private var browserWriteInFlight = false
 
     private let isSleeping: Bool
     private let controlChannel = ControlChannel.shared
@@ -105,11 +106,15 @@ struct StatusMenuHeaderView: View {
             self.capabilityButton(
                 title: String(localized: "Browser"),
                 symbol: "globe",
-                enabled: self.browserEnabled)
+                enabled: self.browserEnabled,
+                interactive: !self.browserWriteInFlight)
             {
+                guard !self.browserWriteInFlight else { return }
+                self.browserWriteInFlight = true
+                let previousEnabled = self.browserEnabled
                 let enabled = !self.browserEnabled
                 self.browserEnabled = enabled
-                Task { await self.saveBrowserEnabled(enabled) }
+                Task { await self.saveBrowserEnabled(enabled, previousEnabled: previousEnabled) }
             }
 
             self.capabilityButton(
@@ -148,6 +153,7 @@ struct StatusMenuHeaderView: View {
         title: String,
         symbol: String,
         enabled: Bool,
+        interactive: Bool = true,
         action: @escaping () -> Void) -> some View
     {
         Button(action: action) {
@@ -166,6 +172,8 @@ struct StatusMenuHeaderView: View {
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(!interactive)
+        .opacity(interactive ? 1 : 0.55)
         .accessibilityLabel(title)
         .accessibilityValue(enabled ? String(localized: "On") : String(localized: "Off"))
     }
@@ -314,15 +322,12 @@ struct StatusMenuHeaderView: View {
         self.browserEnabled = browser?["enabled"] as? Bool ?? true
     }
 
-    private func saveBrowserEnabled(_ enabled: Bool) async {
-        var config = await ConfigStore.load()
-        var browser = config["browser"] as? [String: Any] ?? [:]
-        browser["enabled"] = enabled
-        config["browser"] = browser
+    private func saveBrowserEnabled(_ enabled: Bool, previousEnabled: Bool) async {
+        defer { self.browserWriteInFlight = false }
         do {
-            try await ConfigStore.save(config)
+            try await ConfigStore.setBrowserEnabled(enabled)
         } catch {
-            await self.loadBrowserEnabled()
+            self.browserEnabled = await (try? ConfigStore.readBrowserEnabled()) ?? previousEnabled
         }
     }
 }

@@ -321,10 +321,13 @@ struct TailscaleIntegrationSection: View {
             mode: tailscaleMode,
             requireCredentialsForServe: requireCredentialsForServe,
             password: password)
-        let root = await self.buildTailscaleConfigRoot(root: ConfigStore.load(), settings: settings)
-
         do {
-            try await ConfigStore.save(root, allowGatewayAuthMutation: true)
+            let loaded = try await ConfigStore.loadForMutation()
+            let root = self.buildTailscaleConfigRoot(root: loaded.root, settings: settings)
+            try await ConfigStore.save(
+                root,
+                source: loaded.source,
+                allowGatewayAuthMutation: true)
             return (true, nil)
         } catch {
             return (false, error.localizedDescription)

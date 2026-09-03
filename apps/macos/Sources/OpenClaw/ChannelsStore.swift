@@ -316,6 +316,7 @@ final class ChannelsStore {
     var configRoot: [String: Any] = [:]
     var configLoaded = false
     var configSourceKey: String?
+    var configSaveSource: ConfigStore.SaveSource?
     @ObservationIgnored private var decodedChannelCache: [String: Any] = [:]
 
     func channelMetaEntry(_ id: String) -> ChannelsStatusSnapshot.ChannelUiMetaEntry? {
