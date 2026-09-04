@@ -766,7 +766,10 @@ export async function runGatewayLoop(params: {
           !getManagedUpdateOwner()
         ) {
           armForceExitTimer(resolveShutdownTimeoutMs());
+          return;
         }
+        clearForceExitTimer();
+        acceptedRequest.restartDeadline.forceExitDeadlineAt = undefined;
       };
     } else {
       forceActiveStopExit = () => {

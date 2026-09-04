@@ -3641,6 +3641,52 @@ describe("runGatewayLoop", () => {
     }
   });
 
+  it("cancels an ordinary restart watchdog when a managed update takes over", async () => {
+    vi.clearAllMocks();
+    consumeGatewaySigusr1RestartIntent.mockReturnValueOnce(null).mockReturnValueOnce({
+      reason: "update.auto",
+      successorOwner: managedUpdateSuccessorOwner,
+    });
+    peekGatewaySigusr1RestartReason
+      .mockReturnValueOnce("config.patch")
+      .mockReturnValueOnce("update.auto");
+    requestManagedServiceUpdateHandoffPark.mockResolvedValueOnce(false);
+    const releaseDrain = blockActiveWorkDrain();
+    setPlatform("linux");
+    vi.useFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { start, runtime, exited } = await createOwnedLoop();
+        const sigusr1 = captureSignal("SIGUSR1");
+
+        sigusr1();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(armShutdownHardExitWatchdog).toHaveBeenCalledOnce();
+
+        sigusr1();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(cancelShutdownHardExitWatchdog).toHaveBeenCalledOnce();
+
+        await vi.advanceTimersByTimeAsync(DEFAULT_RESTART_DEFERRAL_TIMEOUT_MS + 325_000);
+        expect(runtime.exit).not.toHaveBeenCalled();
+
+        releaseDrain();
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2));
+        expect(cancelManagedServiceUpdateHandoff).toHaveBeenCalledExactlyOnceWith(
+          managedUpdateSuccessorOwner,
+        );
+
+        captureSignal("SIGINT")();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(exited).resolves.toBe(0);
+      });
+    } finally {
+      releaseDrain();
+      vi.useRealTimers();
+    }
+  });
+
   it("reads an update upgrade after asynchronous lock release", async () => {
     vi.clearAllMocks();
     peekGatewaySigusr1RestartReason
