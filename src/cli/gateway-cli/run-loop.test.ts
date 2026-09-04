@@ -1657,6 +1657,137 @@ describe("runGatewayLoop", () => {
     }
   });
 
+  it("keeps a late launchd deadline after an ordinary restart gains a managed owner", async () => {
+    vi.clearAllMocks();
+    consumeGatewayRestartIntentPayloadSync
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({
+        reason: "update.auto",
+      });
+    consumeGatewaySigusr1RestartIntent.mockReturnValueOnce(null).mockReturnValueOnce({
+      reason: "update.auto",
+      successorOwner: managedUpdateSuccessorOwner,
+    });
+    peekGatewaySigusr1RestartReason
+      .mockReturnValueOnce("config.patch")
+      .mockReturnValueOnce("update.auto");
+    const releaseDrain = blockActiveWorkDrain();
+    let releaseClose: () => void = () => {};
+    const close = vi.fn<GatewayCloseFn>(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve;
+        }),
+    );
+    setPlatform("darwin");
+    process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
+    vi.useFakeTimers();
+
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime } = await createOwnedLoop(close);
+        const sigusr1 = captureSignal("SIGUSR1");
+
+        sigusr1();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBe(
+          DEFAULT_RESTART_DEFERRAL_TIMEOUT_MS,
+        );
+        sigusr1();
+        await vi.advanceTimersByTimeAsync(0);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(requestManagedServiceUpdateHandoffPark).toHaveBeenCalledExactlyOnceWith(
+          managedUpdateSuccessorOwner,
+        );
+        expectRestartCloseCall(close, 5_000);
+
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(runtime.exit).toHaveBeenCalledWith(1);
+      });
+    } finally {
+      releaseDrain();
+      releaseClose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a stricter active-work cutoff when launchd SIGTERM arrives", async () => {
+    vi.clearAllMocks();
+    consumeGatewayRestartIntentPayloadSync.mockReturnValueOnce({ waitMs: 2_500 });
+    peekGatewaySigusr1RestartReason.mockReturnValueOnce("config.patch");
+    const releaseDrain = blockActiveWorkDrain();
+    const close = createCloseMock();
+    setPlatform("darwin");
+    process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
+    vi.useFakeTimers();
+
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        await createOwnedLoop(close);
+
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBe(2_500);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(close).not.toHaveBeenCalled();
+
+        releaseDrain();
+        await vi.advanceTimersByTimeAsync(0);
+        expectRestartCloseCall(close, 2_500);
+      });
+    } finally {
+      releaseDrain();
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets launchd SIGTERM override an ordinary restart queued during startup", async () => {
+    vi.clearAllMocks();
+    peekGatewaySigusr1RestartReason.mockReturnValue("config.patch");
+    setPlatform("darwin");
+    process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
+    vi.useFakeTimers();
+
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        let markStartupEntered: () => void = () => {};
+        const startupEntered = new Promise<void>((resolve) => {
+          markStartupEntered = resolve;
+        });
+        const start = vi.fn(async () => {
+          markStartupEntered();
+          await new Promise<void>(() => {});
+          return createGatewayServer(createCloseMock());
+        });
+        const { runtime } = createRuntimeWithExitSignal();
+        const { runGatewayLoop } = await import("./run-loop.js");
+        void runGatewayLoop({
+          start: start as unknown as Parameters<typeof runGatewayLoop>[0]["start"],
+          runtime: runtime as unknown as Parameters<typeof runGatewayLoop>[0]["runtime"],
+        });
+        await startupEntered;
+
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(0);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(runtime.exit).toHaveBeenCalledWith(0);
+        expect(gatewayLog.info).toHaveBeenCalledWith(
+          "received SIGTERM; overriding pending startup restart with shutdown",
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["sigterm-first", "sigusr1-first"] as const)(
     "bounds failed final handoff recovery when %s",
     async (signalOrder) => {
@@ -3277,6 +3408,65 @@ describe("runGatewayLoop", () => {
     } finally {
       releaseLock();
       delete process.env.OPENCLAW_SUPERVISOR_MODE;
+    }
+  });
+
+  it("cancels a managed upgrade that arrives while reacquiring the gateway lock", async () => {
+    vi.clearAllMocks();
+    consumeGatewaySigusr1RestartIntent.mockReturnValueOnce(null).mockReturnValueOnce({
+      reason: "update.auto",
+      successorOwner: managedUpdateSuccessorOwner,
+    });
+    peekGatewaySigusr1RestartReason
+      .mockReturnValueOnce("config.patch")
+      .mockReturnValueOnce("update.auto");
+
+    let releaseReacquire: () => void = () => {};
+    const reacquireBlocked = new Promise<void>((resolve) => {
+      releaseReacquire = resolve;
+    });
+    const staleLockRelease = vi.fn(async () => {});
+    acquireGatewayLock
+      .mockResolvedValueOnce({ release: vi.fn(async () => {}) })
+      .mockImplementationOnce(async () => {
+        await reacquireBlocked;
+        return { release: staleLockRelease };
+      })
+      .mockResolvedValueOnce({ release: vi.fn(async () => {}) });
+
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { start, runtime, exited } = await createSignaledLoopHarness();
+        const sigusr1 = captureSignal("SIGUSR1");
+
+        sigusr1();
+        await waitForLoopCondition(
+          () => acquireGatewayLock.mock.calls.length === 2,
+          "ordinary restart did not reach lock reacquisition",
+        );
+        sigusr1();
+        await waitForLoopCondition(
+          () => consumeGatewaySigusr1RestartIntent.mock.calls.length === 2,
+          "managed upgrade was not admitted during lock reacquisition",
+        );
+        releaseReacquire();
+        await waitForLoopCondition(
+          () => start.mock.calls.length === 2,
+          "managed upgrade did not resume in process",
+        );
+
+        expect(staleLockRelease).toHaveBeenCalledOnce();
+        expect(cancelManagedServiceUpdateHandoff).toHaveBeenCalledExactlyOnceWith(
+          managedUpdateSuccessorOwner,
+        );
+        expect(acquireGatewayLock).toHaveBeenCalledTimes(3);
+        expect(runtime.exit).not.toHaveBeenCalled();
+
+        captureSignal("SIGINT")();
+        await expect(exited).resolves.toBe(0);
+      });
+    } finally {
+      releaseReacquire();
     }
   });
 

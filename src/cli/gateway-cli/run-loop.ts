@@ -55,7 +55,11 @@ type GatewayRunSignalAction = "stop" | "restart";
 type GatewayRunSignalRequest = {
   action: GatewayRunSignalAction;
   signal: string;
-  launchdShutdownDeadlineAt?: number;
+  restartDeadline: {
+    launchdShutdownDeadlineAt?: number;
+    activeWorkDrainDeadlineAt?: number;
+    interruptActiveWorkDrain?: () => void;
+  };
   restartReason?: string;
   restartIntent?: GatewayRestartIntent;
   hostedStop?: ReturnType<typeof createGatewayHostLifecycle>;
@@ -529,9 +533,9 @@ export async function runGatewayLoop(params: {
     pendingStartupForceExitTimer = null;
   };
   const resolveRequestShutdownTimeoutMs = (request: GatewayRunSignalRequest) =>
-    request.launchdShutdownDeadlineAt === undefined
+    request.restartDeadline.launchdShutdownDeadlineAt === undefined
       ? SHUTDOWN_TIMEOUT_MS
-      : Math.max(0, request.launchdShutdownDeadlineAt - Date.now());
+      : Math.max(0, request.restartDeadline.launchdShutdownDeadlineAt - Date.now());
   const armPendingStartupForceExitTimer = (request: GatewayRunSignalRequest) => {
     if (pendingStartupForceExitTimer) {
       return;
@@ -542,7 +546,8 @@ export async function runGatewayLoop(params: {
         "startup restart request timed out before gateway returned a close handle; exiting for supervisor recovery",
       );
       void forceExitAfterStabilityBundle("gateway.restart_startup_request_timeout", {
-        exitOnActiveManagedCancellation: request.launchdShutdownDeadlineAt !== undefined,
+        exitOnActiveManagedCancellation:
+          request.restartDeadline.launchdShutdownDeadlineAt !== undefined,
       });
     }, resolveRequestShutdownTimeoutMs(request));
     pendingStartupForceExitTimer.unref?.();
@@ -628,7 +633,8 @@ export async function runGatewayLoop(params: {
   const runAcceptedRequest = (acceptedRequest: GatewayRunSignalRequest) => {
     const { action, restartIntent } = acceptedRequest;
     const isRestart = action === "restart";
-    const isLaunchdSigtermRestart = acceptedRequest.launchdShutdownDeadlineAt !== undefined;
+    const isLaunchdSigtermRestart =
+      acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined;
     const resolveRestartShutdownTimeoutMs = () => resolveRequestShutdownTimeoutMs(acceptedRequest);
     if (isRestart) {
       activeRestartRequest = acceptedRequest;
@@ -647,7 +653,7 @@ export async function runGatewayLoop(params: {
           isRestart ? "gateway.restart_shutdown_timeout" : "gateway.stop_shutdown_timeout",
           {
             exitOnActiveManagedCancellation:
-              acceptedRequest.launchdShutdownDeadlineAt !== undefined,
+              acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined,
           },
         );
       }, forceExitMs);
@@ -671,7 +677,10 @@ export async function runGatewayLoop(params: {
     if (isRestart) {
       forceActiveRestartExit = () => {
         clearForceExitTimer();
-        if (acceptedRequest.launchdShutdownDeadlineAt !== undefined || !getManagedUpdateOwner()) {
+        if (
+          acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined ||
+          !getManagedUpdateOwner()
+        ) {
           armForceExitTimer(resolveRestartShutdownTimeoutMs());
         }
       };
@@ -695,7 +704,7 @@ export async function runGatewayLoop(params: {
             Math.max(0, restartShutdownTimeoutMs - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS),
           )
         : requestedRestartDrainTimeoutMs;
-      const restartDrainDeadlineAt =
+      acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt =
         isRestart && restartDrainTimeoutMs !== undefined
           ? Date.now() + restartDrainTimeoutMs
           : undefined;
@@ -772,13 +781,40 @@ export async function runGatewayLoop(params: {
                 return;
               }
 
+              let latestSnapshot = initialSnapshot;
+              const activeWorkDrainDeadlineAt =
+                acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt;
               const remainingDrainTimeoutMs =
-                restartDrainDeadlineAt === undefined
+                activeWorkDrainDeadlineAt === undefined
                   ? undefined
-                  : Math.max(0, restartDrainDeadlineAt - Date.now());
-              const drain = await waitForGatewayActiveWork(remainingDrainTimeoutMs, {
-                onSnapshot: reportDrainSnapshot,
+                  : Math.max(0, activeWorkDrainDeadlineAt - Date.now());
+              let drain: Awaited<ReturnType<typeof waitForGatewayActiveWork>>;
+              const activeWorkDrainInterrupted = new Error("active-work drain interrupted");
+              let acceptActiveWorkSnapshots = true;
+              const interruptedDrain = new Promise<typeof drain>((resolve) => {
+                acceptedRequest.restartDeadline.interruptActiveWorkDrain = () =>
+                  resolve({ drained: false, snapshot: latestSnapshot });
               });
+              try {
+                const activeWorkDrain = waitForGatewayActiveWork(remainingDrainTimeoutMs, {
+                  onSnapshot: (snapshot) => {
+                    if (!acceptActiveWorkSnapshots) {
+                      throw activeWorkDrainInterrupted;
+                    }
+                    latestSnapshot = snapshot;
+                    reportDrainSnapshot(snapshot);
+                  },
+                }).catch((err: unknown) => {
+                  if (err === activeWorkDrainInterrupted) {
+                    return { drained: false, snapshot: latestSnapshot };
+                  }
+                  throw err;
+                });
+                drain = await Promise.race([activeWorkDrain, interruptedDrain]);
+              } finally {
+                acceptActiveWorkSnapshots = false;
+                acceptedRequest.restartDeadline.interruptActiveWorkDrain = undefined;
+              }
               if (drain.drained) {
                 if (!initialSnapshot.idle) {
                   gatewayLog.info("all active work drained");
@@ -858,9 +894,9 @@ export async function runGatewayLoop(params: {
         }
         const closeDrainTimeoutMs = !isRestart
           ? null
-          : restartDrainTimeoutMs === undefined
+          : acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt === undefined
             ? SHUTDOWN_TIMEOUT_MS - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS
-            : Math.max(0, (restartDrainDeadlineAt ?? Date.now()) - Date.now());
+            : Math.max(0, acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt - Date.now());
         await server?.close({
           reason: isRestart ? "gateway restarting" : "gateway stopping",
           restartExpectedMs: isRestart ? 1500 : null,
@@ -888,7 +924,7 @@ export async function runGatewayLoop(params: {
             }
           } finally {
             if (
-              acceptedRequest.launchdShutdownDeadlineAt === undefined ||
+              acceptedRequest.restartDeadline.launchdShutdownDeadlineAt === undefined ||
               !shuttingDown ||
               exitRequested
             ) {
@@ -948,7 +984,7 @@ export async function runGatewayLoop(params: {
     const acceptedRequest = {
       action,
       signal,
-      launchdShutdownDeadlineAt,
+      restartDeadline: { launchdShutdownDeadlineAt },
       restartReason,
       restartIntent,
       hostedStop,
@@ -956,10 +992,20 @@ export async function runGatewayLoop(params: {
     if (shuttingDown) {
       const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
       if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
-        currentRestartRequest.launchdShutdownDeadlineAt = Math.min(
-          currentRestartRequest.launchdShutdownDeadlineAt ?? Number.POSITIVE_INFINITY,
+        const restartDeadline = currentRestartRequest.restartDeadline;
+        const previousLaunchdDeadlineAt = restartDeadline.launchdShutdownDeadlineAt;
+        const previousActiveWorkDrainDeadlineAt = restartDeadline.activeWorkDrainDeadlineAt;
+        restartDeadline.launchdShutdownDeadlineAt = Math.min(
+          previousLaunchdDeadlineAt ?? Number.POSITIVE_INFINITY,
           launchdSignalDeadlineAt,
         );
+        restartDeadline.activeWorkDrainDeadlineAt = Math.min(
+          restartDeadline.activeWorkDrainDeadlineAt ?? Number.POSITIVE_INFINITY,
+          launchdSignalDeadlineAt - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS,
+        );
+        if (restartDeadline.activeWorkDrainDeadlineAt !== previousActiveWorkDrainDeadlineAt) {
+          restartDeadline.interruptActiveWorkDrain?.();
+        }
         if (pendingStartupRequest) {
           clearPendingStartupForceExitTimer();
           armPendingStartupForceExitTimer(currentRestartRequest);
@@ -998,16 +1044,16 @@ export async function runGatewayLoop(params: {
         gatewayLog.info(`received ${signal} during shutdown; upgrading to ${restartReason}`);
         return;
       }
-      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
-        gatewayLog.info(`received ${signal} during shutdown; enforcing launchd deadline`);
-        return;
-      }
       if (action === "stop" && pendingStartupRequest && !server) {
         gatewayLog.info(`received ${signal}; overriding pending startup restart with shutdown`);
         pendingStartupRequest = null;
         clearPendingStartupForceExitTimer();
         startupFailedWithoutServerHandle = false;
         runAcceptedRequest(acceptedRequest);
+        return;
+      }
+      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
+        gatewayLog.info(`received ${signal} during shutdown; enforcing launchd deadline`);
         return;
       }
       gatewayLog.info(`received ${signal} during shutdown; ignoring`);
