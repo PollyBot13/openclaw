@@ -925,7 +925,6 @@ export async function runGatewayLoop(params: {
           } finally {
             if (
               acceptedRequest.restartDeadline.launchdShutdownDeadlineAt === undefined ||
-              !shuttingDown ||
               exitRequested
             ) {
               clearForceExitTimer();
