@@ -19,7 +19,24 @@ export function armShutdownHardExitWatchdog(params: {
   try {
     worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
-       const timer = setTimeout(() => process.kill(process.pid, "SIGKILL"), workerData.delayMs);
+       const maxDelayMs = 2147483647;
+       const deadlineAt = performance.now() + workerData.delayMs;
+       let remainingCapMs = workerData.delayMs;
+       let timer;
+       const arm = () => {
+         const remainingMs = Math.min(
+           remainingCapMs,
+           Math.max(0, Math.ceil(deadlineAt - performance.now())),
+         );
+         const delayMs = Math.min(maxDelayMs, remainingMs);
+         timer = setTimeout(() => {
+           if (remainingMs > maxDelayMs) {
+             remainingCapMs = remainingMs - delayMs;
+             arm();
+           } else process.kill(process.pid, "SIGKILL");
+         }, delayMs);
+       };
+       arm();
        parentPort.once("message", () => {
          clearTimeout(timer);
          parentPort.close();

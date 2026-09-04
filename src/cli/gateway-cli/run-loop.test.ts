@@ -30,6 +30,15 @@ vi.mock("../../daemon/hosted-stop.js", () => ({
   prepareHostedGatewayStop: (...args: Parameters<typeof hostedStopPrepare>) =>
     hostedStopPrepare(...args),
 }));
+const readLoadedLaunchAgentExitTimeoutSecondsSync = vi.fn<() => number | undefined>(() => 20);
+vi.mock("../../daemon/launchd-exit-timeout.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../daemon/launchd-exit-timeout.js")>();
+  return {
+    ...actual,
+    readLoadedLaunchAgentExitTimeoutSecondsSync: () =>
+      readLoadedLaunchAgentExitTimeoutSecondsSync(),
+  };
+});
 const consumeGatewayRestartIntentPayloadSync = vi.fn<
   () => { reason?: string; force?: boolean; waitMs?: number } | null
 >(() => null);
@@ -386,10 +395,24 @@ async function withManagedLaunchdUpdateRestart(
   }
 }
 
+let restoreLaunchdMonotonicClock = () => {};
+
 function useLaunchdFakeTimers() {
   setPlatform("darwin");
   process.env.OPENCLAW_LAUNCHD_LABEL = "ai.openclaw.gateway";
-  vi.useFakeTimers();
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "setImmediate",
+      "clearImmediate",
+      "Date",
+    ],
+  });
+  const monotonicClock = vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+  restoreLaunchdMonotonicClock = () => monotonicClock.mockRestore();
 }
 
 function createRuntimeWithExitSignal(exitCallOrder?: string[]) {
@@ -441,6 +464,13 @@ function expectRestartCloseCall(
   const closeArgs = close.mock.calls[0]?.[0];
   expect(closeArgs?.drainTimeoutMs).toBeLessThanOrEqual(maxDrainTimeoutMs);
   expect(closeArgs?.drainTimeoutMs).toBeGreaterThanOrEqual(0);
+}
+
+function expectActiveWorkDrainTimeout(maxTimeoutMs: number) {
+  const [timeoutMs, options] = waitForGatewayActiveWork.mock.calls[0] ?? [];
+  expect(timeoutMs).toBeGreaterThanOrEqual(maxTimeoutMs - 1_000);
+  expect(timeoutMs).toBeLessThanOrEqual(maxTimeoutMs);
+  expect(options?.onSnapshot).toEqual(expect.any(Function));
 }
 
 function createSignaledStart(close: GatewayCloseFn, startupSettled = Promise.resolve()) {
@@ -609,6 +639,8 @@ beforeEach(async () => {
   hasManagedProviderLocalServices.mockReturnValue(false);
   stopManagedProviderLocalServices.mockReset();
   stopManagedProviderLocalServices.mockResolvedValue(undefined);
+  readLoadedLaunchAgentExitTimeoutSecondsSync.mockReset();
+  readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(20);
 
   gatewayWorkAdmissionActual = await vi.importActual("../../process/gateway-work-admission.js");
   gatewayWorkAdmissionActual.resetGatewayWorkAdmission();
@@ -633,6 +665,8 @@ beforeEach(async () => {
 afterEach(() => {
   supervisorEnvSnapshot?.restore();
   supervisorEnvSnapshot = undefined;
+  restoreLaunchdMonotonicClock();
+  restoreLaunchdMonotonicClock = () => {};
   vi.useRealTimers();
   if (originalPlatformDescriptor) {
     Object.defineProperty(process, "platform", originalPlatformDescriptor);
@@ -716,9 +750,7 @@ describe("runGatewayLoop", () => {
           expect(hostedStopExecute).not.toHaveBeenCalled();
           finishJoin();
           await expect(exited).resolves.toBe(0);
-          expect(waitForGatewayActiveWork).toHaveBeenCalledWith(315_000, {
-            onSnapshot: expect.any(Function),
-          });
+          expectActiveWorkDrainTimeout(315_000);
           expect(hostedStopExecute).toHaveBeenCalledTimes(mode === "native" ? 1 : 0);
           await expect(host!.request("start", () => {})).resolves.toMatchObject({ ok: false });
         } finally {
@@ -1423,9 +1455,7 @@ describe("runGatewayLoop", () => {
       captureSignal("SIGTERM")();
 
       await expect(exited).resolves.toBe(0);
-      expect(waitForGatewayActiveWork).toHaveBeenCalledWith(315_000, {
-        onSnapshot: expect.any(Function),
-      });
+      expectActiveWorkDrainTimeout(315_000);
       expect(gatewayLog.warn).toHaveBeenCalledWith(
         "gateway active-work drain timeout reached; proceeding with shutdown: embeddedRuns=2",
       );
@@ -1447,9 +1477,7 @@ describe("runGatewayLoop", () => {
       captureSignal("SIGTERM")();
 
       await expect(exited).resolves.toBe(0);
-      expect(waitForGatewayActiveWork).toHaveBeenCalledWith(315_000, {
-        onSnapshot: expect.any(Function),
-      });
+      expectActiveWorkDrainTimeout(315_000);
       expect(gatewayLog.warn).toHaveBeenCalledWith(
         "gateway active-work drain failed; proceeding with shutdown: active-work drain unavailable",
       );
@@ -1498,6 +1526,249 @@ describe("runGatewayLoop", () => {
       }
     });
   });
+
+  it("applies a late launchd deadline to an active stop", async () => {
+    vi.clearAllMocks();
+    waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+
+        captureSignal("SIGINT")();
+        await vi.advanceTimersByTimeAsync(10_000);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(waitForGatewayActiveWork.mock.calls[1]?.[0]).toBe(5_000);
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a late launchd deadline extend an active stop", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(600);
+    waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+
+        captureSignal("SIGINT")();
+        await vi.advanceTimersByTimeAsync(10_000);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(314_999);
+
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a late launchd deadline armed through final log flush", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(6);
+    let releaseFlush = () => {};
+    flushLogger.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFlush = resolve;
+        }),
+    );
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+
+        captureSignal("SIGINT")();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(flushLogger).toHaveBeenCalledOnce();
+
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(999);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+      });
+    } finally {
+      releaseFlush();
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-reads the loaded launchd deadline for every SIGTERM", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync
+      .mockReturnValueOnce(600)
+      .mockReturnValueOnce(undefined);
+    waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+        const sigterm = captureSignal("SIGTERM");
+
+        sigterm();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(runtime.exit).not.toHaveBeenCalled();
+
+        sigterm();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(exited).resolves.toBe(1);
+        expect(readLoadedLaunchAgentExitTimeoutSecondsSync).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("arms the launchd deadline before classifying a SIGTERM restart intent", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(undefined);
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { exited } = await createOwnedLoop();
+
+        captureSignal("SIGTERM")();
+
+        expect(readLoadedLaunchAgentExitTimeoutSecondsSync).toHaveBeenCalledOnce();
+        expect(consumeGatewayRestartIntentPayloadSync).not.toHaveBeenCalled();
+        expect(armShutdownHardExitWatchdog).toHaveBeenCalledWith(
+          expect.objectContaining({ delayMs: 2_000 }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(exited).resolves.toBe(0);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { loadedExitTimeoutSeconds: 10, shutdownTimeoutMs: 5_000, drainTimeoutMs: 0 },
+    { loadedExitTimeoutSeconds: 60, shutdownTimeoutMs: 55_000, drainTimeoutMs: 45_000 },
+    { loadedExitTimeoutSeconds: undefined, shutdownTimeoutMs: 0, drainTimeoutMs: 0 },
+  ])(
+    "uses loaded launchd ExitTimeOut $loadedExitTimeoutSeconds for shutdown",
+    async ({ loadedExitTimeoutSeconds, shutdownTimeoutMs, drainTimeoutMs }) => {
+      vi.clearAllMocks();
+      readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(loadedExitTimeoutSeconds);
+      waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+      useLaunchdFakeTimers();
+      try {
+        await withIsolatedSignals(async ({ captureSignal }) => {
+          const { runtime, exited } = await createOwnedLoop();
+
+          captureSignal("SIGTERM")();
+          await vi.advanceTimersByTimeAsync(0);
+
+          expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBe(drainTimeoutMs);
+          if (shutdownTimeoutMs > 0) {
+            await vi.advanceTimersByTimeAsync(shutdownTimeoutMs - 1);
+            expect(runtime.exit).not.toHaveBeenCalled();
+            await vi.advanceTimersByTimeAsync(1);
+          }
+          await expect(exited).resolves.toBe(1);
+        });
+      } finally {
+        restoreLaunchdMonotonicClock();
+        restoreLaunchdMonotonicClock = () => {};
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("treats loaded launchd ExitTimeOut 0 as unbounded", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(0);
+    const releaseDrain = blockActiveWorkDrain();
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBe(315_000);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        releaseDrain();
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(exited).resolves.toBe(0);
+      });
+    } finally {
+      releaseDrain();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps launchd deadlines beyond Node's maximum timer delay", async () => {
+    vi.clearAllMocks();
+    const exitTimeoutSeconds = 30 * 24 * 60 * 60;
+    const shutdownTimeoutMs = exitTimeoutSeconds * 1_000 - 5_000;
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(exitTimeoutSeconds);
+    waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createOwnedLoop();
+
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(runtime.exit).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(shutdownTimeoutMs - 2);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([60_000, -60_000])(
+    "keeps a launchd deadline through a %s ms wall-clock step",
+    async (clockStepMs) => {
+      vi.clearAllMocks();
+      readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(10);
+      waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+      useLaunchdFakeTimers();
+      restoreLaunchdMonotonicClock();
+      let elapsedMs = 0;
+      const monotonicClock = vi.spyOn(performance, "now").mockImplementation(() => elapsedMs);
+      restoreLaunchdMonotonicClock = () => monotonicClock.mockRestore();
+      try {
+        await withIsolatedSignals(async ({ captureSignal }) => {
+          const { runtime, exited } = await createOwnedLoop();
+
+          captureSignal("SIGTERM")();
+          await vi.advanceTimersByTimeAsync(0);
+          vi.setSystemTime(Date.now() + clockStepMs);
+          elapsedMs = 4_999;
+          await vi.advanceTimersByTimeAsync(4_999);
+          expect(runtime.exit).not.toHaveBeenCalled();
+          elapsedMs = 5_000;
+          await vi.advanceTimersByTimeAsync(1);
+          await expect(exited).resolves.toBe(1);
+        });
+      } finally {
+        restoreLaunchdMonotonicClock();
+        restoreLaunchdMonotonicClock = () => {};
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("bounds the file-log flush before a graceful SIGTERM exit", async () => {
     vi.clearAllMocks();
@@ -1590,6 +1861,7 @@ describe("runGatewayLoop", () => {
 
   it.each([
     { blockedStage: "handoff parking", signalOrder: "sigusr1-first" },
+    { blockedStage: "handoff parking", signalOrder: "sigterm-first" },
     { blockedStage: "handoff cancellation", signalOrder: "sigterm-first" },
     { blockedStage: "final handoff", signalOrder: "sigterm-first" },
     { blockedStage: "final handoff", signalOrder: "sigusr1-first" },
@@ -1722,6 +1994,47 @@ describe("runGatewayLoop", () => {
     },
   );
 
+  it("waits until a tightened launchd drain deadline", async () => {
+    vi.clearAllMocks();
+    const snapshot = createActiveWorkSnapshot({ activeTasks: 1 }, [
+      { kind: "task", count: 1, message: "1 active background task run(s)" },
+    ]);
+    createGatewayActiveWorkSnapshot.mockReturnValue(snapshot);
+    waitForGatewayActiveWork
+      .mockImplementationOnce((_timeoutMs, options) => {
+        options?.onSnapshot?.(snapshot);
+        return new Promise(() => {});
+      })
+      .mockImplementationOnce((timeoutMs, options) => {
+        options?.onSnapshot?.(snapshot);
+        return new Promise((resolve) => {
+          setTimeout(() => resolve({ drained: false, snapshot }), timeoutMs);
+        });
+      });
+    peekGatewaySigusr1RestartReason.mockReturnValue("config.patch");
+    const close = createCloseMock();
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        await createOwnedLoop(close);
+
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(10_000);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(waitForGatewayActiveWork.mock.calls[1]?.[0]).toBe(5_000);
+        expect(close).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(close).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expectRestartCloseCall(close, 0);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lets launchd SIGTERM override an ordinary restart queued during startup", async () => {
     vi.clearAllMocks();
     peekGatewaySigusr1RestartReason.mockReturnValue("config.patch");
@@ -1738,6 +2051,59 @@ describe("runGatewayLoop", () => {
         expect(runtime.exit).toHaveBeenCalledWith(0);
         expect(gatewayLog.info).toHaveBeenCalledWith(
           "received SIGTERM; overriding pending startup restart with shutdown",
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a launchd startup override extend the queued restart deadline", async () => {
+    vi.clearAllMocks();
+    readLoadedLaunchAgentExitTimeoutSecondsSync.mockReturnValue(600);
+    peekGatewaySigusr1RestartReason.mockReturnValue("config.patch");
+    waitForGatewayActiveWork.mockImplementation(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createBlockedStartupLoop();
+
+        captureSignal("SIGUSR1")();
+        await vi.advanceTimersByTimeAsync(10_000);
+        captureSignal("SIGTERM")();
+        await vi.advanceTimersByTimeAsync(314_999);
+
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a launchd stop that overrides a queued startup restart", async () => {
+    vi.clearAllMocks();
+    consumeGatewayRestartIntentPayloadSync.mockReturnValueOnce({}).mockReturnValueOnce(null);
+    waitForGatewayActiveWork.mockImplementationOnce(() => new Promise(() => {}));
+    useLaunchdFakeTimers();
+    try {
+      await withIsolatedSignals(async ({ captureSignal }) => {
+        const { runtime, exited } = await createBlockedStartupLoop();
+        const sigterm = captureSignal("SIGTERM");
+
+        sigterm();
+        await vi.advanceTimersByTimeAsync(10_000);
+        sigterm();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(waitForGatewayActiveWork.mock.calls[0]?.[0]).toBe(0);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(runtime.exit).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(exited).resolves.toBe(1);
+        expect(gatewayLog.error).toHaveBeenCalledWith(
+          "shutdown timed out; exiting without full cleanup",
         );
       });
     } finally {

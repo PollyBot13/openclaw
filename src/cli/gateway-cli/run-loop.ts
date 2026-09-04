@@ -50,6 +50,36 @@ const UPDATE_RESPAWN_HEALTH_TIMEOUT_MS = 10_000;
 const UPDATE_RESPAWN_HEALTH_POLL_MS = 200;
 const LOG_FLUSH_EXIT_TIMEOUT_MS = 4_000;
 const HARD_EXIT_WATCHDOG_GRACE_MS = 2_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function scheduleDeadlineTimer(params: {
+  deadlineAt: number;
+  onTimer: (timer: ReturnType<typeof setTimeout>) => void;
+  onDeadline: () => void;
+  unref?: boolean;
+}) {
+  const arm = (remainingCapMs = Number.POSITIVE_INFINITY) => {
+    const remainingMs = Math.min(
+      remainingCapMs,
+      Math.max(0, Math.ceil(params.deadlineAt - performance.now())),
+    );
+    const delayMs = Math.min(MAX_TIMER_DELAY_MS, remainingMs);
+    const timer = setTimeout(() => {
+      if (remainingMs > MAX_TIMER_DELAY_MS) {
+        // The absolute monotonic deadline accounts for a late callback; the cap
+        // also prevents a broken clock source from extending the original budget.
+        arm(remainingMs - delayMs);
+        return;
+      }
+      params.onDeadline();
+    }, delayMs);
+    params.onTimer(timer);
+    if (params.unref) {
+      timer.unref?.();
+    }
+  };
+  arm();
+}
 
 type GatewayRunSignalAction = "stop" | "restart";
 type GatewayRunSignalRequest = {
@@ -58,6 +88,7 @@ type GatewayRunSignalRequest = {
   restartDeadline: {
     launchdShutdownDeadlineAt?: number;
     activeWorkDrainDeadlineAt?: number;
+    forceExitDeadlineAt?: number;
     interruptActiveWorkDrain?: () => void;
   };
   restartReason?: string;
@@ -160,9 +191,17 @@ export async function runGatewayLoop(params: {
   // Defer lifecycle signals from that window until the loop can close and advance.
   let pendingStartupRequest: GatewayRunSignalRequest | null = null;
   let activeRestartRequest: GatewayRunSignalRequest | null = null;
+  let activeStopRequest: GatewayRunSignalRequest | null = null;
   let committedGenericSuccessor: ChildProcess | true | null = null;
   let forceActiveRestartExit: (() => void) | null = null;
+  let forceActiveStopExit: (() => void) | null = null;
   let pendingStartupForceExitTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingStartupForceExitDeadlineAt: number | undefined;
+  let pendingSigtermDeadlineGuard: {
+    deadlineAt: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    hardExitWatchdog: ShutdownHardExitWatchdog | null;
+  } | null = null;
   let restartDrainingMarked = false;
   let startupFailedWithoutServerHandle = false;
   let exitRequested = false;
@@ -531,26 +570,48 @@ export async function runGatewayLoop(params: {
   const clearPendingStartupForceExitTimer = () => {
     clearTimeout(pendingStartupForceExitTimer ?? undefined);
     pendingStartupForceExitTimer = null;
+    pendingStartupForceExitDeadlineAt = undefined;
   };
   const resolveRequestShutdownTimeoutMs = (request: GatewayRunSignalRequest) =>
     request.restartDeadline.launchdShutdownDeadlineAt === undefined
       ? SHUTDOWN_TIMEOUT_MS
-      : Math.max(0, request.restartDeadline.launchdShutdownDeadlineAt - Date.now());
+      : Math.max(
+          0,
+          Math.ceil(request.restartDeadline.launchdShutdownDeadlineAt - performance.now()),
+        );
   const armPendingStartupForceExitTimer = (request: GatewayRunSignalRequest) => {
-    if (pendingStartupForceExitTimer) {
+    const requestedDeadlineAt = performance.now() + resolveRequestShutdownTimeoutMs(request);
+    const deadlineAt = Math.min(
+      request.restartDeadline.forceExitDeadlineAt ?? Number.POSITIVE_INFINITY,
+      requestedDeadlineAt,
+    );
+    if (
+      pendingStartupForceExitDeadlineAt !== undefined &&
+      pendingStartupForceExitDeadlineAt <= deadlineAt
+    ) {
       return;
     }
-    pendingStartupForceExitTimer = setTimeout(() => {
-      pendingStartupForceExitTimer = null;
-      gatewayLog.error(
-        "startup restart request timed out before gateway returned a close handle; exiting for supervisor recovery",
-      );
-      void forceExitAfterStabilityBundle("gateway.restart_startup_request_timeout", {
-        exitOnActiveManagedCancellation:
-          request.restartDeadline.launchdShutdownDeadlineAt !== undefined,
-      });
-    }, resolveRequestShutdownTimeoutMs(request));
-    pendingStartupForceExitTimer.unref?.();
+    clearPendingStartupForceExitTimer();
+    request.restartDeadline.forceExitDeadlineAt = deadlineAt;
+    pendingStartupForceExitDeadlineAt = deadlineAt;
+    scheduleDeadlineTimer({
+      deadlineAt,
+      onTimer: (timer) => {
+        pendingStartupForceExitTimer = timer;
+      },
+      onDeadline: () => {
+        pendingStartupForceExitTimer = null;
+        pendingStartupForceExitDeadlineAt = undefined;
+        gatewayLog.error(
+          "startup restart request timed out before gateway returned a close handle; exiting for supervisor recovery",
+        );
+        void forceExitAfterStabilityBundle("gateway.restart_startup_request_timeout", {
+          exitOnActiveManagedCancellation:
+            request.restartDeadline.launchdShutdownDeadlineAt !== undefined,
+        });
+      },
+      unref: true,
+    });
   };
   const resolveRestartDrainTimeoutMs = (
     restartIntent?: GatewayRestartIntent,
@@ -633,33 +694,57 @@ export async function runGatewayLoop(params: {
   const runAcceptedRequest = (acceptedRequest: GatewayRunSignalRequest) => {
     const { action, restartIntent } = acceptedRequest;
     const isRestart = action === "restart";
-    const isLaunchdSigtermRestart =
+    const hasLaunchdShutdownDeadline =
       acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined;
-    const resolveRestartShutdownTimeoutMs = () => resolveRequestShutdownTimeoutMs(acceptedRequest);
+    const resolveShutdownTimeoutMs = () => resolveRequestShutdownTimeoutMs(acceptedRequest);
     if (isRestart) {
       activeRestartRequest = acceptedRequest;
     } else {
+      activeStopRequest = acceptedRequest;
       startGatewayRestartTrace("stop.signal.received", [["signal", acceptedRequest.signal]]);
     }
     let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
+    let armedForceExitDeadlineAt: number | undefined;
     let hardExitWatchdog: ShutdownHardExitWatchdog | null = null;
+    const clearForceExitTimer = () => {
+      clearTimeout(forceExitTimer ?? undefined);
+      forceExitTimer = null;
+      armedForceExitDeadlineAt = undefined;
+      hardExitWatchdog?.cancel();
+      hardExitWatchdog = null;
+    };
     const armForceExitTimer = (forceExitMs: number) => {
-      if (forceExitTimer) {
+      const requestedDeadlineAt = performance.now() + forceExitMs;
+      const deadlineAt = Math.min(
+        acceptedRequest.restartDeadline.forceExitDeadlineAt ?? Number.POSITIVE_INFINITY,
+        requestedDeadlineAt,
+      );
+      if (armedForceExitDeadlineAt !== undefined && armedForceExitDeadlineAt <= deadlineAt) {
         return;
       }
-      forceExitTimer = setTimeout(() => {
-        gatewayLog.error("shutdown timed out; exiting without full cleanup");
-        void forceExitAfterStabilityBundle(
-          isRestart ? "gateway.restart_shutdown_timeout" : "gateway.stop_shutdown_timeout",
-          {
-            exitOnActiveManagedCancellation:
-              acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined,
-          },
-        );
-      }, forceExitMs);
+      acceptedRequest.restartDeadline.forceExitDeadlineAt = deadlineAt;
+      clearForceExitTimer();
+      armedForceExitDeadlineAt = deadlineAt;
+      const delayMs = Math.max(0, Math.ceil(deadlineAt - performance.now()));
+      scheduleDeadlineTimer({
+        deadlineAt,
+        onTimer: (timer) => {
+          forceExitTimer = timer;
+        },
+        onDeadline: () => {
+          gatewayLog.error("shutdown timed out; exiting without full cleanup");
+          void forceExitAfterStabilityBundle(
+            isRestart ? "gateway.restart_shutdown_timeout" : "gateway.stop_shutdown_timeout",
+            {
+              exitOnActiveManagedCancellation:
+                acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined,
+            },
+          );
+        },
+      });
       if (params.ownsProcessLifecycle === true) {
         hardExitWatchdog = armShutdownHardExitWatchdog({
-          delayMs: forceExitMs + HARD_EXIT_WATCHDOG_GRACE_MS,
+          delayMs: delayMs + HARD_EXIT_WATCHDOG_GRACE_MS,
           onError: (error) => {
             gatewayLog.warn(
               `hard-exit watchdog failed; retaining main-thread shutdown timer: ${formatErrorMessage(error)}`,
@@ -668,21 +753,24 @@ export async function runGatewayLoop(params: {
         });
       }
     };
-    const clearForceExitTimer = () => {
-      clearTimeout(forceExitTimer ?? undefined);
-      forceExitTimer = null;
-      hardExitWatchdog?.cancel();
-      hardExitWatchdog = null;
+    const clearActiveStopRequest = () => {
+      if (!isRestart && activeStopRequest === acceptedRequest) {
+        activeStopRequest = null;
+        forceActiveStopExit = null;
+      }
     };
     if (isRestart) {
       forceActiveRestartExit = () => {
-        clearForceExitTimer();
         if (
           acceptedRequest.restartDeadline.launchdShutdownDeadlineAt !== undefined ||
           !getManagedUpdateOwner()
         ) {
-          armForceExitTimer(resolveRestartShutdownTimeoutMs());
+          armForceExitTimer(resolveShutdownTimeoutMs());
         }
+      };
+    } else {
+      forceActiveStopExit = () => {
+        armForceExitTimer(resolveShutdownTimeoutMs());
       };
     }
 
@@ -697,30 +785,30 @@ export async function runGatewayLoop(params: {
       const requestedRestartDrainTimeoutMs = isRestart
         ? resolveRestartDrainTimeoutMs(restartIntent)
         : 0;
-      const restartShutdownTimeoutMs = resolveRestartShutdownTimeoutMs();
-      const restartDrainTimeoutMs = isLaunchdSigtermRestart
-        ? Math.min(
-            requestedRestartDrainTimeoutMs ?? restartShutdownTimeoutMs,
-            Math.max(0, restartShutdownTimeoutMs - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS),
-          )
-        : requestedRestartDrainTimeoutMs;
+      const shutdownTimeoutMs = resolveShutdownTimeoutMs();
+      const restartDrainTimeoutMs =
+        isRestart && hasLaunchdShutdownDeadline
+          ? Math.min(
+              requestedRestartDrainTimeoutMs ?? shutdownTimeoutMs,
+              Math.max(0, shutdownTimeoutMs - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS),
+            )
+          : requestedRestartDrainTimeoutMs;
+      const drainTimeoutMs = isRestart
+        ? restartDrainTimeoutMs
+        : Math.max(0, shutdownTimeoutMs - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS);
       acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt =
-        isRestart && restartDrainTimeoutMs !== undefined
-          ? Date.now() + restartDrainTimeoutMs
-          : undefined;
-      // Managed helpers must reach native parking before either exit watchdog can arm.
+        drainTimeoutMs === undefined ? undefined : performance.now() + drainTimeoutMs;
+      // Managed helpers without a supervisor deadline must reach native parking
+      // before either exit watchdog can arm.
       if (!isRestart) {
-        armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
-      } else if (isLaunchdSigtermRestart && !getManagedUpdateOwner()) {
-        armForceExitTimer(restartShutdownTimeoutMs);
+        armForceExitTimer(shutdownTimeoutMs);
+      } else if (hasLaunchdShutdownDeadline) {
+        armForceExitTimer(shutdownTimeoutMs);
       } else if (restartDrainTimeoutMs !== undefined && !getManagedUpdateOwner()) {
         // Allow extra time for draining active turns on explicitly capped restarts.
         armForceExitTimer(restartDrainTimeoutMs + SHUTDOWN_TIMEOUT_MS);
       }
 
-      const drainTimeoutMs = isRestart
-        ? restartDrainTimeoutMs
-        : Math.max(0, SHUTDOWN_TIMEOUT_MS - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS);
       const drainBudget =
         drainTimeoutMs === undefined ? "without a timeout" : `with timeout ${drainTimeoutMs}ms`;
       // The canonical inventory owns these category counts. Blocker descriptions
@@ -748,6 +836,54 @@ export async function runGatewayLoop(params: {
           gatewayLog.warn(
             `still draining active work before ${action}: ${formatDrainCounts(snapshot)}`,
           );
+        }
+      };
+      const waitForInterruptibleActiveWorkDrain = async (
+        waitForActiveWork: typeof eagerLifecycleRuntime.waitForGatewayActiveWork,
+        initialSnapshot?: GatewayActiveWorkSnapshot,
+      ) => {
+        let latestSnapshot = initialSnapshot;
+        for (;;) {
+          const activeWorkDrainDeadlineAt =
+            acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt;
+          const remainingDrainTimeoutMs =
+            activeWorkDrainDeadlineAt === undefined
+              ? undefined
+              : Math.max(0, Math.ceil(activeWorkDrainDeadlineAt - performance.now()));
+          const activeWorkDrainInterrupted = new Error("active-work drain interrupted");
+          let acceptActiveWorkSnapshots = true;
+          let interruptActiveWorkDrain = () => {};
+          const interruptedDrain = new Promise<null>((resolve) => {
+            interruptActiveWorkDrain = () => resolve(null);
+            acceptedRequest.restartDeadline.interruptActiveWorkDrain = interruptActiveWorkDrain;
+          });
+          const activeWorkDrain = waitForActiveWork(remainingDrainTimeoutMs, {
+            onSnapshot: (snapshot) => {
+              latestSnapshot = snapshot;
+              if (!acceptActiveWorkSnapshots) {
+                throw activeWorkDrainInterrupted;
+              }
+              reportDrainSnapshot(snapshot);
+            },
+          }).catch((err: unknown) => {
+            if (err === activeWorkDrainInterrupted) {
+              if (!latestSnapshot) {
+                throw err;
+              }
+              return { drained: false, snapshot: latestSnapshot };
+            }
+            throw err;
+          });
+          const drain = await Promise.race([activeWorkDrain, interruptedDrain]);
+          acceptActiveWorkSnapshots = false;
+          if (
+            acceptedRequest.restartDeadline.interruptActiveWorkDrain === interruptActiveWorkDrain
+          ) {
+            acceptedRequest.restartDeadline.interruptActiveWorkDrain = undefined;
+          }
+          if (drain) {
+            return drain;
+          }
         }
       };
       try {
@@ -781,40 +917,10 @@ export async function runGatewayLoop(params: {
                 return;
               }
 
-              let latestSnapshot = initialSnapshot;
-              const activeWorkDrainDeadlineAt =
-                acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt;
-              const remainingDrainTimeoutMs =
-                activeWorkDrainDeadlineAt === undefined
-                  ? undefined
-                  : Math.max(0, activeWorkDrainDeadlineAt - Date.now());
-              let drain: Awaited<ReturnType<typeof waitForGatewayActiveWork>>;
-              const activeWorkDrainInterrupted = new Error("active-work drain interrupted");
-              let acceptActiveWorkSnapshots = true;
-              const interruptedDrain = new Promise<typeof drain>((resolve) => {
-                acceptedRequest.restartDeadline.interruptActiveWorkDrain = () =>
-                  resolve({ drained: false, snapshot: latestSnapshot });
-              });
-              try {
-                const activeWorkDrain = waitForGatewayActiveWork(remainingDrainTimeoutMs, {
-                  onSnapshot: (snapshot) => {
-                    if (!acceptActiveWorkSnapshots) {
-                      throw activeWorkDrainInterrupted;
-                    }
-                    latestSnapshot = snapshot;
-                    reportDrainSnapshot(snapshot);
-                  },
-                }).catch((err: unknown) => {
-                  if (err === activeWorkDrainInterrupted) {
-                    return { drained: false, snapshot: latestSnapshot };
-                  }
-                  throw err;
-                });
-                drain = await Promise.race([activeWorkDrain, interruptedDrain]);
-              } finally {
-                acceptActiveWorkSnapshots = false;
-                acceptedRequest.restartDeadline.interruptActiveWorkDrain = undefined;
-              }
+              const drain = await waitForInterruptibleActiveWorkDrain(
+                waitForGatewayActiveWork,
+                initialSnapshot,
+              );
               if (drain.drained) {
                 if (!initialSnapshot.idle) {
                   gatewayLog.info("all active work drained");
@@ -839,9 +945,7 @@ export async function runGatewayLoop(params: {
           try {
             markGatewayRestartTrace("stop.drain.begin");
             const activeWorkDrain = await measureGatewayRestartTrace("stop.drain", () =>
-              eagerLifecycleRuntime.waitForGatewayActiveWork(drainTimeoutMs, {
-                onSnapshot: reportDrainSnapshot,
-              }),
+              waitForInterruptibleActiveWorkDrain(eagerLifecycleRuntime.waitForGatewayActiveWork),
             );
             if (!activeWorkDrain.drained) {
               gatewayLog.warn(
@@ -890,13 +994,18 @@ export async function runGatewayLoop(params: {
           !forceExitTimer &&
           (!managedUpdateOwner || managedUpdateCancellation === "restored-in-process")
         ) {
-          armForceExitTimer(resolveRestartShutdownTimeoutMs());
+          armForceExitTimer(resolveShutdownTimeoutMs());
         }
         const closeDrainTimeoutMs = !isRestart
           ? null
           : acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt === undefined
             ? SHUTDOWN_TIMEOUT_MS - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS
-            : Math.max(0, acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt - Date.now());
+            : Math.max(
+                0,
+                Math.ceil(
+                  acceptedRequest.restartDeadline.activeWorkDrainDeadlineAt - performance.now(),
+                ),
+              );
         await server?.close({
           reason: isRestart ? "gateway restarting" : "gateway stopping",
           restartExpectedMs: isRestart ? 1500 : null,
@@ -937,17 +1046,21 @@ export async function runGatewayLoop(params: {
           try {
             await handleHostedStopAfterServerClose(acceptedRequest.hostedStop, shutdownFailed);
           } finally {
+            clearActiveStopRequest();
             clearForceExitTimer();
           }
         } else {
           await hostLifecycle?.retire();
-          clearForceExitTimer();
           params.completeBoot?.({
             outcome: shutdownFailed ? "forced_stop" : "clean_stop",
             reason: shutdownFailed ? "gateway.stop_close_failed" : "gateway.stop",
           });
           await releaseLockIfHeld();
           await exitProcessAfterLogFlush(shutdownFailed ? 1 : 0);
+          if (exitRequested) {
+            clearActiveStopRequest();
+            clearForceExitTimer();
+          }
         }
       }
     })();
@@ -965,22 +1078,68 @@ export async function runGatewayLoop(params: {
     startupFailedWithoutServerHandle = false;
     runAcceptedRequest(request);
   };
+  const armSigtermDeadlineBeforeClassification = (deadlineAt: number | undefined) => {
+    if (
+      deadlineAt === undefined ||
+      (pendingSigtermDeadlineGuard && pendingSigtermDeadlineGuard.deadlineAt <= deadlineAt)
+    ) {
+      return () => {};
+    }
+    if (pendingSigtermDeadlineGuard) {
+      clearTimeout(pendingSigtermDeadlineGuard.timer ?? undefined);
+      pendingSigtermDeadlineGuard.hardExitWatchdog?.cancel();
+    }
+    const guard: {
+      deadlineAt: number;
+      timer: ReturnType<typeof setTimeout> | null;
+      hardExitWatchdog: ShutdownHardExitWatchdog | null;
+    } = {
+      deadlineAt,
+      timer: null,
+      hardExitWatchdog: null,
+    };
+    pendingSigtermDeadlineGuard = guard;
+    scheduleDeadlineTimer({
+      deadlineAt,
+      onTimer: (timer) => {
+        guard.timer = timer;
+      },
+      onDeadline: () => {
+        void forceExitAfterStabilityBundle("gateway.stop_signal_classification_timeout", {
+          exitOnActiveManagedCancellation: true,
+        });
+      },
+    });
+    if (params.ownsProcessLifecycle === true) {
+      guard.hardExitWatchdog = armShutdownHardExitWatchdog({
+        delayMs:
+          Math.max(0, Math.ceil(deadlineAt - performance.now())) + HARD_EXIT_WATCHDOG_GRACE_MS,
+        onError: (error) => {
+          gatewayLog.warn(
+            `hard-exit watchdog failed; retaining main-thread SIGTERM timer: ${formatErrorMessage(error)}`,
+          );
+        },
+      });
+    }
+    return () => {
+      if (pendingSigtermDeadlineGuard !== guard) {
+        return;
+      }
+      clearTimeout(guard.timer ?? undefined);
+      guard.hardExitWatchdog?.cancel();
+      pendingSigtermDeadlineGuard = null;
+    };
+  };
   const request = (
     action: GatewayRunSignalAction,
     signal: string,
     restartReason?: string,
     restartIntent?: GatewayRestartIntent,
     hostedStop?: ReturnType<typeof createGatewayHostLifecycle>,
-    receivedAt = Date.now(),
+    launchdSignalDeadlineAt?: number,
   ) => {
-    const launchdSignalDeadlineAt =
-      signal === "SIGTERM" && supervisorMode === "launchd"
-        ? receivedAt +
-          eagerLifecycleRuntime.LAUNCH_AGENT_EXIT_TIMEOUT_SECONDS * 1_000 -
-          LAUNCHD_SHUTDOWN_RESERVE_MS
-        : undefined;
-    const launchdShutdownDeadlineAt = action === "restart" ? launchdSignalDeadlineAt : undefined;
-    const acceptedRequest = {
+    const launchdShutdownDeadlineAt = launchdSignalDeadlineAt;
+    const acceptedRequest: GatewayRunSignalRequest = {
       action,
       signal,
       restartDeadline: { launchdShutdownDeadlineAt },
@@ -989,9 +1148,10 @@ export async function runGatewayLoop(params: {
       hostedStop,
     };
     if (shuttingDown) {
-      const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
-      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
-        const restartDeadline = currentRestartRequest.restartDeadline;
+      const currentSignalRequest =
+        pendingStartupRequest ?? activeRestartRequest ?? activeStopRequest;
+      if (launchdSignalDeadlineAt !== undefined && currentSignalRequest) {
+        const restartDeadline = currentSignalRequest.restartDeadline;
         const previousLaunchdDeadlineAt = restartDeadline.launchdShutdownDeadlineAt;
         const previousActiveWorkDrainDeadlineAt = restartDeadline.activeWorkDrainDeadlineAt;
         restartDeadline.launchdShutdownDeadlineAt = Math.min(
@@ -1006,29 +1166,30 @@ export async function runGatewayLoop(params: {
           restartDeadline.interruptActiveWorkDrain?.();
         }
         if (pendingStartupRequest) {
-          clearPendingStartupForceExitTimer();
-          armPendingStartupForceExitTimer(currentRestartRequest);
-        } else {
+          armPendingStartupForceExitTimer(currentSignalRequest);
+        } else if (currentSignalRequest.action === "restart") {
           forceActiveRestartExit?.();
+        } else {
+          forceActiveStopExit?.();
         }
       }
       if (
         action === "restart" &&
         isUpdateProcessRestartReason(restartReason) &&
-        currentRestartRequest?.action === "restart" &&
-        (!isUpdateProcessRestartReason(currentRestartRequest.restartReason) ||
+        currentSignalRequest?.action === "restart" &&
+        (!isUpdateProcessRestartReason(currentSignalRequest.restartReason) ||
           (restartIntent?.successorOwner &&
             !sameManagedUpdateOwner(
               restartIntent.successorOwner,
-              currentRestartRequest.restartIntent?.successorOwner,
+              currentSignalRequest.restartIntent?.successorOwner,
             )))
       ) {
         const upgradedRequest = {
-          ...currentRestartRequest,
+          ...currentSignalRequest,
           signal,
           restartReason,
           restartIntent: {
-            ...currentRestartRequest.restartIntent,
+            ...currentSignalRequest.restartIntent,
             ...restartIntent,
             force: true,
             reason: restartReason,
@@ -1044,6 +1205,19 @@ export async function runGatewayLoop(params: {
         return;
       }
       if (action === "stop" && pendingStartupRequest && !server) {
+        const pendingRestartDeadline = pendingStartupRequest.restartDeadline;
+        if (pendingRestartDeadline.launchdShutdownDeadlineAt !== undefined) {
+          acceptedRequest.restartDeadline.launchdShutdownDeadlineAt = Math.min(
+            acceptedRequest.restartDeadline.launchdShutdownDeadlineAt ?? Number.POSITIVE_INFINITY,
+            pendingRestartDeadline.launchdShutdownDeadlineAt,
+          );
+        }
+        if (pendingRestartDeadline.forceExitDeadlineAt !== undefined) {
+          acceptedRequest.restartDeadline.forceExitDeadlineAt = Math.min(
+            acceptedRequest.restartDeadline.forceExitDeadlineAt ?? Number.POSITIVE_INFINITY,
+            pendingRestartDeadline.forceExitDeadlineAt,
+          );
+        }
         gatewayLog.info(`received ${signal}; overriding pending startup restart with shutdown`);
         pendingStartupRequest = null;
         clearPendingStartupForceExitTimer();
@@ -1051,7 +1225,7 @@ export async function runGatewayLoop(params: {
         runAcceptedRequest(acceptedRequest);
         return;
       }
-      if (launchdSignalDeadlineAt !== undefined && currentRestartRequest?.action === "restart") {
+      if (launchdSignalDeadlineAt !== undefined && currentSignalRequest) {
         gatewayLog.info(`received ${signal} during shutdown; enforcing launchd deadline`);
         return;
       }
@@ -1093,13 +1267,28 @@ export async function runGatewayLoop(params: {
   };
 
   const onSigterm = () => {
-    const receivedAt = Date.now();
+    const receivedAt = performance.now();
+    const loadedLaunchdExitTimeoutSeconds =
+      supervisorMode === "launchd"
+        ? eagerLifecycleRuntime.readLoadedLaunchAgentExitTimeoutSecondsSync(process.env)
+        : undefined;
+    const launchdSignalDeadlineAt =
+      supervisorMode !== "launchd" || loadedLaunchdExitTimeoutSeconds === 0
+        ? undefined
+        : receivedAt +
+          // If the loaded job cannot be inspected, no plist/default value proves how soon
+          // launchd may hard-kill us. Fail closed; only an observed zero is unbounded.
+          Math.max(0, (loadedLaunchdExitTimeoutSeconds ?? 0) * 1_000 - LAUNCHD_SHUTDOWN_RESERVE_MS);
+    const releaseClassificationGuard =
+      armSigtermDeadlineBeforeClassification(launchdSignalDeadlineAt);
     // Debug-level: every accepted signal is announced by request()'s
     // "received <signal>; ..." line, so an info pre-log would double up.
     gatewayLog.debug("signal SIGTERM received");
     if (terminalHostedStop && terminalHostedStop === hostLifecycle) {
       // Kernel cleanup is already joined. A native stop signal belongs to this
       // terminal continuation, not to restart-intent storage in the closed kernel.
+      request("stop", "SIGTERM", undefined, undefined, undefined, launchdSignalDeadlineAt);
+      releaseClassificationGuard();
       terminalHostedStop.notifyStopSignal();
       return;
     }
@@ -1112,11 +1301,16 @@ export async function runGatewayLoop(params: {
         restartIntent?.reason,
         restartIntent ?? undefined,
         undefined,
-        receivedAt,
+        launchdSignalDeadlineAt,
       );
+      releaseClassificationGuard();
     })().catch((err: unknown) => {
       gatewayLog.error(`failed to handle SIGTERM: ${String(err)}`);
-      request("stop", "SIGTERM", undefined, undefined, undefined, receivedAt);
+      try {
+        request("stop", "SIGTERM", undefined, undefined, undefined, launchdSignalDeadlineAt);
+      } finally {
+        releaseClassificationGuard();
+      }
     });
   };
   const onSigint = () => {
