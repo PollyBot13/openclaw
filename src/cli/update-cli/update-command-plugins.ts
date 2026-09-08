@@ -277,6 +277,13 @@ export async function updatePluginsAfterCoreUpdate(params: {
   // Convergence checks activation before restart. Seed it from the current
   // sync/npm records so repair cannot overwrite them with an older disk snapshot.
   const convergenceBaselineRecords = pluginConfig.plugins?.installs ?? {};
+  // Keep the observed selectors stable if convergence replaces their records.
+  const probedNpmSpecs = new Map(
+    cohort.updateOutcomes.map(({ pluginId }) => {
+      const record = convergenceBaselineRecords[pluginId];
+      return [pluginId, record?.source === "npm" ? record.spec : undefined];
+    }),
+  );
   const convergence = await runPostCorePluginConvergence({
     cfg: pluginConfig,
     env: process.env,
@@ -321,7 +328,8 @@ export async function updatePluginsAfterCoreUpdate(params: {
       !outcome.nextVersion ||
       comparePackageUpdateVersions(outcome.nextVersion, outcome.currentVersion) <= 0 ||
       record?.source !== "npm" ||
-      record.version !== outcome.currentVersion ||
+      (record.resolvedVersion ?? record.version) !== outcome.currentVersion ||
+      record.spec !== probedNpmSpecs.get(outcome.pluginId) ||
       resolveExactNpmSpecVersion(record.spec) !== outcome.currentVersion ||
       !isTrustedOfficialPluginInstallRecord({
         pluginId: outcome.pluginId,
