@@ -3,7 +3,7 @@ import path from "node:path";
 import { parseDurationMs } from "../cli/parse-duration.js";
 import {
   applySessionEntryLifecycleMutation,
-  listSessionEntriesCore,
+  listSessionEntriesReadOnly,
   loadExactSessionEntryReadOnly,
   type SessionEntryLifecycleRemoval,
 } from "../config/sessions/session-accessor.js";
@@ -137,7 +137,16 @@ export async function sweepCronRunSessions(params: {
     const removals: SessionEntryLifecycleRemoval[] = [];
     // The accessor keeps agentId logical for admission checks and resolves a shared
     // store's physical database owner internally through its SQLite scope.
-    for (const { sessionKey, entry } of listSessionEntriesCore({
+    //
+    // Use the read-only listing here, not listSessionEntriesCore. The reaper only
+    // reads rows to decide removals; the writable open runs a synchronous
+    // `PRAGMA integrity_check` plus foreign-key check on every open, and this sweep
+    // fires per agent id every MIN_SWEEP_INTERVAL_MS, so on a large fleet it re-checks
+    // every agent database on the main thread and stalls the event loop (see #142476).
+    // The read-only open skips that gate; the default "full" projection still returns
+    // owned entries that are safe to hold across the await below, and the actual
+    // pruning write (applySessionEntryLifecycleMutation) keeps its own integrity gate.
+    for (const { sessionKey, entry } of listSessionEntriesReadOnly({
       agentId: params.agentId,
       storePath,
     })) {
