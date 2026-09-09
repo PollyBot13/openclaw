@@ -1,0 +1,58 @@
+name: Isolated reaper proof
+on:
+  push:
+    branches: [proof/cron-reaper-validation]
+permissions:
+  contents: read
+jobs:
+  proof:
+    if: github.repository == 'PollyBot13/openclaw'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Install pinned repository dependencies
+        run: |
+          npm install --global pnpm@12.3.4 --ignore-scripts
+          pnpm install --frozen-lockfile
+      - name: Check proof source
+        run: |
+          node_modules/.bin/oxfmt --check scripts/bench-cron-session-reaper.ts
+          node scripts/run-oxlint.mjs --tsconfig config/tsconfig/oxlint.scripts.json scripts/bench-cron-session-reaper.ts
+      - name: Run real sweeps against original and changed discovery
+        run: |
+          mkdir -p /tmp/reaper-results
+          cp src/cron/session-reaper.ts /tmp/reaper-after.ts
+          for count in 2 632; do
+            for variant in before after; do
+              cp /tmp/reaper-after.ts src/cron/session-reaper.ts
+              if [ "$variant" = before ]; then
+                python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/cron/session-reaper.ts')
+          text = p.read_text()
+          assert text.count('  listSessionEntriesReadOnly,') == 1
+          assert text.count('of listSessionEntriesReadOnly({') == 1
+          text = text.replace('  listSessionEntriesReadOnly,', '  listSessionEntriesCore,')
+          text = text.replace('of listSessionEntriesReadOnly({', 'of listSessionEntriesCore({')
+          p.write_text(text)
+          PY
+              fi
+              echo "PROOF_VARIANT=$variant AGENTS=$count"
+              node --import ./scripts/tsx.mjs scripts/bench-cron-session-reaper.ts "$count" > "/tmp/reaper-results/$variant-$count.log" 2>&1
+              grep '^REAPER_PROOF ' "/tmp/reaper-results/$variant-$count.log"
+            done
+          done
+          cp /tmp/reaper-after.ts src/cron/session-reaper.ts
+          git diff --exit-code -- src/cron/session-reaper.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: reaper-proof
+          path: /tmp/reaper-results/
+          retention-days: 14
