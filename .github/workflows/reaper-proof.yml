@@ -24,6 +24,8 @@ jobs:
         run: |
           node_modules/.bin/oxfmt --check scripts/bench-cron-session-reaper.ts
           node scripts/run-oxlint.mjs --tsconfig config/tsconfig/oxlint.scripts.json scripts/bench-cron-session-reaper.ts
+          node scripts/run-tsgo.mjs -p tsconfig.scripts.json
+          node scripts/run-vitest.mjs src/cron/session-reaper.test.ts
       - name: Run real sweeps against original and changed discovery
         run: |
           mkdir -p /tmp/reaper-results
