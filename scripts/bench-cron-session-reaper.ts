@@ -88,8 +88,8 @@ async function sweep(nowMs: number, expectedPruned: number) {
       ({ entry }) => expectedPruned === 0 || entry.sessionId !== "expiring",
     );
     assert.deepEqual(
-      actual.map(({ sessionKey }) => sessionKey).sort(),
-      expected.map(({ sessionKey }) => sessionKey).sort(),
+      actual.map(({ sessionKey }) => sessionKey).toSorted(),
+      expected.map(({ sessionKey }) => sessionKey).toSorted(),
     );
     for (const { sessionKey, entry } of expected) {
       const survivor = actual.find((row) => row.sessionKey === sessionKey)?.entry;
