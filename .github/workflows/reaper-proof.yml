@@ -22,6 +22,7 @@ jobs:
           pnpm install --frozen-lockfile
       - name: Check proof source
         run: |
+          pnpm deadcode:unused-files
           node_modules/.bin/oxfmt --check scripts/bench-cron-session-reaper.ts
           node scripts/run-oxlint.mjs --tsconfig config/tsconfig/oxlint.scripts.json scripts/bench-cron-session-reaper.ts
           node scripts/run-tsgo.mjs -p tsconfig.scripts.json
