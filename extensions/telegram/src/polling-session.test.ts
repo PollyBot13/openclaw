@@ -3173,8 +3173,8 @@ describe("TelegramPollingSession", () => {
   });
 
   it("retries a lone active spooled handler in a replacement session (#84158)", async () => {
-    // The first session keeps ownership until shutdown; its replacement recovers the claim.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Core drain releases a hanging claim so a replacement session retries it.
+    vi.useFakeTimers();
     const firstAbort = new AbortController();
     const secondAbort = new AbortController();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-telegram-spool-"));

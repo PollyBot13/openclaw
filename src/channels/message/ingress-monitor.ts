@@ -6,12 +6,12 @@ import {
   waitForGatewayRestartFenceSettlement,
 } from "../../process/gateway-work-admission.js";
 import { sleep } from "../../utils/sleep.js";
+import { createIngressDrainWakeScheduler } from "./ingress-drain-wake.js";
 import {
   createChannelIngressDrain,
   type ChannelIngressDrain,
   type CreateChannelIngressDrainOptions,
 } from "./ingress-drain.js";
-import { createIngressDrainWakeScheduler } from "./ingress-monitor-wake.js";
 import type { ChannelIngressQueue, ChannelIngressQueueClaim } from "./ingress-queue.js";
 import {
   DEFAULT_INGRESS_RETRY_DEAD_LETTER_MIN_AGE_MS,
