@@ -105,6 +105,22 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function refreshContentInventory(packageRoot) {
+  // Frozen packages without content inventories retain their original capability set.
+  if (!fs.existsSync(path.join(packageRoot, "dist", "postinstall-content-inventory.json"))) {
+    return;
+  }
+  execFileSync(process.execPath, [
+    "--import",
+    fileURLToPath(new URL("../../tsx.mjs", import.meta.url)),
+    "--input-type=module",
+    "--eval",
+    "const { writePackageDistInventory } = await import(process.argv[1]); await writePackageDistInventory(process.argv[2]);",
+    new URL("../../lib/package-dist-inventory.ts", import.meta.url).href,
+    packageRoot,
+  ]);
+}
+
 function resolveFixturePaths(packageRoot) {
   const root = path.resolve(packageRoot);
   const packageJson = path.join(root, "package.json");
@@ -167,6 +183,7 @@ export function removeLegacyUpdateCompatChunks(packageRoot) {
     paths.inventory,
     inventory.filter((entry) => !removed.includes(entry)),
   );
+  refreshContentInventory(paths.root);
 }
 
 function futureFixtureVersion(sequence) {
@@ -185,6 +202,7 @@ function stampFixtureVersion(packageRoot, version) {
   // The unchanged compiled UI still carries the prepared artifact's opaque build ID.
   writeJson(paths.packageJson, packageJson);
   writeJson(paths.buildInfo, buildInfo);
+  refreshContentInventory(paths.root);
 }
 
 export function markFutureUpdateFixture(packageRoot, sequence = 0) {

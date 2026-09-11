@@ -14,8 +14,10 @@ import {
   packFutureUpdateFixture,
   removeLegacyUpdateCompatChunks,
 } from "../../scripts/e2e/lib/update-first-hop-package-fixtures.mjs";
+import { writePackageDistInventory } from "../../scripts/lib/package-dist-inventory.js";
 import { UPDATE_COMPATIBILITY_CHUNK_HEADER } from "../../scripts/lib/update-compat-contract.mjs";
 import { inspectControlUiRootAssets } from "../../src/infra/control-ui-assets.js";
+import { collectPackageDistContentInventoryErrors } from "../../src/infra/package-dist-inventory.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -52,6 +54,31 @@ function makePackageFixture() {
 }
 
 describe("first-hop package fixtures", () => {
+  it.each(["first-hop-tarball", "future-tarball", "negative-tarball", "future", "negative"])(
+    "keeps modern content inventories valid for %s",
+    async (method) => {
+      const root = tempDirs.make("openclaw-fixture-content-inventory-");
+      const packageRoot = path.join(root, "package");
+      fs.cpSync(makePackageFixture(), packageRoot, { recursive: true });
+      await writePackageDistInventory(packageRoot);
+      let transformedRoot = packageRoot;
+      const args = ["scripts/e2e/lib/update-first-hop-package-fixtures.mjs", method];
+      if (method.endsWith("-tarball")) {
+        const source = path.join(root, "source.tgz");
+        const output = path.join(root, "transformed.tgz");
+        execFileSync("tar", ["-czf", source, "-C", root, "package"]);
+        execFileSync(process.execPath, [...args, source, output]);
+        const extracted = path.join(root, "extracted");
+        fs.mkdirSync(extracted);
+        execFileSync("tar", ["-xzf", output, "-C", extracted]);
+        transformedRoot = path.join(extracted, "package");
+      } else {
+        execFileSync(process.execPath, [...args, packageRoot]);
+      }
+      expect(await collectPackageDistContentInventoryErrors(transformedRoot)).toEqual([]);
+    },
+  );
+
   it("selects recorded baselines and verifies their bytes before choosing restart controls", () => {
     const root = makePackageFixture();
     const createSource = (version: string) => {
