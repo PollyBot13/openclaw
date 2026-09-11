@@ -58,6 +58,40 @@ async function createLinkedPackageSwapFixture(base: string, relative = false) {
 }
 
 describe("retained npm package integrity", () => {
+  it.runIf(process.platform === "darwin").each([0o700, 0o755])(
+    "preserves launcher symlink mode %s through activation and retained rollback",
+    async (mode) => {
+      await withTestDir({ prefix: "openclaw-rollback-launcher-mode-" }, async (base) => {
+        const { params, packageRoot, launcher } = await createPackageSwapFixture(base);
+        const target = "../lib/node_modules/openclaw/dist/index.js";
+        await fs.unlink(launcher);
+        await fs.symlink(target, launcher);
+        await fs.lchmod(launcher, mode);
+        const original = await fs.lstat(launcher);
+        const targetStat = await fs.stat(launcher);
+        const symlink = fs.symlink.bind(fs);
+        vi.spyOn(fs, "symlink").mockImplementation(async (...args) => {
+          await symlink(...args);
+          await fs.lchmod(args[1], mode === 0o700 ? 0o755 : 0o700);
+        });
+
+        const transaction = await retain(params);
+        await expectCandidateIntact(packageRoot, launcher);
+        expect(await transaction.rollback(() => {})).toMatchObject({ exitCode: 0 });
+        expect(await fs.readlink(launcher)).toBe(target);
+        const restored = await fs.lstat(launcher);
+        expect([restored.mode, restored.uid, restored.gid]).toEqual([
+          original.mode,
+          original.uid,
+          original.gid,
+        ]);
+        expect((await fs.stat(launcher)).mode).toBe(targetStat.mode);
+        expect(await fs.readFile(launcher, "utf8")).toBe("export {};\n");
+        expect(await transaction.complete({ activationVerified: false }, () => {})).toBeUndefined();
+      });
+    },
+  );
+
   it.runIf(process.platform !== "win32")(
     "keeps a staged relative npm link on its canonical checkout through activation and rollback",
     async () => {
