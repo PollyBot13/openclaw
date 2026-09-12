@@ -459,6 +459,9 @@ enabled or allowlisted; its declaration alone does not authorize loading. Explic
 disablement and denylists still win, and a nonempty allowlist must include that
 owner. Existing equal-ID selections retain their slot-based activation behavior.
 
+For linked installations, a missing `plugins.load.paths` target still fails CLI
+config validation before uninstall can run; restore or correct that path first.
+
 ```json5
 {
   plugins: {
