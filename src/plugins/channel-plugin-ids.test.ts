@@ -2565,12 +2565,12 @@ describe("resolveGatewayStartupPluginPlanFromRegistry", () => {
       contextEngine: "Canonical-Engine",
     });
     expect(
-      resolveGatewayStartupPluginIdsFromRegistry({
+      resolveGatewayStartupPluginPlanFromRegistry({
         config,
         env: createPluginPlanningTestEnv(),
         index,
         manifestRegistry: registry,
-      }),
+      }).pluginIds,
     ).toContain("lossless-claw");
     const scope = resolveGatewayStartupMetadataPluginIds({
       config,
