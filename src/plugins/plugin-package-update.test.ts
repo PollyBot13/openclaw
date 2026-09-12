@@ -68,15 +68,20 @@ describe("plugin package update policy reconciliation", () => {
       ]);
       before.installRecords.pack!.contextEngineIdsByPlugin = { "pack/retired": ["engine"] };
       const retained = record("pack/retained", afterRoot);
-      if (transferred) retained.contextEngineIds = ["engine"];
+      if (transferred) {
+        retained.contextEngineIds = ["engine"];
+      }
       const after = index(afterRoot, [retained]);
-      if (transferred)
+      if (transferred) {
         after.installRecords.pack!.contextEngineIdsByPlugin = { "pack/retained": ["engine"] };
+      }
       const snapshot = capturePluginPackageUpdateSnapshot({
         index: before,
         installOwners: ["pack"],
       });
-      if (!snapshot.ok) throw new Error(snapshot.error);
+      if (!snapshot.ok) {
+        throw new Error(snapshot.error);
+      }
       const result = reconcilePluginPackageUpdateConfig({
         config: {
           plugins: {
@@ -89,7 +94,9 @@ describe("plugin package update policy reconciliation", () => {
         afterIndex: after,
         snapshot: snapshot.value,
       });
-      if (!result.ok) throw new Error(result.error);
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
       expect(result.config.plugins?.entries?.["pack/retired"]).toBeUndefined();
       expect(result.config.plugins?.slots?.contextEngine).toBe(transferred ? "engine" : undefined);
     },
