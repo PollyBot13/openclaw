@@ -23,6 +23,50 @@ afterEach(() => {
 });
 afterAll(cleanupPluginLoaderFixturesForTest);
 
+it.each(["unapproved", "reassigned", "enabled", "allowlisted"] as const)(
+  "checks %s workspace ownership before module execution",
+  async (policy) => {
+    useNoBundledPlugins();
+    const workspaceDir = makePluginLoaderTempDir();
+    vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+    const imported = path.join(workspaceDir, "imported");
+    const plugin = writePlugin({
+      id: "new-owner",
+      dir: path.join(workspaceDir, ".openclaw", "extensions", "new-owner"),
+      filename: "index.cjs",
+      body: `require("node:fs").writeFileSync(${JSON.stringify(imported)}, "loaded");
+module.exports = { id: "new-owner", register() {} };`,
+    });
+    fs.writeFileSync(
+      path.join(plugin.dir, "openclaw.plugin.json"),
+      JSON.stringify({
+        id: plugin.id,
+        kind: "context-engine",
+        contextEngineIds: ["existing-engine"],
+        configSchema: EMPTY_PLUGIN_SCHEMA,
+      }),
+    );
+    const config: OpenClawConfig = {
+      plugins: {
+        slots: { memory: "none", contextEngine: "existing-engine" },
+        ...(policy === "enabled" ? { entries: { "new-owner": { enabled: true } } } : {}),
+        ...(policy === "allowlisted" ? { allow: ["new-owner"] } : {}),
+        ...(policy === "reassigned" ? { entries: { "old-owner": { enabled: true } } } : {}),
+      },
+    };
+    const registry = loadOpenClawPlugins({ config, workspaceDir, cache: false });
+    try {
+      const record = registry.plugins.find((entry) => entry.id === plugin.id);
+      expect(record?.origin).toBe("workspace");
+      const approved = policy === "enabled" || policy === "allowlisted";
+      expect(record?.status).toBe(approved ? "loaded" : "disabled");
+      expect(fs.existsSync(imported)).toBe(approved);
+    } finally {
+      await disposePluginRegistryInstances(registry);
+    }
+  },
+);
+
 it.each(["broken", "missing"] as const)(
   "selects a declared engine through cold startup and clears it with %s plugin source",
   async (sourceState) => {

@@ -103,8 +103,7 @@ export function resolveSelectedContextEnginePluginIdFromConfig(
     return undefined;
   }
   const legacyOwner = records.find((record) => normalizeId(record.id) === pluginId);
-  const divergentOwnerNeedsTrust =
-    owners.size === 1 && pluginId !== normalizeId(engineId);
+  const divergentOwnerNeedsTrust = owners.size === 1 && pluginId !== normalizeId(engineId);
   if (
     (owners.size === 0 && legacyOwner?.contextEngineIds !== undefined) ||
     (divergentOwnerNeedsTrust &&
@@ -112,7 +111,7 @@ export function resolveSelectedContextEnginePluginIdFromConfig(
       !plugins.allow.includes(pluginId)) ||
     plugins.deny.includes(pluginId) ||
     plugins.entries[pluginId]?.enabled === false ||
-    (plugins.allow.length > 0 && !plugins.allow.includes(pluginId))
+    (divergentOwnerNeedsTrust && plugins.allow.length > 0 && !plugins.allow.includes(pluginId))
   ) {
     return undefined;
   }

@@ -454,8 +454,10 @@ IDs for automatic activation.
 The install record retains declared ownership, allowing uninstall to reset the
 selected engine even if the plugin files are missing or cannot load. Updating a
 plugin refreshes these declarations. If an update removes your explicitly selected
-engine, select another supported ID. Declaring ownership does not bypass plugin
-disablement, denylists, or allowlists.
+engine, select another supported ID. A differently named owner must be independently
+enabled or allowlisted; its declaration alone does not authorize loading. Explicit
+disablement and denylists still win, and a nonempty allowlist must include that
+owner. Existing equal-ID selections retain their slot-based activation behavior.
 
 ```json5
 {
