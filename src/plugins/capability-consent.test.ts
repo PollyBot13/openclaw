@@ -99,7 +99,7 @@ describe("plugin capability consent", () => {
         config,
         consent.acceptInstallRecord({ pluginId: "plugin", ...previousRecord, installPath: stage }),
       );
-      expect(next.plugins.installs.plugin.contextEngineIdsByPlugin).toEqual(
+      expect(next.plugins?.installs?.plugin?.contextEngineIdsByPlugin).toEqual(
         ids ? { plugin: ids } : undefined,
       );
       expect(previousRecord.contextEngineIdsByPlugin).toEqual({

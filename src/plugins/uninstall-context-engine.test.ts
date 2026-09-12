@@ -43,12 +43,12 @@ describe("context-engine uninstall ownership", () => {
   it("does not rename a declared engine when its plugin ID migrates", () => {
     const input = config();
     input.plugins!.slots!.contextEngine = "vendor-plugin";
-    input.plugins!.installs!["vendor-plugin"].contextEngineIdsByPlugin = {
+    input.plugins!.installs!["vendor-plugin"]!.contextEngineIdsByPlugin = {
       "vendor-plugin": ["vendor-plugin"],
     };
     const migrated = migratePluginConfigId(input, "vendor-plugin", "renamed-plugin");
     expect(migrated.plugins?.slots?.contextEngine).toBe("vendor-plugin");
-    expect(migrated.plugins?.installs?.["renamed-plugin"].contextEngineIdsByPlugin).toEqual({
+    expect(migrated.plugins?.installs?.["renamed-plugin"]?.contextEngineIdsByPlugin).toEqual({
       "renamed-plugin": ["vendor-plugin"],
     });
     expect(
@@ -68,6 +68,7 @@ describe("context-engine uninstall ownership", () => {
   it("uses retained runtime-child ownership when the package inventory is missing", () => {
     const input = config();
     const record = input.plugins!.installs!["vendor-plugin"];
+    if (!record) throw new Error("Missing install fixture");
     input.plugins!.installs = { "vendor-package": record };
     const result = planPluginUninstall({
       config: input,
