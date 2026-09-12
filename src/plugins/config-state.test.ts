@@ -807,7 +807,15 @@ describe("context engine ownership", () => {
   ];
   it("resolves exact declared engine IDs and preserves legacy equal-ID selection", () => {
     const resolve = (contextEngine: string) =>
-      resolveSelectedContextEnginePluginId({ plugins: { slots: { contextEngine } } }, records);
+      resolveSelectedContextEnginePluginId(
+        {
+          plugins: {
+            ...(contextEngine !== "legacy-plugin" ? { allow: ["vendor-plugin"] } : {}),
+            slots: { contextEngine },
+          },
+        },
+        records,
+      );
     expect(resolve("Canonical-Engine")).toBe("vendor-plugin");
     expect(resolve("second-engine")).toBe("vendor-plugin");
     expect(resolve("legacy-plugin")).toBe("legacy-plugin");
@@ -815,7 +823,10 @@ describe("context engine ownership", () => {
   });
   it("carries ownership into activation without changing the engine slot", () => {
     const config = withContextEngineOwner(
-      normalizePluginsConfig({ slots: { contextEngine: "Canonical-Engine" } }),
+      normalizePluginsConfig({
+        allow: ["vendor-plugin"],
+        slots: { contextEngine: "Canonical-Engine" },
+      }),
       records,
     );
     expect(config.slots.contextEngine).toBe("Canonical-Engine");
@@ -829,7 +840,9 @@ describe("context engine ownership", () => {
     ).toBe(false);
   });
   it("does not choose a first owner or a same-named plugin over declared ownership", () => {
-    const config = { plugins: { slots: { contextEngine: "Canonical-Engine" } } };
+    const config = {
+      plugins: { allow: ["vendor-plugin"], slots: { contextEngine: "Canonical-Engine" } },
+    };
     expect(
       resolveSelectedContextEnginePluginId(config, [...records, { id: "canonical-engine" }]),
     ).toBe("vendor-plugin");
@@ -839,6 +852,22 @@ describe("context engine ownership", () => {
         { id: "other", contextEngineIds: ["Canonical-Engine"] },
       ]),
     ).toBeUndefined();
+  });
+  it("requires independent trust for a differently named declared owner", () => {
+    const config = { plugins: { slots: { contextEngine: "Canonical-Engine" } } };
+    expect(resolveSelectedContextEnginePluginId(config, records)).toBeUndefined();
+    expect(
+      resolveSelectedContextEnginePluginId(
+        { plugins: { entries: { "vendor-plugin": { enabled: true } }, ...config.plugins } },
+        records,
+      ),
+    ).toBe("vendor-plugin");
+    expect(
+      resolveSelectedContextEnginePluginId(
+        { plugins: { allow: ["vendor-plugin"], ...config.plugins } },
+        records,
+      ),
+    ).toBe("vendor-plugin");
   });
   it.each([
     { enabled: false },
