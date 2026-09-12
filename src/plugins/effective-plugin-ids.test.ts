@@ -156,9 +156,12 @@ describe("resolveEffectivePluginIds", () => {
         plugins: [{ id: "vendor-plugin", contextEngineIds: ["Canonical-Engine"] }],
       }),
     );
-    expect(resolve({ plugins: { slots: { contextEngine: "Canonical-Engine" } } })).toEqual([
-      "vendor-plugin",
-    ]);
+    expect(resolve({ plugins: { slots: { contextEngine: "Canonical-Engine" } } })).toEqual([]);
+    expect(
+      resolve({
+        plugins: { allow: ["vendor-plugin"], slots: { contextEngine: "Canonical-Engine" } },
+      }),
+    ).toEqual(["vendor-plugin"]);
   });
 
   it("keeps the built-in legacy context engine out of plugin preload ids", () => {
