@@ -91,7 +91,6 @@ module.exports = { id: "vendor-plugin", kind: "context-engine", register(api) {
     expect(fs.existsSync(imported)).toBe(false);
     const registry = loadOpenClawPlugins({
       config: persisted,
-      metadataSnapshot: fresh,
       onlyPluginIds: [...plan.pluginIds],
       runtimeSideEffects: true,
       cache: false,
