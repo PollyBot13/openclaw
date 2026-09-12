@@ -851,6 +851,20 @@ describe("context engine ownership", () => {
         ...records,
         { id: "other", contextEngineIds: ["Canonical-Engine"] },
       ]),
+    ).toBe("vendor-plugin");
+    expect(
+      resolveSelectedContextEnginePluginId(
+        { plugins: { ...config.plugins, allow: ["vendor-plugin", "other"] } },
+        [...records, { id: "other", contextEngineIds: ["Canonical-Engine"] }],
+      ),
+    ).toBeUndefined();
+  });
+  it("does not fall back to an incidental equal-ID plugin when declared owners are ineligible", () => {
+    expect(
+      resolveSelectedContextEnginePluginId(
+        { plugins: { slots: { contextEngine: "Canonical-Engine" } } },
+        [...records, { id: "canonical-engine" }],
+      ),
     ).toBeUndefined();
   });
   it("requires independent trust for a differently named declared owner", () => {
@@ -869,17 +883,20 @@ describe("context engine ownership", () => {
       ),
     ).toBe("vendor-plugin");
   });
-  it("preserves equal-ID slot authorization outside an unrelated allowlist", () => {
-    const config = withContextEngineOwner(
-      normalizePluginsConfig({ allow: ["unrelated"], slots: { contextEngine: "legacy-plugin" } }),
-      records,
-    );
-    expect(config.contextEngineOwnerId).toBe("legacy-plugin");
-    expect(
-      resolveEffectivePluginActivationState({ id: "legacy-plugin", origin: "workspace", config })
-        .enabled,
-    ).toBe(true);
-  });
+  it.each([false, true])(
+    "preserves equal-ID slot authorization outside an unrelated allowlist: declared=%s",
+    (declared) => {
+      const config = withContextEngineOwner(
+        normalizePluginsConfig({ allow: ["unrelated"], slots: { contextEngine: "legacy-plugin" } }),
+        declared ? [{ id: "legacy-plugin", contextEngineIds: ["legacy-plugin"] }] : records,
+      );
+      expect(config.contextEngineOwnerId).toBe("legacy-plugin");
+      expect(
+        resolveEffectivePluginActivationState({ id: "legacy-plugin", origin: "workspace", config })
+          .enabled,
+      ).toBe(true);
+    },
+  );
   it.each([
     { enabled: false },
     { deny: ["vendor-plugin"] },
