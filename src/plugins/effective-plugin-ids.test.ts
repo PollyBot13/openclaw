@@ -150,6 +150,17 @@ describe("resolveEffectivePluginIds", () => {
     ]);
   });
 
+  it("preloads the declared owner, not the engine identifier", () => {
+    mocks.loadManifestMetadataSnapshot.mockReturnValue(
+      createPluginMetadataSnapshotFixture({
+        plugins: [{ id: "vendor-plugin", contextEngineIds: ["Canonical-Engine"] }],
+      }),
+    );
+    expect(resolve({ plugins: { slots: { contextEngine: "Canonical-Engine" } } })).toEqual([
+      "vendor-plugin",
+    ]);
+  });
+
   it("keeps the built-in legacy context engine out of plugin preload ids", () => {
     expect(
       resolve({

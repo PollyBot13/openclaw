@@ -296,6 +296,25 @@ describe("installed plugin index persistence", () => {
     );
   });
 
+  it("retains declared engine ownership when plugin files are unavailable", async () => {
+    const stateDir = makeTempDir();
+    const base = createIndex();
+    const ownership = { demo: ["canonical-engine"] };
+    const index = createIndex({
+      installRecords: { demo: { source: "npm", contextEngineIdsByPlugin: ownership } },
+      plugins: base.plugins.map((plugin) => ({
+        ...plugin,
+        contextEngineIds: ["canonical-engine"],
+      })),
+    });
+    await writePersistedInstalledPluginIndex(index, { stateDir });
+    const persisted = requirePersisted(await readPersistedInstalledPluginIndex({ stateDir }));
+    expect(persisted.plugins[0]?.contextEngineIds).toEqual(["canonical-engine"]);
+    expect(
+      readPersistedInstalledPluginIndexInstallRecords({ stateDir }).demo?.contextEngineIdsByPlugin,
+    ).toEqual(ownership);
+  });
+
   it("writes and reads the installed plugin index atomically", async () => {
     const stateDir = makeTempDir();
     const filePath = resolveInstalledPluginIndexStorePath({ stateDir });
