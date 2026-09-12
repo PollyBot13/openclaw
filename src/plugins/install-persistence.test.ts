@@ -9,6 +9,7 @@ import {
   clearPluginRegistryLoadCacheMock,
   enablePluginInConfigMock,
   loadPluginManifestRegistryMock,
+  loadPluginMetadataSnapshotMock,
   planPluginUninstallMock,
   replaceConfigFileMock,
   restorePersistedInstalledPluginIndexIfCurrentMock,
@@ -142,6 +143,10 @@ describe("persistPluginInstall", () => {
           enabled: true,
         };
       });
+      const actualMetadata = await vi.importActual<typeof import("./plugin-metadata-snapshot.js")>(
+        "./plugin-metadata-snapshot.js",
+      );
+      loadPluginMetadataSnapshotMock.mockImplementation(actualMetadata.loadPluginMetadataSnapshot);
       const actualSlots = await vi.importActual<typeof import("./slots.js")>("./slots.js");
       applyExclusiveSlotSelectionMock.mockImplementation((input) =>
         actualSlots.applyExclusiveSlotSelection(
