@@ -298,30 +298,13 @@ describe("installed plugin index persistence", () => {
     );
   });
 
-  it("retains declared engine ownership when plugin files are unavailable", async () => {
-    const stateDir = makeTempDir();
-    const base = createIndex();
-    const ownership = { demo: ["canonical-engine"] };
-    const index = createIndex({
-      installRecords: { demo: { source: "npm", contextEngineIdsByPlugin: ownership } },
-      plugins: base.plugins.map((plugin) => ({
-        ...plugin,
-        contextEngineIds: ["canonical-engine"],
-      })),
-    });
-    await writePersistedInstalledPluginIndex(index, { stateDir });
-    const persisted = requirePersisted(await readPersistedInstalledPluginIndex({ stateDir }));
-    expect(persisted.plugins[0]?.contextEngineIds).toEqual(["canonical-engine"]);
-    expect(
-      readPersistedInstalledPluginIndexInstallRecords({ stateDir })?.demo?.contextEngineIdsByPlugin,
-    ).toEqual(ownership);
-  });
-
   it("writes and reads the installed plugin index atomically", async () => {
     const stateDir = makeTempDir();
     const filePath = resolveInstalledPluginIndexStorePath({ stateDir });
+    const ownership = { demo: ["canonical-engine"] };
     const index = createIndex({
       workspaceDir: "/agents/gadget/workspace",
+      installRecords: { demo: { source: "npm", contextEngineIdsByPlugin: ownership } },
       diagnostics: [
         {
           level: "info",
@@ -331,6 +314,9 @@ describe("installed plugin index persistence", () => {
         },
       ],
     });
+    for (const plugin of index.plugins) {
+      plugin.contextEngineIds = ["canonical-engine"];
+    }
 
     await expect(writePersistedInstalledPluginIndex(index, { stateDir })).resolves.toBe(filePath);
 
@@ -338,6 +324,10 @@ describe("installed plugin index persistence", () => {
       expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
     }
     const persisted = requirePersisted(await readPersistedInstalledPluginIndex({ stateDir }));
+    expect(persisted.plugins[0]?.contextEngineIds).toEqual(["canonical-engine"]);
+    expect(
+      readPersistedInstalledPluginIndexInstallRecords({ stateDir })?.demo?.contextEngineIdsByPlugin,
+    ).toEqual(ownership);
     expect(persisted.version).toBe(index.version);
     expect(persisted.warning).toContain("DO NOT EDIT.");
     expect(persisted.policyHash).toBe(index.policyHash);

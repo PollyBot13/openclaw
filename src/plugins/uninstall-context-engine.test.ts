@@ -68,7 +68,9 @@ describe("context-engine uninstall ownership", () => {
   it("uses retained runtime-child ownership when the package inventory is missing", () => {
     const input = config();
     const record = input.plugins!.installs!["vendor-plugin"];
-    if (!record) throw new Error("Missing install fixture");
+    if (!record) {
+      throw new Error("Missing install fixture");
+    }
     input.plugins!.installs = { "vendor-package": record };
     const result = planPluginUninstall({
       config: input,
@@ -76,7 +78,9 @@ describe("context-engine uninstall ownership", () => {
       deleteFiles: false,
     });
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
     expect(result.actions.contextEngineSlot).toBe(true);
     expect(result.config.plugins?.slots).toEqual({ memory: "memory-core" });
   });
