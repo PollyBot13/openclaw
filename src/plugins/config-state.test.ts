@@ -869,6 +869,17 @@ describe("context engine ownership", () => {
       ),
     ).toBe("vendor-plugin");
   });
+  it("preserves equal-ID slot authorization outside an unrelated allowlist", () => {
+    const config = withContextEngineOwner(
+      normalizePluginsConfig({ allow: ["unrelated"], slots: { contextEngine: "legacy-plugin" } }),
+      records,
+    );
+    expect(config.contextEngineOwnerId).toBe("legacy-plugin");
+    expect(
+      resolveEffectivePluginActivationState({ id: "legacy-plugin", origin: "workspace", config })
+        .enabled,
+    ).toBe(true);
+  });
   it.each([
     { enabled: false },
     { deny: ["vendor-plugin"] },

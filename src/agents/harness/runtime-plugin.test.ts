@@ -617,7 +617,9 @@ describe("harness runtime plugins", () => {
     };
     const plan = resolveAgentRuntimePluginLoadPlan({
       metadataSnapshot: { ...originalSnapshot, registryIndex },
-      config: { plugins: { slots: { contextEngine: "Canonical-Engine" } } },
+      config: {
+        plugins: { allow: ["vendor-plugin"], slots: { contextEngine: "Canonical-Engine" } },
+      },
       workspaceDir: "/tmp/workspace",
       basePluginIds: [],
       selections: [],
