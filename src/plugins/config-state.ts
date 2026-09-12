@@ -80,6 +80,48 @@ export function resolveSelectedContextEnginePluginId(
   );
 }
 
+function isContextEngineOwnerEligible(
+  plugins: NormalizedPluginsConfig,
+  pluginId: string,
+  normalizedEngineId: string,
+): boolean {
+  if (
+    !plugins.enabled ||
+    !pluginId ||
+    plugins.deny.includes(pluginId) ||
+    plugins.entries[pluginId]?.enabled === false
+  ) {
+    return false;
+  }
+  // Equal-ID slots retain their explicit-selection exception to the allowlist.
+  return (
+    pluginId === normalizedEngineId ||
+    ((plugins.entries[pluginId]?.enabled === true || plugins.allow.includes(pluginId)) &&
+      (plugins.allow.length === 0 || plugins.allow.includes(pluginId)))
+  );
+}
+
+/** Declared owners participate in selection and collision checks only when policy permits them. */
+export function resolveEligibleContextEngineDeclaredOwners(
+  plugins: NormalizedPluginsConfig,
+  engineId: string | null | undefined,
+  records: readonly ContextEngineOwnerMetadata[],
+  normalizeId: (id: string) => string = normalizePluginId,
+): { hasDeclarations: boolean; pluginIds: string[] } {
+  const declared = records.filter(
+    (record) => engineId && record.contextEngineIds?.includes(engineId),
+  );
+  const normalizedEngineId = engineId ? normalizeId(engineId) : undefined;
+  return {
+    hasDeclarations: declared.length > 0,
+    pluginIds: normalizedEngineId
+      ? [...new Set(declared.map((record) => normalizeId(record.id)))].filter((pluginId) =>
+          isContextEngineOwnerEligible(plugins, pluginId, normalizedEngineId),
+        )
+      : [],
+  };
+}
+
 export function resolveSelectedContextEnginePluginIdFromConfig(
   plugins: NormalizedPluginsConfig,
   engineId: string | null | undefined,
@@ -89,33 +131,22 @@ export function resolveSelectedContextEnginePluginIdFromConfig(
   if (!plugins.enabled || !engineId || engineId === defaultSlotIdForKey("contextEngine")) {
     return undefined;
   }
-  const owners = new Set(
-    records
-      .filter((record) => record.contextEngineIds?.includes(engineId))
-      .map((record) => normalizeId(record.id)),
+  const owners = resolveEligibleContextEngineDeclaredOwners(
+    plugins,
+    engineId,
+    records,
+    normalizeId,
   );
-  // A declared engine wins over an incidental same-named plugin; collisions never pick a winner.
-  if (owners.size > 1) {
-    return undefined;
+  // Declarations never fall back to an incidental same-named plugin, even if all are ineligible.
+  if (owners.hasDeclarations) {
+    return owners.pluginIds.length === 1 ? owners.pluginIds[0] : undefined;
   }
-  const pluginId = owners.size === 1 ? [...owners][0] : normalizeId(engineId);
-  if (!pluginId) {
-    return undefined;
-  }
+  const pluginId = normalizeId(engineId);
   const legacyOwner = records.find((record) => normalizeId(record.id) === pluginId);
-  const divergentOwnerNeedsTrust = owners.size === 1 && pluginId !== normalizeId(engineId);
-  if (
-    (owners.size === 0 && legacyOwner?.contextEngineIds !== undefined) ||
-    (divergentOwnerNeedsTrust &&
-      plugins.entries[pluginId]?.enabled !== true &&
-      !plugins.allow.includes(pluginId)) ||
-    plugins.deny.includes(pluginId) ||
-    plugins.entries[pluginId]?.enabled === false ||
-    (divergentOwnerNeedsTrust && plugins.allow.length > 0 && !plugins.allow.includes(pluginId))
-  ) {
-    return undefined;
-  }
-  return pluginId;
+  return legacyOwner?.contextEngineIds === undefined &&
+    isContextEngineOwnerEligible(plugins, pluginId, pluginId)
+    ? pluginId
+    : undefined;
 }
 
 /** Carries prepared ownership without changing the registered engine selector. */
