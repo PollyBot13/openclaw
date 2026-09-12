@@ -129,7 +129,9 @@ module.exports = { id: "vendor-plugin", kind: "context-engine", register(api) {
       deleteFiles: false,
     });
     expect(uninstall.ok).toBe(true);
-    if (!uninstall.ok) throw new Error(uninstall.error);
+    if (!uninstall.ok) {
+      throw new Error(uninstall.error);
+    }
     expect(uninstall.actions.contextEngineSlot).toBe(true);
     expect(uninstall.config.plugins?.slots?.contextEngine).toBeUndefined();
   },
