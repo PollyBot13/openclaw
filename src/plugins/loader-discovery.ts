@@ -1,4 +1,7 @@
-import { withContextEngineOwner } from "./config-state.js";
+import {
+  resolveEligibleContextEngineDeclaredOwners,
+  withContextEngineOwner,
+} from "./config-state.js";
 import {
   discoverOpenClawPlugins,
   type PluginCandidate,
@@ -68,14 +71,14 @@ export function resolvePluginLoadDiscovery(params: {
       contextEngineIds: plugin.contextEngineIds,
     })) ?? manifestRegistry.plugins;
   const selectedEngineId = context.normalized.slots.contextEngine;
-  const selectedOwners = new Set(
-    contextEngineOwners
-      .filter((plugin) => selectedEngineId && plugin.contextEngineIds?.includes(selectedEngineId))
-      .map((plugin) => plugin.id),
-  );
-  if (context.normalized.enabled && selectedOwners.size > 1) {
+  const selectedOwners = resolveEligibleContextEngineDeclaredOwners(
+    context.normalized,
+    selectedEngineId,
+    contextEngineOwners,
+  ).pluginIds;
+  if (selectedOwners.length > 1) {
     throw new Error(
-      `Context engine "${selectedEngineId}" has ambiguous declared owners: ${[...selectedOwners].toSorted().join(", ")}. Select an engine with a unique plugin owner.`,
+      `Context engine "${selectedEngineId}" has ambiguous declared owners: ${selectedOwners.toSorted().join(", ")}. Select an engine with a unique plugin owner.`,
     );
   }
   context.normalized = withContextEngineOwner(context.normalized, contextEngineOwners);
