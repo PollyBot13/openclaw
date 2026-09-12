@@ -23,7 +23,7 @@ afterEach(() => {
 });
 afterAll(cleanupPluginLoaderFixturesForTest);
 
-it.each(["unapproved", "reassigned", "enabled", "allowlisted"] as const)(
+it.each(["unapproved", "reassigned", "enabled", "allowlisted", "denied", "disabled"] as const)(
   "checks %s workspace ownership before module execution",
   async (policy) => {
     useNoBundledPlugins();
@@ -46,10 +46,21 @@ module.exports = { id: "new-owner", register() {} };`,
         configSchema: EMPTY_PLUGIN_SCHEMA,
       }),
     );
+    const incidentalImported = path.join(workspaceDir, "incidental-imported");
+    writePlugin({
+      id: "existing-engine",
+      dir: path.join(workspaceDir, ".openclaw", "extensions", "existing-engine"),
+      filename: "index.cjs",
+      body: `require("node:fs").writeFileSync(${JSON.stringify(incidentalImported)}, "loaded");
+module.exports = { id: "existing-engine", register() {} };`,
+    });
     const config: OpenClawConfig = {
       plugins: {
         slots: { memory: "none", contextEngine: "existing-engine" },
-        ...(policy === "enabled" ? { entries: { "new-owner": { enabled: true } } } : {}),
+        ...(["enabled", "denied", "disabled"].includes(policy)
+          ? { entries: { "new-owner": { enabled: policy !== "disabled" } } }
+          : {}),
+        ...(policy === "denied" ? { deny: ["new-owner"] } : {}),
         ...(policy === "allowlisted" ? { allow: ["new-owner"] } : {}),
         ...(policy === "reassigned" ? { entries: { "old-owner": { enabled: true } } } : {}),
       },
@@ -61,6 +72,66 @@ module.exports = { id: "new-owner", register() {} };`,
       const approved = policy === "enabled" || policy === "allowlisted";
       expect(record?.status).toBe(approved ? "loaded" : "disabled");
       expect(fs.existsSync(imported)).toBe(approved);
+      expect(fs.existsSync(incidentalImported)).toBe(false);
+    } finally {
+      await disposePluginRegistryInstances(registry);
+    }
+  },
+);
+
+it.each(["unapproved", "denied", "disabled", "excluded", "approved"] as const)(
+  "checks eligible collision owners before module execution: %s claimant",
+  async (policy) => {
+    useNoBundledPlugins();
+    const workspaceDir = makePluginLoaderTempDir();
+    vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+    const markers = ["approved-owner", "other-owner"].map((id) => {
+      const marker = path.join(workspaceDir, `${id}-imported`);
+      const plugin = writePlugin({
+        id,
+        dir: path.join(workspaceDir, ".openclaw", "extensions", id),
+        filename: "index.cjs",
+        body: `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "loaded");
+module.exports = { id: ${JSON.stringify(id)}, register() {} };`,
+      });
+      fs.writeFileSync(
+        path.join(plugin.dir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id,
+          kind: "context-engine",
+          contextEngineIds: ["shared-engine"],
+          configSchema: EMPTY_PLUGIN_SCHEMA,
+        }),
+      );
+      return marker;
+    });
+    const config: OpenClawConfig = {
+      plugins: {
+        slots: { memory: "none", contextEngine: "shared-engine" },
+        entries: {
+          "approved-owner": { enabled: true },
+          ...(policy !== "unapproved" ? { "other-owner": { enabled: policy !== "disabled" } } : {}),
+        },
+        ...(policy === "denied" ? { deny: ["other-owner"] } : {}),
+        ...(policy === "excluded" ? { allow: ["approved-owner"] } : {}),
+      },
+    };
+    if (policy === "approved") {
+      expect(() => loadOpenClawPlugins({ config, workspaceDir, cache: false })).toThrow(
+        'Context engine "shared-engine" has ambiguous declared owners: approved-owner, other-owner',
+      );
+      expect(markers.map((marker) => fs.existsSync(marker))).toEqual([false, false]);
+      return;
+    }
+    const registry = loadOpenClawPlugins({ config, workspaceDir, cache: false });
+    try {
+      expect(registry.plugins.find((plugin) => plugin.id === "approved-owner")?.status).toBe(
+        "loaded",
+      );
+      expect(registry.plugins.find((plugin) => plugin.id === "other-owner")?.status).toBe(
+        "disabled",
+      );
+      expect(markers.map((marker) => fs.existsSync(marker))).toEqual([true, false]);
     } finally {
       await disposePluginRegistryInstances(registry);
     }
