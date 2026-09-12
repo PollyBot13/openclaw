@@ -673,6 +673,30 @@ describe("harness runtime plugins", () => {
       expect(plan.config?.plugins?.slots).toEqual(config.plugins?.slots);
     },
   );
+  it("loads only the declared owner for a differently named engine", () => {
+    const originalSnapshot = createMemoryPlanMetadataSnapshot();
+    const index = originalSnapshot.registryIndex;
+    const template = index.plugins[0];
+    if (!template) {
+      throw new Error("Missing installed-plugin fixture");
+    }
+    const registryIndex = {
+      ...index,
+      plugins: [
+        ...index.plugins,
+        { ...template, pluginId: "vendor-plugin", contextEngineIds: ["Canonical-Engine"] },
+      ],
+    };
+    const plan = resolveAgentRuntimePluginLoadPlan({
+      metadataSnapshot: { ...originalSnapshot, registryIndex },
+      config: { plugins: { slots: { contextEngine: "Canonical-Engine" } } },
+      workspaceDir: "/tmp/workspace",
+      basePluginIds: [],
+      selections: [],
+    });
+    expect(plan.pluginIds).toEqual(["vendor-plugin"]);
+    expect(plan.config?.plugins?.entries?.["vendor-plugin"]).toEqual({ enabled: true });
+  });
 
   const memorySelectionCases: Array<{
     name: string;

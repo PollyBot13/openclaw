@@ -62,26 +62,74 @@ export const normalizePluginsConfig = (
   return normalizePluginsConfigWithResolverCore(config, normalizePluginId);
 };
 
-/** Resolves the enabled plugin selected to own the context-engine slot. */
-export function resolveSelectedContextEnginePluginId(config?: OpenClawConfig): string | undefined {
+export type ContextEngineOwnerMetadata = {
+  id: string;
+  contextEngineIds?: readonly string[];
+};
+
+/** Resolves engine ownership before applying the owning plugin's activation policy. */
+export function resolveSelectedContextEnginePluginId(
+  config: OpenClawConfig | undefined,
+  records: readonly ContextEngineOwnerMetadata[],
+): string | undefined {
   const plugins = normalizePluginsConfig(config?.plugins);
-  return resolveSelectedContextEnginePluginIdFromConfig(plugins, plugins.slots.contextEngine);
+  return resolveSelectedContextEnginePluginIdFromConfig(
+    plugins,
+    plugins.slots.contextEngine,
+    records,
+  );
 }
 
 export function resolveSelectedContextEnginePluginIdFromConfig(
   plugins: NormalizedPluginsConfig,
-  pluginId: string | null | undefined,
+  engineId: string | null | undefined,
+  records: readonly ContextEngineOwnerMetadata[],
+  normalizeId: (id: string) => string = normalizePluginId,
 ): string | undefined {
+  if (!plugins.enabled || !engineId || engineId === defaultSlotIdForKey("contextEngine")) {
+    return undefined;
+  }
+  const owners = new Set(
+    records
+      .filter((record) => record.contextEngineIds?.includes(engineId))
+      .map((record) => normalizeId(record.id)),
+  );
+  // A declared engine wins over an incidental same-named plugin; collisions never pick a winner.
+  if (owners.size > 1) {
+    return undefined;
+  }
+  const pluginId = owners.size === 1 ? [...owners][0] : normalizeId(engineId);
+  if (!pluginId) {
+    return undefined;
+  }
+  const legacyOwner = records.find((record) => normalizeId(record.id) === pluginId);
   if (
-    !plugins.enabled ||
-    !pluginId ||
-    pluginId === defaultSlotIdForKey("contextEngine") ||
+    (owners.size === 0 && legacyOwner?.contextEngineIds !== undefined) ||
     plugins.deny.includes(pluginId) ||
-    plugins.entries[pluginId]?.enabled === false
+    plugins.entries[pluginId]?.enabled === false ||
+    (plugins.allow.length > 0 && !plugins.allow.includes(pluginId))
   ) {
     return undefined;
   }
   return pluginId;
+}
+
+/** Carries prepared ownership without changing the registered engine selector. */
+export function withContextEngineOwner(
+  plugins: NormalizedPluginsConfig,
+  records: readonly ContextEngineOwnerMetadata[],
+  normalizeId: (id: string) => string = normalizePluginId,
+): NormalizedPluginsConfig {
+  return {
+    ...plugins,
+    contextEngineOwnerId:
+      resolveSelectedContextEnginePluginIdFromConfig(
+        plugins,
+        plugins.slots.contextEngine,
+        records,
+        normalizeId,
+      ) ?? null,
+  };
 }
 
 /** Canonicalizes one plugin entry and its policy-list ids before a targeted mutation. */
