@@ -33,6 +33,58 @@ describe("memory_search real manager", () => {
     testing.resetMemorySearchToolCooldowns();
   });
 
+  it.each([false, true])(
+    "reads the indexed agent file with explicit ownership (reversed roster: %s)",
+    async (reverse) => {
+      const cfg = fixture.createConfig({
+        provider: "none",
+        sources: ["memory"],
+        vectorEnabled: false,
+        minScore: 0,
+      });
+      cfg.agents = {
+        ownership: "explicit",
+        defaults: { workspace: fixture.paths.workspace },
+        entries: reverse ? { other: {}, main: {} } : { main: {}, other: {} },
+      };
+      cfg.memory = { ...cfg.memory, citations: "off" };
+      await fs.writeFile(path.join(fixture.paths.workspace, "USER.md"), "Parent decoy\n");
+      for (const agentId of ["main", "other"]) {
+        const workspace = path.join(fixture.paths.workspace, agentId);
+        const marker = `Orchid workspace ${agentId}`;
+        await fs.mkdir(workspace, { recursive: true });
+        await fs.writeFile(path.join(workspace, "USER.md"), marker);
+        const manager = fixture.requireManager(
+          await getMemorySearchManager({ cfg, agentId, purpose: "cli" }),
+        );
+        fixture.trackManager(manager);
+        await manager.sync({ reason: "cli", force: true });
+        await manager.close();
+
+        const options = { config: cfg, agentId, oneShotCliRun: true };
+        const search = createMemorySearchTool(options)!;
+        const get = createMemoryGetTool(options)!;
+        const found = await search.execute("workspace-search", { query: marker, corpus: "memory" });
+        const { results } = found.details as {
+          results: Array<{ path: string; startLine: number; endLine: number; snippet: string }>;
+        };
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({ path: "USER.md", snippet: marker });
+        const hit = results[0]!;
+        const excerpt = await get.execute("workspace-get", {
+          path: hit.path,
+          from: hit.startLine,
+          lines: hit.endLine - hit.startLine + 1,
+        });
+        expect(excerpt.details).toMatchObject({ status: "ok", path: hit.path, text: marker });
+        const escaped = await get.execute("workspace-parent", { path: "../USER.md" });
+        expect(escaped.details).toMatchObject({ status: "error", code: "MEMORY_PATH_NOT_ALLOWED" });
+      }
+      expect(fixture.provider.embedBatchCalls).toBe(0);
+      expect(fixture.provider.embedQueryCalls).toBe(0);
+    },
+  );
+
   it.each([
     {
       label: "space-indented citations on",

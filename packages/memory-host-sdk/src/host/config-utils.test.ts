@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resolveAgentWorkspaceDir } from "../../../../src/agents/agent-scope-config.js";
+import { setRetainedLegacyDefaultAgentId } from "../../../../src/config/legacy.default-agent-owner-state.js";
 import {
   normalizeConfiguredMemoryExtraPaths,
   resolveMemoryHostAgentWorkspaceDir,
@@ -10,6 +12,66 @@ import {
 } from "./config-utils.js";
 
 describe("resolveMemoryHostAgentWorkspaceDir", () => {
+  it.each<{
+    name: string;
+    entries: NonNullable<NonNullable<OpenClawConfig["agents"]>["entries"]>;
+    retained?: string;
+  }>([
+    { name: "two agents", entries: { main: {}, support: {} } },
+    { name: "reordered agents", entries: { support: {}, main: {} } },
+    { name: "sole agent", entries: { main: {} } },
+    { name: "explicit workspace", entries: { main: { workspace: "~/pinned" }, support: {} } },
+    { name: "retained migration owner", entries: { main: {}, support: {} }, retained: "support" },
+    { name: "removed migration owner", entries: { main: {}, support: {} }, retained: "removed" },
+    { name: "ignored legacy marker", entries: { main: { default: true }, support: {} } },
+  ])("agrees with canonical explicit workspace selection for $name", ({ entries, retained }) => {
+    const cfg = {
+      agents: { ownership: "explicit" as const, defaults: { workspace: "~/shared" }, entries },
+    };
+    setRetainedLegacyDefaultAgentId(cfg, retained);
+    for (const agentId of Object.keys(entries)) {
+      const env = { HOME: "/home/fixture" };
+      expect(resolveMemoryHostAgentWorkspaceDir(cfg, agentId, env)).toBe(
+        resolveAgentWorkspaceDir(cfg, agentId, env),
+      );
+    }
+  });
+
+  it.each([
+    { name: "absent roster", agents: {}, expected: "shared" },
+    { name: "empty roster", agents: { entries: {} }, expected: "shared/main" },
+    {
+      name: "duplicate IDs",
+      agents: { list: [{ id: "main" }, { id: "MAIN" }] },
+      expected: "shared/main",
+    },
+  ])("respects explicit $name inheritance", ({ agents, expected }) => {
+    const cfg: OpenClawConfig = {
+      agents: { ...agents, ownership: "explicit", defaults: { workspace: "~/shared" } },
+    };
+    expect(resolveMemoryHostAgentWorkspaceDir(cfg, "main", { HOME: "/home/fixture" })).toBe(
+      path.resolve("/home/fixture", expected),
+    );
+  });
+
+  it("preserves optional legacy IDs in explicitly owned reader input", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        defaults: { workspace: "~/shared" },
+        list: [{}, { id: "support" }],
+      },
+    };
+    const env = { HOME: "/home/fixture" };
+    expect(resolveMemoryHostAgentWorkspaceDir(cfg, "main", env)).toBe(
+      path.resolve("/home/fixture/shared/main"),
+    );
+    setRetainedLegacyDefaultAgentId(cfg, "support");
+    expect(resolveMemoryHostAgentWorkspaceDir(cfg, "support", env)).toBe(
+      path.resolve("/home/fixture/shared"),
+    );
+  });
+
   it.each([
     { name: "profile alone", stateDir: undefined },
     { name: "explicit profile state directory", stateDir: "/home/fixture/.openclaw-work" },

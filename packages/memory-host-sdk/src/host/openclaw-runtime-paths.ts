@@ -1,5 +1,6 @@
 // Pure path owners; importing memory helpers must not initialize core runtime paths.
 import path from "node:path";
+export { tryResolveAgentWorkspaceOwner } from "../../../../src/agents/agent-workspace-owner.js";
 import { resolveDefaultAgentWorkspaceDir as resolveCoreDefaultAgentWorkspaceDir } from "../../../../src/agents/workspace-default-path.js";
 import { resolveStateDirFromHome } from "../../../../src/config/state-dir.js";
 import { resolveRequiredHomeDir, resolveUserPath } from "../../../../src/infra/home-dir.js";

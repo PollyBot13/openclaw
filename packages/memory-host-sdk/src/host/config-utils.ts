@@ -4,6 +4,7 @@ import {
   resolveDefaultAgentWorkspaceDir,
   resolveStateDir,
   resolveUserPath,
+  tryResolveAgentWorkspaceOwner,
 } from "./openclaw-runtime-paths.js";
 import type { MemoryExtraPath } from "./types.js";
 export { normalizeAgentId };
@@ -73,6 +74,7 @@ type AgentConfig = {
 /** Narrow OpenClaw config shape consumed by memory host utilities. */
 export type OpenClawConfig = {
   agents?: {
+    ownership?: "explicit";
     defaults?: {
       workspace?: string;
       contextLimits?: AgentContextLimitsConfig;
@@ -170,7 +172,18 @@ export function resolveMemoryHostAgentWorkspaceDir(
     return stripNullBytes(resolveUserPath(configured, env));
   }
   const fallback = cfg.agents?.defaults?.workspace?.trim();
-  if (id === resolveDefaultAgentId(cfg)) {
+  // Legacy reader inputs keep first-agent inheritance. Explicit ownership uses
+  // the same compatibility owner as search, including retained migration facts.
+  const inheritedWorkspaceAgentId =
+    cfg.agents?.ownership === "explicit"
+      ? tryResolveAgentWorkspaceOwner(cfg, {
+          agentIds: listAgentEntries(cfg).map((agent) => normalizeAgentId(agent.id)),
+          hasAgentRoster:
+            (Object.hasOwn(cfg.agents, "entries") && cfg.agents.entries !== undefined) ||
+            (Object.hasOwn(cfg.agents, "list") && cfg.agents.list !== undefined),
+        })
+      : resolveDefaultAgentId(cfg);
+  if (id === inheritedWorkspaceAgentId) {
     return stripNullBytes(
       fallback ? resolveUserPath(fallback, env) : resolveDefaultAgentWorkspaceDir(env),
     );

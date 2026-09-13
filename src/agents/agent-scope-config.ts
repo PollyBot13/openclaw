@@ -6,7 +6,6 @@ import {
   readStringValue,
 } from "@openclaw/normalization-core/string-coerce";
 import { formatCliCommand } from "../cli/command-format.js";
-import { getRetainedLegacyDefaultAgentId } from "../config/legacy.default-agent-owner-state.js";
 import { hasExplicitModelPolicyAllow } from "../config/model-policy-allowlist-migration.js";
 import { resolveStateDir } from "../config/paths.js";
 import type {
@@ -17,6 +16,7 @@ import type { OpenClawConfig } from "../config/types.js";
 import { LEGACY_IMPLICIT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
 import { registerResolvedAgentDir } from "./agent-dir-registry.js";
+import { tryResolveAgentWorkspaceOwner } from "./agent-workspace-owner.js";
 import { resolveDefaultAgentWorkspaceDir } from "./workspace-default.js";
 
 type AgentEntry = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];
@@ -268,11 +268,11 @@ export function tryResolveLegacyCompatibilityAgentId(cfg: OpenClawConfig): strin
   if (facts?.compatibilityAgentId) {
     return facts.compatibilityAgentId.value;
   }
-  const retainedAgentId = getRetainedLegacyDefaultAgentId(cfg);
-  const value =
-    retainedAgentId && listAgentIds(cfg).includes(retainedAgentId)
-      ? retainedAgentId
-      : tryResolveDefaultAgentId(cfg);
+  const value = tryResolveAgentWorkspaceOwner(cfg, {
+    agentIds: listAgentEntries(cfg).map((agent) => normalizeAgentId(agent.id)),
+    hasAgentRoster: hasAgentRosterProperty(cfg),
+    legacyDefaultAgentId: tryResolveRawLegacyDefaultAgentId(cfg),
+  });
   if (facts) {
     facts.compatibilityAgentId = { value };
   }
