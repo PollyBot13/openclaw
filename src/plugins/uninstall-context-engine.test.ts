@@ -84,4 +84,44 @@ describe("context-engine uninstall ownership", () => {
     expect(result.actions.contextEngineSlot).toBe(true);
     expect(result.config.plugins?.slots).toEqual({ memory: "memory-core" });
   });
+  it.each([false, true])(
+    "excludes all departing children but preserves outside owners: %s",
+    (survives) => {
+      const input: OpenClawConfig = {
+        plugins: {
+          entries: { a: { enabled: true }, b: { enabled: false } },
+          slots: { memory: "memory-core", contextEngine: "engine" },
+          installs: {
+            bundle: {
+              source: "path",
+              sourcePath: "/missing/bundle",
+              contextEngineIdsByPlugin: { a: ["engine"], b: ["engine"] },
+            },
+            ...(survives
+              ? {
+                  other: {
+                    source: "path" as const,
+                    contextEngineIdsByPlugin: { other: ["engine"] },
+                  },
+                }
+              : {}),
+          },
+        },
+      };
+      const result = planPluginUninstall({ config: input, pluginId: "bundle", deleteFiles: false });
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      expect(result.config.plugins?.installs?.bundle).toBeUndefined();
+      expect(result.config.plugins?.slots?.contextEngine).toBe(survives ? "engine" : undefined);
+      expect(result.config.plugins?.slots?.memory).toBe("memory-core");
+      expect(result.actions.contextEngineSlot).toBe(!survives);
+      expect(result.config.plugins?.entries).toEqual({
+        bundle: { enabled: false },
+        a: { enabled: false },
+        b: { enabled: false },
+      });
+    },
+  );
 });

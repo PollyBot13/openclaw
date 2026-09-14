@@ -99,6 +99,7 @@ export function resolveSlotSelection(slotKey: PluginSlotKey, value: unknown): Sl
 export function resolveRetainedContextEngineIds(
   config: OpenClawConfig,
   pluginId: string,
+  removedPluginIds: readonly string[] = [pluginId],
 ): string[] {
   const owners = Object.values(config.plugins?.installs ?? {}).flatMap((record) =>
     Object.entries(record.contextEngineIdsByPlugin ?? {}),
@@ -106,7 +107,8 @@ export function resolveRetainedContextEngineIds(
   const declarations = owners.filter(([id]) => id === pluginId);
   const ids = declarations.length ? declarations.flatMap(([, values]) => values) : [pluginId];
   return [...new Set(ids)].filter(
-    (id) => !owners.some(([owner, values]) => owner !== pluginId && values.includes(id)),
+    (id) =>
+      !owners.some(([owner, values]) => !removedPluginIds.includes(owner) && values.includes(id)),
   );
 }
 
