@@ -2,8 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { resolveAgentWorkspaceDir } from "../../../../src/agents/agent-scope-config.js";
+import {
+  resolveAgentWorkspaceDir,
+  tryResolveLegacyCompatibilityAgentId,
+  withAgentRosterFactsBatch,
+} from "../../../../src/agents/agent-scope-config.js";
 import { setRetainedLegacyDefaultAgentId } from "../../../../src/config/legacy.default-agent-owner-state.js";
+import { materializeLegacyDefaultAgentRoles } from "../../../../src/config/legacy.default-agent-roles.js";
+import { materializeRuntimeConfig } from "../../../../src/config/materialize.js";
+import type { OpenClawConfig as CoreOpenClawConfig } from "../../../../src/config/types.js";
 import {
   normalizeConfiguredMemoryExtraPaths,
   resolveMemoryHostAgentWorkspaceDir,
@@ -12,6 +19,70 @@ import {
 } from "./config-utils.js";
 
 describe("resolveMemoryHostAgentWorkspaceDir", () => {
+  it("keeps the retained data workspace separate from the runtime owner through materialization and restart", () => {
+    const workspace = path.resolve("/srv/shared");
+    const cfg: CoreOpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        defaults: { workspace, systemAgent: { agentId: "other" } },
+        entries: { main: {}, other: {} },
+      },
+    };
+    setRetainedLegacyDefaultAgentId(cfg, "main");
+    const runtime = materializeRuntimeConfig(cfg, { manifestRegistry: { plugins: [] } });
+    const saved = materializeLegacyDefaultAgentRoles(runtime, "main", {
+      materializeWorkspace: true,
+    }).config;
+    const serialized = JSON.stringify(saved);
+    const restarted: CoreOpenClawConfig = JSON.parse(serialized);
+
+    expect(saved.agents?.entries?.main?.workspace).toBe(workspace);
+    expect(cfg.agents?.entries?.main?.workspace).toBeUndefined();
+    for (const config of [cfg, runtime, restarted]) {
+      expect(tryResolveLegacyCompatibilityAgentId(config)).toBe("other");
+      for (const resolveWorkspace of [
+        resolveAgentWorkspaceDir,
+        resolveMemoryHostAgentWorkspaceDir,
+      ]) {
+        expect(resolveWorkspace(config, "main")).toBe(workspace);
+        expect(resolveWorkspace(config, "other")).toBe(path.join(workspace, "other"));
+      }
+    }
+  });
+
+  it.each(["runtime first", "workspace first"])(
+    "keeps runtime and workspace ownership separate in a roster batch with %s",
+    (order) => {
+      const workspace = path.resolve("/srv/shared");
+      const cfg = {
+        agents: {
+          ownership: "explicit" as const,
+          defaults: { workspace, systemAgent: { agentId: "other" } },
+          entries: { main: {}, other: {} },
+        },
+      };
+      setRetainedLegacyDefaultAgentId(cfg, "main");
+
+      withAgentRosterFactsBatch(cfg, () => {
+        if (order === "runtime first") {
+          expect(tryResolveLegacyCompatibilityAgentId(cfg)).toBe("other");
+        }
+        expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(workspace);
+        expect(tryResolveLegacyCompatibilityAgentId(cfg)).toBe("other");
+        expect(resolveAgentWorkspaceDir(cfg, "other")).toBe(path.join(workspace, "other"));
+        expect(resolveMemoryHostAgentWorkspaceDir(cfg, "main")).toBe(workspace);
+      });
+
+      setRetainedLegacyDefaultAgentId(cfg, "other");
+      withAgentRosterFactsBatch(cfg, () => {
+        expect(resolveAgentWorkspaceDir(cfg, "main")).toBe(path.join(workspace, "main"));
+        expect(resolveAgentWorkspaceDir(cfg, "other")).toBe(workspace);
+        expect(resolveMemoryHostAgentWorkspaceDir(cfg, "main")).toBe(path.join(workspace, "main"));
+        expect(tryResolveLegacyCompatibilityAgentId(cfg)).toBe("other");
+      });
+    },
+  );
+
   it.each<{
     name: string;
     entries: NonNullable<NonNullable<OpenClawConfig["agents"]>["entries"]>;
