@@ -305,66 +305,41 @@ const admittingTurnAdoptionLifecycles = new WeakMap<TurnAdoptionLifecycle, Promi
 const retiredTurnAdoptionCancellationLifecycles = new WeakSet<TurnAdoptionLifecycle>();
 const completedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
 const completedTurnAdoptionLifecycleCallbacks = new WeakSet<TurnAdoptionLifecycle>();
-const deferredHeartbeatTimers = new WeakMap<
-  TurnAdoptionLifecycle,
-  ReturnType<typeof setInterval>
->();
+const deferredHeartbeatStops = new WeakMap<TurnAdoptionLifecycle, () => void>();
 
 type FollowupLifecycleRun = Pick<FollowupRun, "steerPending" | "turnAdoptionLifecycle">;
 
-function stopFollowupRunDeferredHeartbeat(lifecycle: TurnAdoptionLifecycle | undefined): void {
-  if (!lifecycle) {
-    return;
-  }
-  const timer = deferredHeartbeatTimers.get(lifecycle);
-  if (!timer) {
-    return;
-  }
-  clearInterval(timer);
-  deferredHeartbeatTimers.delete(lifecycle);
-}
-
-export function startFollowupRunDeferredHeartbeat(
-  run: FollowupLifecycleRun,
-  isQueueOwner: () => boolean,
-): void {
-  const lifecycle = run.turnAdoptionLifecycle;
-  const requestedIntervalMs = lifecycle?.deferredHeartbeatIntervalMs;
+function startFollowupRunDeferredHeartbeat(lifecycle: TurnAdoptionLifecycle): void {
+  const intervalMs = lifecycle.deferredHeartbeatIntervalMs;
+  const heartbeat = lifecycle.onDeferredHeartbeat;
   if (
-    !lifecycle?.onDeferredHeartbeat ||
-    requestedIntervalMs === undefined ||
-    !Number.isFinite(requestedIntervalMs) ||
-    requestedIntervalMs <= 0 ||
-    deferredHeartbeatTimers.has(lifecycle)
+    !heartbeat ||
+    intervalMs === undefined ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0 ||
+    lifecycle.abortSignal?.aborted ||
+    admittedTurnAdoptionLifecycles.has(lifecycle) ||
+    completedTurnAdoptionLifecycles.has(lifecycle)
   ) {
     return;
   }
-  if (!isQueueOwner()) {
-    return;
-  }
-  try {
-    lifecycle.onDeferredHeartbeat();
-  } catch {
-    // A broken liveness callback must not take down the queue. Leave the
-    // watchdog unrenewed so it can recover the orphaned claim.
-    return;
-  }
-  const intervalMs = Math.max(1, Math.floor(requestedIntervalMs));
-  const timer = setInterval(() => {
-    if (!isQueueOwner()) {
-      stopFollowupRunDeferredHeartbeat(lifecycle);
-      return;
-    }
+  const pulse = () => {
     try {
-      lifecycle.onDeferredHeartbeat?.();
+      heartbeat();
     } catch {
-      // A broken liveness callback must not take down the queue. Stop renewing
-      // so the ingress watchdog can recover the orphaned claim.
-      stopFollowupRunDeferredHeartbeat(lifecycle);
+      // Leave recovery to the ingress watchdog when its liveness callback fails.
+      deferredHeartbeatStops.get(lifecycle)?.();
     }
-  }, intervalMs);
-  timer.unref?.();
-  deferredHeartbeatTimers.set(lifecycle, timer);
+  };
+  const timer = setInterval(pulse, intervalMs).unref();
+  const stop = () => {
+    clearInterval(timer);
+    lifecycle.abortSignal?.removeEventListener("abort", stop);
+    deferredHeartbeatStops.delete(lifecycle);
+  };
+  deferredHeartbeatStops.set(lifecycle, stop);
+  lifecycle.abortSignal?.addEventListener("abort", stop, { once: true });
+  pulse();
 }
 
 export function markFollowupRunEnqueued(run: FollowupLifecycleRun): boolean {
@@ -374,6 +349,7 @@ export function markFollowupRunEnqueued(run: FollowupLifecycleRun): boolean {
       return false;
     }
     enqueuedTurnAdoptionLifecycles.add(lifecycle);
+    startFollowupRunDeferredHeartbeat(lifecycle);
   }
   return true;
 }
@@ -405,7 +381,7 @@ export async function admitFollowupRunLifecycle(run: FollowupLifecycleRun): Prom
     if (!admittedTurnAdoptionLifecycles.has(lifecycle)) {
       await lifecycle.onAdopted();
       admittedTurnAdoptionLifecycles.add(lifecycle);
-      stopFollowupRunDeferredHeartbeat(lifecycle);
+      deferredHeartbeatStops.get(lifecycle)?.();
     }
   });
 
@@ -423,7 +399,6 @@ export function completeFollowupRunLifecycle(
 ): void {
   run.steerPending?.settle(false);
   const lifecycle = run.turnAdoptionLifecycle;
-  stopFollowupRunDeferredHeartbeat(lifecycle);
 
   const finish = () => {
     if (!lifecycle || completedTurnAdoptionLifecycleCallbacks.has(lifecycle)) {
@@ -442,6 +417,7 @@ export function completeFollowupRunLifecycle(
   };
 
   if (lifecycle && !completedTurnAdoptionLifecycles.has(lifecycle)) {
+    deferredHeartbeatStops.get(lifecycle)?.();
     completedTurnAdoptionLifecycles.add(lifecycle);
   }
 

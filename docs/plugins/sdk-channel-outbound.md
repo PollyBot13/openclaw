@@ -118,26 +118,15 @@ surface durable append exhaustion rather than silently dispatching.
 
 Forward both `onDeferredHeartbeat` and `deferredHeartbeatIntervalMs` when a
 plugin wraps the ingress lifecycle or maps it to `turnAdoptionLifecycle`.
-`bindIngressLifecycleToReplyOptions(...)` forwards both fields. They let the
-core follow-up queue renew a deferred claim's adoption watchdog while the turn
-waits behind other work; a heartbeat does not adopt or complete the claim.
+`bindIngressLifecycleToReplyOptions(...)` forwards both. The drain derives the
+optional cadence from its adoption-stall timeout; fan-in uses the shortest
+positive, finite source cadence. The queue renews only while it owns the
+lifecycle, stopping after adoption, completion, ownership loss, or callback
+failure. A heartbeat does not adopt or complete a claim.
 
-`deferredHeartbeatIntervalMs` is an optional requested cadence in milliseconds.
-The queue starts renewal only when the callback and a positive, finite cadence
-are present and the queue owns the lifecycle. It renews immediately, then at
-the requested interval rounded down to whole milliseconds, with a 1 ms minimum.
-`fanInChannelIngressLifecycles(...)` forwards heartbeats to every source and
-uses the shortest positive, finite source cadence; invalid or absent cadences
-do not participate in that minimum.
-
-Renewal stops after successful adoption, lifecycle completion, loss of queue
-ownership, or a thrown heartbeat callback. Callback failure leaves the watchdog
-unrenewed so it can recover the claim. Plugins must not run an independent timer
-that keeps abandoned work alive.
-
-Older wrappers that omit the optional cadence remain valid, but do not enable
-queue-owned periodic renewal. Forwarding only the callback is insufficient;
-deferred work can still reach the existing adoption watchdog timeout.
+Wrappers that omit the cadence remain valid but do not enable periodic renewal;
+their deferred claims can still reach the adoption watchdog timeout. Plugins
+must not run independent timers that keep abandoned work alive.
 
 ## Adapter
 

@@ -92,6 +92,27 @@ describe("channel ingress drain watchdog", () => {
     });
   });
 
+  it("keeps adoption finalization paused across deferred heartbeats", async () => {
+    await withTempState(async (stateDir) => {
+      const queue = createTestIngressQueue(stateDir);
+      await queue.enqueue("finalizing", { text: "x" }, { laneKey: "l1" });
+      const { drain, lifecycle, heartbeat } = await deferNext(queue);
+      lifecycle.onAdoptionFinalizing();
+      try {
+        await vi.advanceTimersByTimeAsync(333);
+        heartbeat();
+        await vi.advanceTimersByTimeAsync(1_100);
+        expect(lifecycle.abortSignal.aborted).toBe(false);
+        expect(await queue.listClaims()).toMatchObject([{ id: "finalizing", attempts: 0 }]);
+        await lifecycle.onAdopted();
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      } finally {
+        drain.dispose();
+      }
+    });
+  });
+
   it("rearms a live deferred wait, then guillotines silence", async () => {
     await withTempState(async (stateDir) => {
       let clock = 30_000;

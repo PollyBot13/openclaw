@@ -14,7 +14,6 @@ export type ChannelIngressDispatchLifecycle = {
   onDeferred: () => void;
   /** Deferred reply-lane admission is still waiting behind an active turn. */
   onDeferredHeartbeat?: () => void;
-  /** Requested cadence for queue-owned deferred heartbeats. */
   deferredHeartbeatIntervalMs?: number;
   /**
    * Durable adoption finalization is in progress (e.g. settlement hold while
@@ -36,15 +35,10 @@ export type ChannelIngressDispatchLifecycle = {
 
 /** Maps a drain lifecycle onto the reply-lane ownership surface. */
 export function bindIngressLifecycleToReplyOptions(lifecycle: ChannelIngressDispatchLifecycle): {
-  turnAdoptionLifecycle: {
-    admission: "exclusive";
-    onAdopted: () => void | Promise<void>;
-    onDeferred: () => void;
-    onDeferredHeartbeat?: () => void;
-    deferredHeartbeatIntervalMs?: number;
-    onAbandoned: () => void | Promise<void>;
-    abortSignal: AbortSignal;
-  };
+  turnAdoptionLifecycle: Omit<
+    ChannelIngressDispatchLifecycle,
+    "onAdoptionFinalizing" | "onFailed" | "onCancelled"
+  > & { admission: "exclusive" };
 } {
   return {
     turnAdoptionLifecycle: {

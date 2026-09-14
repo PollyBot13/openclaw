@@ -87,6 +87,17 @@ describe("dispatch retry after queued ingress abandonment", () => {
           });
           run.turnAdoptionLifecycle = options?.turnAdoptionLifecycle;
           run.abortSignal = options?.turnAdoptionLifecycle?.abortSignal;
+          let renewalFailed = false;
+          const lifecycle = run.turnAdoptionLifecycle;
+          const heartbeat = lifecycle?.onDeferredHeartbeat;
+          if (lifecycle) {
+            lifecycle.onDeferredHeartbeat = () => {
+              if (renewalFailed) {
+                throw new Error("deferred heartbeat owner failed");
+              }
+              heartbeat?.();
+            };
+          }
           expect(
             enqueueFollowupRun(
               key,
@@ -103,13 +114,7 @@ describe("dispatch retry after queued ingress abandonment", () => {
             ),
           ).toBe(true);
           if (abandonment === "watchdog-after-commit") {
-            if (!run.turnAdoptionLifecycle) {
-              throw new Error("dispatch did not bind its ingress lifecycle");
-            }
-            // Lose renewal after enqueue; a healthy queue-owned wait must not time out.
-            vi.spyOn(run.turnAdoptionLifecycle, "onDeferredHeartbeat").mockImplementation(() => {
-              throw new Error("deferred heartbeat owner failed");
-            });
+            renewalFailed = true;
             expect(
               enqueueFollowupRun(
                 key,
