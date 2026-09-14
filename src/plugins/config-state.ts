@@ -137,13 +137,23 @@ export function resolveSelectedContextEnginePluginIdFromConfig(
     records,
     normalizeId,
   );
-  // Declarations never fall back to an incidental same-named plugin, even if all are ineligible.
-  if (owners.hasDeclarations) {
+  // Eligible declared owners take precedence over legacy equal-ID ownership.
+  if (owners.pluginIds.length > 0) {
     return owners.pluginIds.length === 1 ? owners.pluginIds[0] : undefined;
   }
   const pluginId = normalizeId(engineId);
+  // Unapproved declarations cannot veto an independently approved legacy owner,
+  // but their presence must not grant an incidental same-named plugin authority.
+  if (
+    owners.hasDeclarations &&
+    plugins.entries[pluginId]?.enabled !== true &&
+    !plugins.allow.includes(pluginId)
+  ) {
+    return undefined;
+  }
   const legacyOwner = records.find((record) => normalizeId(record.id) === pluginId);
-  return legacyOwner?.contextEngineIds === undefined &&
+  return legacyOwner &&
+    legacyOwner.contextEngineIds === undefined &&
     isContextEngineOwnerEligible(plugins, pluginId, pluginId)
     ? pluginId
     : undefined;

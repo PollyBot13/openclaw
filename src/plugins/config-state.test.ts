@@ -880,6 +880,26 @@ describe("context engine ownership", () => {
       ),
     ).toBeUndefined();
   });
+  it.each(["enabled", "allowlisted", "denied", "disabled", "incidental"] as const)(
+    "requires independent approval for legacy fallback among ineligible declarations: %s",
+    (policy) => {
+      const plugins = normalizePluginsConfig({
+        slots: { contextEngine: "legacy-plugin" },
+        allow: policy === "allowlisted" ? ["legacy-plugin"] : ["unrelated"],
+        ...(!["incidental", "allowlisted"].includes(policy)
+          ? { entries: { "legacy-plugin": { enabled: policy !== "disabled" } } }
+          : {}),
+        ...(policy === "denied" ? { deny: ["legacy-plugin"] } : {}),
+      });
+      const resolved = withContextEngineOwner(plugins, [
+        ...records,
+        { id: "unapproved", contextEngineIds: ["legacy-plugin"] },
+      ]);
+      expect(resolved.contextEngineOwnerId).toBe(
+        policy === "enabled" || policy === "allowlisted" ? "legacy-plugin" : null,
+      );
+    },
+  );
   it("requires independent trust for a differently named declared owner", () => {
     const config = { plugins: { slots: { contextEngine: "Canonical-Engine" } } };
     expect(resolveSelectedContextEnginePluginId(config, records)).toBeUndefined();

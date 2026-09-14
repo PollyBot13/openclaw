@@ -138,6 +138,83 @@ module.exports = { id: ${JSON.stringify(id)}, register() {} };`,
   },
 );
 
+it.each(["unapproved", "denied", "disabled", "excluded"] as const)(
+  "preserves an approved undeclared equal-ID engine against a %s claimant",
+  async (policy) => {
+    const { resolveContextEngine } = await import("../context-engine/registry.js");
+    useNoBundledPlugins();
+    const workspaceDir = makePluginLoaderTempDir();
+    vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+    const imported = path.join(workspaceDir, "owner-imported");
+    const claimantImported = path.join(workspaceDir, "claimant-imported");
+    writePlugin({
+      id: "existing-engine",
+      dir: path.join(workspaceDir, ".openclaw", "extensions", "existing-engine"),
+      filename: "index.cjs",
+      body: `require("node:fs").writeFileSync(${JSON.stringify(imported)}, "loaded");
+module.exports = { id: "existing-engine", kind: "context-engine", register(api) {
+  api.registerContextEngine("existing-engine", () => ({
+    info: { id: "existing-engine", name: "Existing Engine" },
+    ingest: async () => ({ ingested: true }),
+    assemble: async () => ({ messages: [], estimatedTokens: 0, systemPromptAddition: "existing-engine-used" }),
+    compact: async () => ({ ok: true, compacted: false }),
+  }));
+} };`,
+    });
+    const claimant = writePlugin({
+      id: "new-owner",
+      dir: path.join(workspaceDir, ".openclaw", "extensions", "new-owner"),
+      filename: "index.cjs",
+      body: `require("node:fs").writeFileSync(${JSON.stringify(claimantImported)}, "loaded");
+module.exports = { id: "new-owner", register() {} };`,
+    });
+    fs.writeFileSync(
+      path.join(claimant.dir, "openclaw.plugin.json"),
+      JSON.stringify({
+        id: "new-owner",
+        kind: "context-engine",
+        contextEngineIds: ["existing-engine"],
+        configSchema: EMPTY_PLUGIN_SCHEMA,
+      }),
+    );
+    const config: OpenClawConfig = {
+      plugins: {
+        slots: { memory: "none", contextEngine: "existing-engine" },
+        allow: ["unrelated"],
+        entries: {
+          "existing-engine": { enabled: true },
+          ...(policy !== "unapproved" ? { "new-owner": { enabled: policy !== "disabled" } } : {}),
+        },
+        ...(policy === "denied" ? { deny: ["new-owner"] } : {}),
+      },
+    };
+    const registry = loadOpenClawPlugins({
+      config,
+      workspaceDir,
+      cache: false,
+      runtimeSideEffects: true,
+    });
+    try {
+      expect(registry.plugins.find((plugin) => plugin.id === "existing-engine")?.status).toBe(
+        "loaded",
+      );
+      expect(fs.existsSync(imported)).toBe(true);
+      expect(registry.plugins.find((plugin) => plugin.id === "new-owner")?.status).toBe("disabled");
+      expect(fs.existsSync(claimantImported)).toBe(false);
+      const engine = await resolveContextEngine(config);
+      try {
+        expect(await engine.assemble({ sessionId: "synthetic", messages: [] })).toMatchObject({
+          systemPromptAddition: "existing-engine-used",
+        });
+      } finally {
+        await engine.dispose?.();
+      }
+    } finally {
+      await disposePluginRegistryInstances(registry);
+    }
+  },
+);
+
 it.each(["broken", "missing"] as const)(
   "selects a declared engine through cold startup and clears it with %s plugin source",
   async (sourceState) => {
