@@ -3,7 +3,7 @@ import path from "node:path";
 import { resolveDefaultAgentWorkspaceDir as resolveCoreDefaultAgentWorkspaceDir } from "../../../../src/agents/workspace-default-path.js";
 import { resolveStateDirFromHome } from "../../../../src/config/state-dir.js";
 import { resolveRequiredHomeDir, resolveUserPath } from "../../../../src/infra/home-dir.js";
-export { tryResolveAgentWorkspaceOwner } from "../../../../src/agents/agent-workspace-owner.js";
+export { tryResolveLegacyDataOwner } from "../../../../src/agents/agent-legacy-data-owner.js";
 export { resolveUserPath };
 
 /** Keep effective-home expansion at the memory-host boundary, before state selection. */

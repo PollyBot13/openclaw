@@ -2,12 +2,12 @@ import { normalizeAgentId } from "@openclaw/normalization-core/agent-id";
 import { getRetainedLegacyDefaultAgentId } from "../config/legacy.default-agent-owner-state.js";
 
 /**
- * Selects the compatibility owner allowed to inherit a shared workspace.
+ * Selects legacy data ownership independently of the durable runtime default.
  * Callers project their supported roster shapes without cloning the config:
  * read-time migration retains its owner on that exact object's identity.
  * Roster ids retain duplicates, because two entries are not a sole agent.
  */
-export function tryResolveAgentWorkspaceOwner(
+export function tryResolveLegacyDataOwner(
   config: object,
   roster: {
     agentIds: readonly string[];

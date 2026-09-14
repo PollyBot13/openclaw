@@ -16,7 +16,7 @@ import type { OpenClawConfig } from "../config/types.js";
 import { LEGACY_IMPLICIT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
 import { registerResolvedAgentDir } from "./agent-dir-registry.js";
-import { tryResolveAgentWorkspaceOwner } from "./agent-workspace-owner.js";
+import { tryResolveLegacyDataOwner } from "./agent-legacy-data-owner.js";
 import { resolveDefaultAgentWorkspaceDir } from "./workspace-default.js";
 
 type AgentEntry = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];
@@ -269,7 +269,7 @@ export function tryResolveLegacyDataOwnerAgentId(cfg: OpenClawConfig): string | 
   if (facts?.legacyDataOwnerAgentId) {
     return facts.legacyDataOwnerAgentId.value;
   }
-  const value = tryResolveAgentWorkspaceOwner(cfg, {
+  const value = tryResolveLegacyDataOwner(cfg, {
     agentIds: listAgentEntries(cfg).map((agent) => normalizeAgentId(agent.id)),
     hasAgentRoster: hasAgentRosterProperty(cfg),
     legacyDefaultAgentId: tryResolveRawLegacyDefaultAgentId(cfg),
