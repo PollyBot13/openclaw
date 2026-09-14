@@ -19,7 +19,6 @@ import {
   kickFollowupDrainIfIdle,
   rememberFollowupDrainCallback,
   resolveFollowupDeliveryContextKey,
-  resolveFollowupReplyAnchor,
 } from "./drain.js";
 import {
   peekRecentQueueMessageId,
@@ -44,20 +43,6 @@ import {
   type QueueSettings,
 } from "./types.js";
 
-function followupRouteIdentityKey(run: FollowupRun): string {
-  return JSON.stringify([
-    channelRouteDedupeKey({
-      channel: run.originatingChannel,
-      to: run.originatingTo,
-      accountId: run.originatingAccountId,
-      threadId: run.originatingThreadId,
-    }),
-    resolveFollowupReplyAnchor(run) ?? "",
-    run.originatingReplyToMode ?? "",
-    normalizeChatType(run.originatingChatType) ?? "",
-  ]);
-}
-
 function followupMessageRouteIdentityKey(run: FollowupRun): string {
   return JSON.stringify([
     channelRouteDedupeKey({
@@ -80,11 +65,7 @@ function buildRecentMessageIdKey(run: FollowupRun, queueKey: string): string | u
   return JSON.stringify(["queue", queueKey, followupMessageRouteIdentityKey(run), messageId]);
 }
 
-function isRunAlreadyQueued(
-  run: FollowupRun,
-  items: FollowupRun[],
-  allowPromptFallback = false,
-): boolean {
+function isRunAlreadyQueued(run: FollowupRun, items: FollowupRun[]): boolean {
   const messageId = normalizeOptionalString(run.messageId);
   if (messageId) {
     const messageRouteKey = followupMessageRouteIdentityKey(run);
@@ -94,13 +75,7 @@ function isRunAlreadyQueued(
         followupMessageRouteIdentityKey(item) === messageRouteKey,
     );
   }
-  if (!allowPromptFallback) {
-    return false;
-  }
-  const routeKey = followupRouteIdentityKey(run);
-  return items.some(
-    (item) => item.prompt === run.prompt && followupRouteIdentityKey(item) === routeKey,
-  );
+  return false;
 }
 
 function appendQueueItem(params: {
@@ -193,11 +168,7 @@ export function enqueueFollowupRun(
   }
   const queue = getFollowupQueue(key, settings);
 
-  const dedupe =
-    dedupeMode === "none"
-      ? undefined
-      : (item: FollowupRun, items: FollowupRun[]) =>
-          isRunAlreadyQueued(item, items, dedupeMode === "prompt");
+  const dedupe = dedupeMode === "none" ? undefined : isRunAlreadyQueued;
 
   // Deduplicate: skip if the same message is already queued.
   if (shouldSkipQueueItem({ item: run, items: queue.items, dedupe })) {
