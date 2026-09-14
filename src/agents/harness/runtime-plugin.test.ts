@@ -628,8 +628,22 @@ describe("harness runtime plugins", () => {
   });
 
   it("includes and enables the context-engine owner in the prepared load plan", () => {
+    const metadataSnapshot = createMemoryPlanMetadataSnapshot();
+    const template = metadataSnapshot.registryIndex.plugins[0];
+    if (!template) {
+      throw new Error("Missing installed-plugin fixture");
+    }
     const plan = resolveAgentRuntimePluginLoadPlan({
-      metadataSnapshot: createMemoryPlanMetadataSnapshot(),
+      metadataSnapshot: {
+        ...metadataSnapshot,
+        registryIndex: {
+          ...metadataSnapshot.registryIndex,
+          plugins: [
+            ...metadataSnapshot.registryIndex.plugins,
+            { ...template, ...installedProviderRecord("custom-context-engine") },
+          ],
+        },
+      },
       config: { plugins: { slots: { contextEngine: "custom-context-engine" } } },
       workspaceDir: "/tmp/workspace",
       basePluginIds: [],
