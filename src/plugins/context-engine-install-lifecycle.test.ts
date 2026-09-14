@@ -180,7 +180,8 @@ module.exports = { id: "new-owner", register() {} };`,
     const config: OpenClawConfig = {
       plugins: {
         slots: { memory: "none", contextEngine: "existing-engine" },
-        allow: ["unrelated"],
+        ...(policy === "disabled" ? { allow: ["new-owner"] } : {}),
+        ...(policy === "excluded" ? { allow: ["unrelated"] } : {}),
         entries: {
           "existing-engine": { enabled: true },
           ...(policy !== "unapproved" ? { "new-owner": { enabled: policy !== "disabled" } } : {}),
