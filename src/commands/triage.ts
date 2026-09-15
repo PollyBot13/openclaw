@@ -49,6 +49,7 @@ import {
   type TriageFailureContext,
 } from "./triage-prompt.js";
 import {
+  validateTriageUpdateRecovery,
   readTriageUpdateFailure,
   sanitizeTriageUpdateFailure,
   writeTriageUpdateFailure,
@@ -606,6 +607,7 @@ export async function triageCommand(
   }
   const failedResult =
     updateFailure && "result" in updateFailure ? updateFailure.result : undefined;
+  const explicitFailure = options.updateResult ? updateFailure : undefined;
   const result = await runUpdateRepairLoop({
     target: {
       stateDir: target.stateDir,
@@ -679,19 +681,21 @@ export async function triageCommand(
         if (errors.length === 0 && (doctorCommand.code !== 0 || !doctorReport.ok)) {
           throw new Error("Doctor lint failed without reporting an error finding.");
         }
-        return {
-          ok: errors.length === 0,
-          score: errors.length === 0 ? 0 : -errors.length,
-          summary:
-            errors.length === 0
-              ? "Doctor lint reports no errors."
-              : `${errors.length} Doctor lint error(s): ${errors
-                  .slice(0, 3)
-                  .map((finding) =>
-                    redactSupportString(finding.message, redaction, { maxLength: 200 }),
-                  )
-                  .join("; ")}`,
-        };
+        return (
+          validateTriageUpdateRecovery(errors.length === 0 ? explicitFailure : undefined) ?? {
+            ok: errors.length === 0,
+            score: errors.length === 0 ? 0 : -errors.length,
+            summary:
+              errors.length === 0
+                ? "Doctor lint reports no errors."
+                : `${errors.length} Doctor lint error(s): ${errors
+                    .slice(0, 3)
+                    .map((finding) =>
+                      redactSupportString(finding.message, redaction, { maxLength: 200 }),
+                    )
+                    .join("; ")}`,
+          }
+        );
       } catch (error) {
         signal.throwIfAborted();
         return {

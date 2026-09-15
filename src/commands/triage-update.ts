@@ -8,12 +8,17 @@ import { resolveStateDir } from "../config/paths.js";
 import { readFileDescriptorBounded } from "../infra/boundary-file-read.js";
 import { writeTextAtomic } from "../infra/json-files.js";
 import { normalizeUpdateFailureFacts } from "../infra/update-failure-facts.js";
+import type { UpdateRepairValidation } from "../infra/update-repair-protocol.js";
 import { UpdateFailureFactSchema } from "../infra/update-run-schema.js";
 import {
   redactSupportString,
   type SupportRedactionContext,
 } from "../logging/diagnostic-support-redaction.js";
-import { classifyUpdateOutcome } from "../shared/update-outcome.js";
+import {
+  classifyUpdateOutcome,
+  formatUpdateActivationTimeoutGuidance,
+  UPDATE_ACTIVATION_TIMEOUT_REASON,
+} from "../shared/update-outcome.js";
 import { truncateUtf8Prefix, truncateUtf8Suffix } from "../utils/utf8-truncate.js";
 
 const UPDATE_FAILURE_MAX_BYTES = 8 * 1024;
@@ -123,6 +128,38 @@ export const updateFailureSchema = z
 
 /** Full UpdateRunResult values satisfy this diagnostic-only projection. */
 export type TriageUpdateFailure = z.infer<typeof updateFailureSchema>;
+
+/** Saved update diagnostics cannot certify current activation or rollback. */
+export function validateTriageUpdateRecovery(
+  failure: TriageUpdateFailure | undefined,
+): UpdateRepairValidation | undefined {
+  const failedResult = failure && "result" in failure ? failure.result : undefined;
+  if (
+    failedResult &&
+    classifyUpdateOutcome(failedResult) === "failed" &&
+    ((failure?.omittedDetails ?? 0) > 0 ||
+      failedResult.reason === "global-install-failed" ||
+      failedResult.reason === UPDATE_ACTIVATION_TIMEOUT_REASON ||
+      failedResult.reason === "update-executor-settlement-failed" ||
+      failedResult.steps.some((step) =>
+        step.failureFacts?.some((fact) => fact.code === "global-install-failed"),
+      ) ||
+      failedResult.recovery?.serviceRestartSafe === false ||
+      failedResult.recovery?.packageRollbackVerified === false)
+  ) {
+    return {
+      ok: false,
+      score: 0,
+      summary:
+        "Doctor lint reports no errors, but the supplied update activation or recovery remains unverified.",
+      stopReason:
+        failedResult.reason === UPDATE_ACTIVATION_TIMEOUT_REASON
+          ? formatUpdateActivationTimeoutGuidance()
+          : "Inspect `openclaw update status`. Wait for the owning updater and its child processes to stop before running `openclaw update repair` for update-owner verification. Doctor lint cannot certify package activation or rollback.",
+    };
+  }
+  return undefined;
+}
 
 export function sanitizeTriageUpdateFailure(
   input: unknown,

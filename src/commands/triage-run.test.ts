@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveInstallationTarget } from "../infra/installation-target-context.js";
+import { UPDATE_ACTIVATION_TIMEOUT_REASON } from "../shared/update-outcome.js";
 import { triageCommand } from "./triage.js";
 import { createTriageRuntime, withTriageTerminal } from "./triage.test-support.js";
 
@@ -12,10 +13,12 @@ vi.mock("@clack/prompts", async (importOriginal) => ({
   confirm: mocks.confirm,
 }));
 const mocks = vi.hoisted(() => ({
+  readRestartSentinelReadOnly: vi.fn(),
   confirm: vi.fn(),
   agentExecCommand: vi.fn(),
   collectDoctorFindings: vi.fn(),
   runUpdateRepairLoop: vi.fn(),
+  runUpdateRepairTurn: vi.fn(),
   runUtf8CommandWithTimeout: vi.fn(),
   resolveGatewayInstallEntrypoint: vi.fn(),
 }));
@@ -35,11 +38,32 @@ vi.mock("../daemon/gateway-entrypoint.js", () => ({
   resolveGatewayInstallEntrypoint: mocks.resolveGatewayInstallEntrypoint,
 }));
 
+vi.mock("../infra/restart-sentinel.js", () => ({
+  readRestartSentinelReadOnly: mocks.readRestartSentinelReadOnly,
+}));
+vi.mock("../infra/update-repair-agent.runtime.js", () => ({
+  withUpdateRepairEnvironment: async (_target: unknown, run: () => unknown) => run(),
+  prepareUpdateRepairInference: async () => ({
+    ok: true,
+    route: { provider: "test", model: "test" },
+    modelFallbacks: [],
+  }),
+  runUpdateRepairTurn: mocks.runUpdateRepairTurn,
+}));
+
 describe("triage --run", () => {
   let stateDir: string;
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.readRestartSentinelReadOnly.mockResolvedValue(null);
     mocks.confirm.mockResolvedValue(true);
+    mocks.runUpdateRepairTurn.mockResolvedValue({
+      toolCalls: 0,
+      envelope: {
+        status: "ok",
+        final: 'REPAIR_RESULT: {"status":"fixed","summary":"Everything is repaired."}',
+      },
+    });
     stateDir = tempDirs.make("openclaw-triage-run-");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     vi.stubEnv("OPENCLAW_CONFIG_PATH", undefined);
@@ -63,6 +87,178 @@ describe("triage --run", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+
+  it.each([
+    { reason: "global-install-failed", recovery: undefined },
+    {
+      reason: "global-install-failed",
+      recovery: { serviceRestartSafe: false, packageRollbackVerified: false },
+    },
+    {
+      reason: "global-install-failed",
+      recovery: { serviceRestartSafe: true, packageRollbackVerified: true, service: "healthy" },
+    },
+    { reason: "post-update-failed", recovery: { serviceRestartSafe: false } },
+    {
+      reason: "post-update-failed",
+      recovery: { serviceRestartSafe: true, packageRollbackVerified: false },
+    },
+    ...[UPDATE_ACTIVATION_TIMEOUT_REASON, "update-executor-settlement-failed"].flatMap((reason) => [
+      { reason, recovery: undefined },
+      { reason, recovery: { serviceRestartSafe: true, packageRollbackVerified: true } },
+    ]),
+    {
+      reason: "unexpected-error",
+      recovery: { serviceRestartSafe: true, packageRollbackVerified: true },
+      failureFacts: [{ check: "package update", code: "global-install-failed" }],
+    },
+    {
+      reason: "unexpected-error",
+      recovery: { serviceRestartSafe: true, packageRollbackVerified: true },
+      failureFacts: [{ check: "package update", code: "global-install-failed" }],
+      trailingSteps: [
+        { name: "cleanup one", exitCode: 1 },
+        { name: "cleanup two", exitCode: 1 },
+        { name: "cleanup three", exitCode: 1 },
+      ],
+    },
+  ])(
+    "does not certify saved activation or recovery failure: $reason / $recovery",
+    async ({ reason, recovery, trailingSteps = [], ...details }) => {
+      const failure = {
+        result: {
+          status: "error",
+          mode: "npm",
+          reason,
+          before: { version: "2026.9.3" },
+          after: { version: "2026.9.3" },
+          recovery,
+          steps: [{ name: "global install swap", exitCode: 1, ...details }, ...trailingSteps],
+        },
+      };
+      const failurePath = path.join(stateDir, "failed-update.json");
+      const saved = JSON.stringify(failure);
+      await fs.writeFile(failurePath, saved);
+      mocks.runUpdateRepairLoop.mockImplementation(async (params) => {
+        const real = await vi.importActual<typeof import("../infra/update-repair-agent.js")>(
+          "../infra/update-repair-agent.js",
+        );
+        const result = await real.runUpdateRepairLoop(params);
+        expect(result).toMatchObject({
+          status: "unrepaired",
+          attempts: [],
+          finalValidation: { ok: false },
+        });
+        return result;
+      });
+      const runtime = createTriageRuntime();
+      await expect(
+        withTriageTerminal(true, () =>
+          triageCommand(runtime, {
+            run: true,
+            noExport: true,
+            updateResult: failurePath,
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 1 });
+      expect(runtime.log).toHaveBeenCalledWith(
+        expect.stringContaining("activation or recovery remains unverified"),
+      );
+      if (
+        [UPDATE_ACTIVATION_TIMEOUT_REASON, "update-executor-settlement-failed"].includes(reason)
+      ) {
+        expect(runtime.error).toHaveBeenCalledWith(
+          expect.stringContaining("Wait for the owning updater and its child processes to stop"),
+        );
+      }
+      expect(await fs.readFile(failurePath, "utf8")).toBe(saved);
+    },
+  );
+
+  it.each([false, true])(
+    "validates Doctor repair separately from saved package activation (activation: %s)",
+    async (activation) => {
+      const failurePath = path.join(stateDir, "failed-update.json");
+      await fs.writeFile(
+        failurePath,
+        JSON.stringify({
+          result: {
+            status: "error",
+            mode: "npm",
+            reason: activation ? "global-install-failed" : "post-update-failed",
+            steps: [{ name: "doctor", exitCode: 1 }],
+          },
+        }),
+      );
+      mocks.runUtf8CommandWithTimeout.mockResolvedValueOnce({
+        code: 1,
+        termination: "exit",
+        stdout: JSON.stringify({
+          ok: false,
+          findings: [{ severity: "error", message: "Broken configuration" }],
+        }),
+      });
+      mocks.runUpdateRepairLoop.mockImplementation(async (params) => {
+        const real = await vi.importActual<typeof import("../infra/update-repair-agent.js")>(
+          "../infra/update-repair-agent.js",
+        );
+        const result = await real.runUpdateRepairLoop(params);
+        expect(result).toMatchObject({
+          status: activation ? "unrepaired" : "repaired",
+          finalValidation: { ok: !activation },
+        });
+        expect(result.attempts).toHaveLength(1);
+        return result;
+      });
+      const runtime = createTriageRuntime();
+      const command = withTriageTerminal(true, () =>
+        triageCommand(runtime, {
+          run: true,
+          noExport: true,
+          updateResult: failurePath,
+        }),
+      );
+      if (activation) {
+        await expect(command).rejects.toMatchObject({ code: 1 });
+      } else {
+        await command;
+      }
+      expect(mocks.runUpdateRepairTurn).toHaveBeenCalledOnce();
+      expect(mocks.runUtf8CommandWithTimeout).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([false, true])(
+    "accepts current clean Doctor without certifying historical update failure (sentinel: %s)",
+    async (historical) => {
+      if (historical) {
+        mocks.readRestartSentinelReadOnly.mockResolvedValue({
+          payload: {
+            kind: "update",
+            status: "error",
+            stats: { mode: "npm", reason: "global-install-failed" },
+          },
+        });
+      }
+      mocks.runUpdateRepairLoop.mockImplementation(async (params) => {
+        const real = await vi.importActual<typeof import("../infra/update-repair-agent.js")>(
+          "../infra/update-repair-agent.js",
+        );
+        const result = await real.runUpdateRepairLoop(params);
+        expect(result).toMatchObject({
+          status: "repaired",
+          attempts: [],
+          finalValidation: { ok: true },
+        });
+        return result;
+      });
+      const runtime = createTriageRuntime();
+      await withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true }));
+      expect(runtime.log).toHaveBeenCalledWith(
+        "Embedded repair repaired: Doctor lint reports no errors.",
+      );
+    },
+  );
 
   it("confirms an interactive owned update continuation before embedded execution", async () => {
     await fs.writeFile(
