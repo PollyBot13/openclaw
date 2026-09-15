@@ -8,7 +8,6 @@ import { resolveStateDir } from "../config/paths.js";
 import { readFileDescriptorBounded } from "../infra/boundary-file-read.js";
 import { writeTextAtomic } from "../infra/json-files.js";
 import { normalizeUpdateFailureFacts } from "../infra/update-failure-facts.js";
-import type { UpdateRepairValidation } from "../infra/update-repair-protocol.js";
 import { UpdateFailureFactSchema } from "../infra/update-run-schema.js";
 import {
   redactSupportString,
@@ -130,9 +129,7 @@ export const updateFailureSchema = z
 export type TriageUpdateFailure = z.infer<typeof updateFailureSchema>;
 
 /** Saved update diagnostics cannot certify current activation or rollback. */
-export function validateTriageUpdateRecovery(
-  failure: TriageUpdateFailure | undefined,
-): UpdateRepairValidation | undefined {
+export function validateTriageUpdateRecovery(failure: TriageUpdateFailure | undefined) {
   const failedResult = failure && "result" in failure ? failure.result : undefined;
   if (
     failedResult &&
