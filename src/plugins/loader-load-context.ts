@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolveConfigEnvVars } from "../config/env-substitution.js";
 import { createConfigRuntimeEnv } from "../config/env-vars.js";
+import { captureRuntimeConfig } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { resolveUserPath } from "../utils.js";
@@ -275,7 +276,7 @@ export function resolvePluginLoadCacheContext(options: PluginLoadOptions = {}) {
     activationSourceConfig: options.activationSourceConfig,
   });
   const env = shouldResolveRawConfigEnvVars ? createConfigRuntimeEnv(rawConfig, baseEnv) : baseEnv;
-  const cfg = applyTestPluginDefaults(
+  const runtimeConfig = applyTestPluginDefaults(
     shouldResolveRawConfigEnvVars
       ? (resolveConfigEnvVars(rawConfig, env, {
           onMissing: () => undefined,
@@ -283,11 +284,15 @@ export function resolvePluginLoadCacheContext(options: PluginLoadOptions = {}) {
       : rawConfig,
     env,
   );
-  const activationSourceConfig = shouldResolveRawConfigEnvVars
+  const activationConfig = shouldResolveRawConfigEnvVars
     ? (resolveConfigEnvVars(rawActivationSourceConfig, env, {
         onMissing: () => undefined,
       }) as OpenClawConfig)
     : rawActivationSourceConfig;
+  // Registration callbacks retain these exact snapshots for their instance lifetime.
+  const cfg = captureRuntimeConfig(runtimeConfig);
+  const activationSourceConfig =
+    activationConfig === runtimeConfig ? cfg : captureRuntimeConfig(activationConfig);
   const normalized = normalizePluginsConfig(cfg.plugins);
   // Identical plugin inputs may share facts; source channel policy keeps its own root config.
   const activationSource = createPluginActivationSource({

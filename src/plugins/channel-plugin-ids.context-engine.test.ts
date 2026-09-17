@@ -4,7 +4,6 @@ import {
   resolveGatewayStartupMetadataPluginIds,
   resolveGatewayStartupPluginPlanFromRegistry,
 } from "./channel-plugin-ids.js";
-import type { PluginManifestRecord } from "./manifest-registry.js";
 import { createPluginMetadataSnapshotFixture } from "./plugin-metadata.test-support.js";
 
 describe("context engine startup ownership", () => {
@@ -14,7 +13,7 @@ describe("context engine startup ownership", () => {
         {
           id: "lossless-claw",
           kind: "context-engine",
-          origin: "installed" as PluginManifestRecord["origin"],
+          origin: "global",
           enabledByDefault: false,
           contextEngineIds: ["Canonical-Engine"],
         },
