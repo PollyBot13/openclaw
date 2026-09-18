@@ -37,7 +37,10 @@ it.each(["closed-scope", "released-source"] as const)(
     const resolve = () =>
       withPluginRuntimeRegistryScope(registry, () =>
         resolveContextEngine({
-          plugins: { entries: { fixture: { enabled: true } }, slots: { contextEngine: selectedId } },
+          plugins: {
+            entries: { fixture: { enabled: true } },
+            slots: { contextEngine: selectedId },
+          },
         }),
       );
     const work = new AsyncWorkScope();
