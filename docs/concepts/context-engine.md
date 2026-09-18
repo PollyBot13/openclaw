@@ -472,7 +472,11 @@ plugin refreshes these declarations. If an update removes your explicitly select
 engine, select another supported ID. A differently named owner must be independently
 enabled or allowlisted; its declaration alone does not authorize loading. Explicit
 disablement and denylists still win, and a nonempty allowlist must include that
-owner. Existing equal-ID selections retain their slot-based activation behavior.
+owner. An undeclared equal-ID plugin retains slot-based activation when no
+manifest declares the selected engine ID. If matching declarations exist but none
+of their owners is eligible, legacy fallback requires independent enablement via
+`plugins.entries.<pluginId>.enabled: true` or inclusion in `plugins.allow`; the
+slot alone does not authorize a same-named plugin.
 
 For linked installations, a missing `plugins.load.paths` target still fails CLI
 config validation before uninstall can run; restore or correct that path first.
