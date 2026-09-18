@@ -1301,9 +1301,9 @@ describe("Read-only plugin discovery registrations", () => {
       { allowSameOwnerRefresh: true, lifecycle: "readOnlyDiscovery" },
     );
 
-    const discoveryFallback = await resolveContextEngine(configWithSlot(engineId, "lossless-claw"));
+    const fallback = await resolveContextEngine(configWithSlot(engineId, "lossless-claw"));
 
-    expect(discoveryFallback.info.id).toBe("legacy");
+    expect(fallback.info.id).toBe("legacy");
     expect(readOnlyFactoryCalls).toBe(0);
     expect(listContextEngineQuarantines().some((entry) => entry.engineId === engineId)).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
@@ -1340,9 +1340,9 @@ describe("Read-only plugin discovery registrations", () => {
       { allowSameOwnerRefresh: true, lifecycle: "readOnlyDiscovery" },
     );
 
-    const stillRuntimeEngine = await resolveContextEngine(configWithSlot(engineId, "lossless-claw"));
+    const retainedEngine = await resolveContextEngine(configWithSlot(engineId, "lossless-claw"));
 
-    expect(stillRuntimeEngine.info.id).toBe("lossless-claw");
+    expect(retainedEngine.info.id).toBe("lossless-claw");
     expect(readOnlyFactoryCalls).toBe(0);
     expect(runtimeFactoryCalls).toBe(2);
   });

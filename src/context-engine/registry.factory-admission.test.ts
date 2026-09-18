@@ -137,7 +137,10 @@ it.each(["reason", "wrapped-reason", "abort-error", "unrelated-error"] as const)
       .run(() =>
         withPluginRuntimeRegistryScope(registry, () =>
           resolveContextEngine({
-            plugins: { entries: { fixture: { enabled: true } }, slots: { contextEngine: "cancelled-factory" } },
+            plugins: {
+              entries: { fixture: { enabled: true } },
+              slots: { contextEngine: "cancelled-factory" },
+            },
           }),
         ),
       )
