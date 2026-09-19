@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,7 +71,12 @@ describe("scripts/resolve-upgrade-survivor-baselines", () => {
           path.join(root, "scripts/resolve-upgrade-survivor-baselines.mts"),
         );
         symlinkSync(path.resolve("scripts/lib"), path.join(root, "scripts/lib"));
-        symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"));
+        mkdirSync(path.join(root, "node_modules"));
+        symlinkSync(
+          path.dirname(createRequire(import.meta.url).resolve("tsx/package.json")),
+          path.join(root, "node_modules/tsx"),
+          "junction",
+        );
         writeFileSync(output, "");
         writeFileSync(
           path.join(bin, "npm"),
