@@ -12,6 +12,7 @@ import {
   upsertSubagentRunRowInDatabase,
 } from "../agents/subagents/registry/subagent-registry.store.sqlite.js";
 import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
+import { resolvePhysicalSessionStorePath } from "../config/sessions/session-store-path.js";
 import { bindGatewayContextResolver } from "../plugins/runtime/gateway-request-scope.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { dispatchGatewayMethodInProcess } from "./server-plugin-in-process-dispatch.js";
@@ -70,6 +71,7 @@ describe("public yielded settle replay with real Gateway admission", () => {
       requesterSessionKey,
       requesterDisplayKey: requesterSessionKey,
       requesterAgentId: "main",
+      requesterStorePath: resolvePhysicalSessionStorePath({ sessionKey: requesterSessionKey }),
       task: "Return the isolated child result",
       cleanup: "keep",
       createdAt: now - 30,
