@@ -126,6 +126,27 @@ function renderTelegramRichFallbackText(presentation: MessagePresentation): stri
   return parts.join("\n\n");
 }
 
+const telegramDroppedControlFallbacks = new WeakMap<object, string>();
+export function markTelegramDroppedControlFallback(
+  payload: ReplyPayload,
+  textBefore: string,
+  textAfter: string,
+): ReplyPayload {
+  if (textBefore !== textAfter) {
+    telegramDroppedControlFallbacks.set(payload, textAfter.slice(textBefore.length));
+  }
+  return payload;
+}
+export function copyTelegramDroppedControlFallback<T extends ReplyPayload | undefined>(
+  source: ReplyPayload,
+  payload: T,
+): T {
+  const fallback = telegramDroppedControlFallbacks.get(source);
+  if (payload && fallback) {
+    telegramDroppedControlFallbacks.set(payload, fallback);
+  }
+  return payload;
+}
 function canEncodeTelegramPresentationControl(
   block: MessagePresentationInteractiveBlock,
   options?: TelegramButtonBuildOptions,
@@ -331,7 +352,6 @@ export function resolveTelegramInteractiveTextFallback(params: {
   const fallback = renderMessagePresentationFallbackText({ presentation: interactivePresentation });
   return fallback.trim() ? fallback : text;
 }
-
 export function resolveFinalTelegramPresentationText(params: {
   payload: ReplyPayload;
   text: string;
@@ -347,35 +367,30 @@ export function resolveFinalTelegramPresentationText(params: {
   if (!presentation) {
     return undefined;
   }
-  // The streamed final must land on the same text the non-streamed sender's
-  // canonicalization would produce: presentational blocks and controls Telegram
-  // cannot encode stay in the message text, while native-encodable controls
-  // move to the inline keyboard and out of the text. Filtering interactive
-  // blocks wholesale would erase the only visible fallback for dropped controls.
+  const droppedControls: TelegramDroppedControl[] = [];
   const buttonOptions: TelegramButtonBuildOptions = {
     allowWebAppButtons: params.allowWebAppButtons === true,
     questionOptionIndices: resolveAskUserQuestionOptionIndices(params.payload),
   };
-  // SAFETY: channelData.telegram is untyped extension data; its buttons reference forwards unvalidated, like the canonicalization path above.
   const telegramData = params.payload.channelData?.telegram as
     | { buttons?: Parameters<typeof resolveTelegramInlineButtons>[0]["buttons"] }
     | undefined;
-  // Dispatch resolves the same legacy controls with a collection hook and
-  // appends their labels to the text this renderer replaces, so the fallback
-  // final must re-collect them or the only visible label is lost.
-  const droppedControls: TelegramDroppedControl[] = [];
   resolveTelegramInlineButtons(
     {
       buttons: telegramData?.buttons,
       interactive: normalizeLegacyInteractiveReply(params.payload.interactive),
     },
-    {
-      ...buttonOptions,
-      onDroppedControl: (control) => droppedControls.push(control),
-    },
+    { ...buttonOptions, onDroppedControl: (control) => droppedControls.push(control) },
   );
+  const suffix = telegramDroppedControlFallbacks.get(params.payload);
+  const canonicalText =
+    suffix && params.text.endsWith(suffix) ? params.text.slice(0, -suffix.length) : params.text;
+  const canonicalInputText =
+    suffix && params.payload.presentationTextMode !== "fallback"
+      ? appendTelegramDroppedControlFallback(canonicalText, droppedControls)
+      : canonicalText;
   const rendered = canonicalizeTelegramPresentationPayload(
-    { ...params.payload, text: params.text },
+    { ...params.payload, text: canonicalInputText },
     { richTables: true, allowWebAppButtons: params.allowWebAppButtons },
   ).text?.trimEnd();
   if (!rendered) {

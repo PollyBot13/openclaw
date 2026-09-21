@@ -1,53 +1,106 @@
-// Telegram tests cover streamed final presentation rendering.
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import { describe, expect, it, vi } from "vitest";
-import { resolveFinalTelegramPresentationText } from "./interactive-fallback.js";
+import {
+  markTelegramDroppedControlFallback,
+  resolveFinalTelegramPresentationText,
+} from "./interactive-fallback.js";
 import {
   createHarness,
   deliverFinalAnswer,
   expectPreviewFinalized,
 } from "./lane-delivery.test-support.js";
-
+const statusPresentation = () => ({
+  blocks: [
+    {
+      type: "table" as const,
+      caption: "Status",
+      headers: ["Key", "Value"],
+      rows: [["Gateway", "running"]],
+      rowHeaderColumnIndex: 0,
+    },
+  ],
+});
+const statusPayload = (text: string) => ({
+  text,
+  presentationTextMode: "fallback" as const,
+  presentation: statusPresentation(),
+});
+const deliverFinal = (
+  harness: ReturnType<typeof createHarness>,
+  text: string,
+  payload: ReplyPayload,
+) => harness.deliverLaneText({ laneName: "answer", text, payload, infoKind: "final" });
+const deliverLane = (
+  harness: ReturnType<typeof createHarness>,
+  text: string,
+  payload: ReplyPayload,
+  infoKind: "block" | "final",
+) => harness.deliverLaneText({ laneName: "answer", text, payload, infoKind });
+const canonicalPayload = (presentationTextMode?: "fallback") => ({
+  text: "Summary",
+  presentationTextMode,
+  presentation: {
+    blocks: [
+      { type: "table" as const, caption: "Status", headers: ["Key"], rows: [["Gateway"]] },
+      { type: "buttons" as const, buttons: [{ label: "Unavailable", value: "x", disabled: true }] },
+    ],
+  },
+});
+async function runFinal(params: {
+  text: string;
+  payload: ReplyPayload;
+  resolveFinalPresentationText?: NonNullable<
+    Parameters<typeof createHarness>[0]
+  >["resolveFinalPresentationText"];
+}) {
+  const harness = createHarness({
+    answerMessageId: 999,
+    resolveFinalPresentationText: params.resolveFinalPresentationText,
+  });
+  const delivery = expectPreviewFinalized(await deliverFinal(harness, params.text, params.payload));
+  return { delivery, harness };
+}
+const renderFinal = (payload: ReplyPayload) =>
+  resolveFinalTelegramPresentationText({
+    richMessages: true,
+    text: payload.text ?? "",
+    payload,
+  });
 describe("createLaneTextDeliverer streamed presentation finals", () => {
-  it("renders a structured presentation on the finalized stream message", async () => {
-    const FALLBACK = "Status summary as plain text";
-    const RENDERED = "Status summary as native table";
-    const harness = createHarness({
-      answerMessageId: 999,
-      resolveFinalPresentationText: ({ payload, text }) => {
+  const FALLBACK = "Status summary as plain text";
+  it.each([
+    {
+      name: "renders a structured presentation on the finalized stream message",
+      expected: "Status summary as native table",
+      resolveFinalPresentationText: ({
+        payload,
+        text,
+      }: {
+        payload: ReplyPayload;
+        text: string;
+      }) => {
         expect(payload.presentationTextMode).toBe("fallback");
         expect(text).toBe(FALLBACK);
-        return RENDERED;
+        return "Status summary as native table";
       },
-    });
-
-    const result = await harness.deliverLaneText({
-      laneName: "answer",
+    },
+    {
+      name: "preserves the authored fallback when rich messages are disabled",
+      expected: FALLBACK,
+      resolveFinalPresentationText: ({ payload, text }: { payload: ReplyPayload; text: string }) =>
+        resolveFinalTelegramPresentationText({ payload, text, richMessages: false }),
+    },
+  ])("$name", async ({ expected, resolveFinalPresentationText }) => {
+    const { delivery, harness } = await runFinal({
       text: FALLBACK,
-      payload: {
-        text: FALLBACK,
-        presentationTextMode: "fallback",
-        presentation: {
-          blocks: [
-            {
-              type: "table",
-              caption: "Status",
-              headers: ["Key", "Value"],
-              rows: [["Gateway", "running"]],
-              rowHeaderColumnIndex: 0,
-            },
-          ],
-        },
-      },
-      infoKind: "final",
+      payload: statusPayload(FALLBACK),
+      resolveFinalPresentationText,
     });
-
-    const delivery = expectPreviewFinalized(result);
-    expect(delivery.content).toBe(RENDERED);
-    expect(harness.answer?.lastDeliveredText()).toBe(RENDERED);
+    expect(delivery.content).toBe(expected);
+    expect(harness.answer?.lastDeliveredText()).toBe(expected);
     expect(harness.sendPayload).not.toHaveBeenCalled();
     expect(harness.lanes.answer.finalized).toBe(true);
   });
-
   it("keeps partial stream text plain and renders the presentation only at finalization", async () => {
     const RENDERED = "Final native table";
     const resolveFinalPresentationText = vi.fn(() => RENDERED);
@@ -55,125 +108,85 @@ describe("createLaneTextDeliverer streamed presentation finals", () => {
       answerMessageId: 999,
       resolveFinalPresentationText,
     });
-    const payload = {
-      text: "partial",
-      presentationTextMode: "fallback" as const,
-      presentation: {
-        blocks: [
-          {
-            type: "table" as const,
-            caption: "Status",
-            headers: ["Key", "Value"],
-            rows: [["Gateway", "running"]],
-          },
-        ],
-      },
-    };
-
-    const blockResult = await harness.deliverLaneText({
-      laneName: "answer",
-      text: "partial",
-      payload,
-      infoKind: "block",
-    });
+    const payload = statusPayload("partial");
+    const blockResult = await deliverLane(harness, "partial", payload, "block");
     expect(blockResult.kind).toBe("preview-updated");
     expect(resolveFinalPresentationText).not.toHaveBeenCalled();
     expect(harness.answer?.lastDeliveredText()).toBe("partial");
-
-    const finalResult = await harness.deliverLaneText({
-      laneName: "answer",
-      text: "partial",
-      payload,
-      infoKind: "final",
-    });
+    const finalResult = await deliverLane(harness, "partial", payload, "final");
     expectPreviewFinalized(finalResult);
     expect(harness.answer?.lastDeliveredText()).toBe(RENDERED);
   });
-
-  it("preserves the authored fallback when rich messages are disabled", async () => {
-    const FALLBACK = "Status summary as plain text";
-    const harness = createHarness({
-      answerMessageId: 999,
-      resolveFinalPresentationText: ({ payload, text }) =>
-        resolveFinalTelegramPresentationText({
-          payload,
-          text,
-          richMessages: false,
-        }),
-    });
-
-    const result = await harness.deliverLaneText({
-      laneName: "answer",
-      text: FALLBACK,
-      payload: {
-        text: FALLBACK,
-        presentationTextMode: "fallback",
-        presentation: {
-          blocks: [
-            {
-              type: "table",
-              caption: "Status",
-              headers: ["Key", "Value"],
-              rows: [["Gateway", "running"]],
-            },
-          ],
-        },
-      },
-      infoKind: "final",
-    });
-
-    const delivery = expectPreviewFinalized(result);
-    expect(delivery.content).toBe(FALLBACK);
-    expect(harness.answer?.lastDeliveredText()).toBe(FALLBACK);
-  });
-
   it("does not consult presentation rendering for text-only stream finals", async () => {
     const resolveFinalPresentationText = vi.fn(() => "unexpected");
     const harness = createHarness({
       answerMessageId: 999,
       resolveFinalPresentationText,
     });
-
     const result = await deliverFinalAnswer(harness, "Hello final");
-
     expectPreviewFinalized(result);
     expect(resolveFinalPresentationText).not.toHaveBeenCalled();
     expect(harness.answer?.lastDeliveredText()).toBe("Hello final");
   });
 });
-
 describe("streamed final canonical presentation text", () => {
-  it.each([undefined, "fallback"] as const)(
-    "preserves capability-degraded labels with mode %s",
-    (presentationTextMode) => {
-      const rendered = resolveFinalTelegramPresentationText({
-        richMessages: true,
-        text: "Summary",
-        payload: {
-          text: "Summary",
-          presentationTextMode,
-          presentation: {
-            blocks: [
-              { type: "table", caption: "Status", headers: ["Key"], rows: [["Gateway"]] },
-              { type: "buttons", buttons: [{ label: "Unavailable", value: "x", disabled: true }] },
-            ],
-          },
+  it.each<{
+    name: string;
+    payload: ReplyPayload;
+    contains?: string[];
+    unique?: string;
+    exact?: string;
+    marker?: string;
+  }>([
+    ...([undefined, "fallback"] as const).map((presentationTextMode) => ({
+      name: `capability-degraded controls ${presentationTextMode ?? "unset"}`,
+      payload: canonicalPayload(presentationTextMode),
+      contains: ["<table>", "Unavailable", ...(presentationTextMode ? [] : ["Summary"])],
+    })),
+    {
+      name: "does not duplicate a dropped-control label",
+      payload: {
+        text: "Status summary\n\n- Copy manually",
+        presentation: {
+          blocks: [
+            { type: "table" as const, caption: "Status", headers: ["Key"], rows: [["Gateway"]] },
+            {
+              type: "buttons" as const,
+              buttons: [{ label: "Copy manually", value: "x".repeat(65) }],
+            },
+          ],
         },
-      });
-      expect(rendered).toContain("<table>");
-      expect(rendered).toContain("Unavailable");
-      if (!presentationTextMode) {
-        expect(rendered).toContain("Summary");
-      }
+      },
+      marker: "Status summary",
+      contains: ["<table>"],
+      unique: "Copy manually",
     },
-  );
-  it("renders title-only presentations", () => {
-    expect(
-      resolveFinalTelegramPresentationText({
-        richMessages: true,
-        text: "Summary",
-        payload: { text: "Summary", presentation: { title: "Status", blocks: [] } },
-      }),
-    ).toContain("Status");
+    {
+      name: "preserves authored text overlapping presentation",
+      payload: {
+        text: "Please read: Status",
+        presentation: { blocks: [{ type: "text" as const, text: "Status" }] },
+      },
+      exact: "Please read: Status\n\nStatus",
+    },
+    {
+      name: "renders title-only presentations",
+      payload: { text: "Summary", presentation: { title: "Status", blocks: [] } },
+      contains: ["Status"],
+    },
+  ])("$name", ({ payload, contains = [], unique, exact, marker }) => {
+    if (marker) {
+      markTelegramDroppedControlFallback(payload, marker, payload.text ?? "");
+    }
+    const rendered = renderFinal(payload);
+    for (const text of contains) {
+      expect(rendered).toContain(text);
+    }
+    if (unique) {
+      expect(rendered?.match(new RegExp(unique, "g"))).toHaveLength(1);
+    }
+    if (exact) {
+      expect(rendered).toBe(exact);
+    }
   });
 });

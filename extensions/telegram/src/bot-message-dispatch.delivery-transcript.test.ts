@@ -1,5 +1,6 @@
 import type { Message } from "grammy/types";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
+import { resolveTranscriptBackedChannelFinalText } from "openclaw/plugin-sdk/channel-outbound";
 import { dispatchReplyWithBufferedBlockDispatcher as dispatchThroughSharedOwner } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { expect, it, vi } from "vitest";
 import {
@@ -29,6 +30,10 @@ import type {
   TelegramMessageContext,
 } from "./bot-message-dispatch.test-harness.js";
 import type * as TelegramDelivery from "./bot/delivery.replies.js";
+import {
+  markTelegramDroppedControlFallback,
+  resolveFinalTelegramPresentationText,
+} from "./interactive-fallback.js";
 import { resolveTelegramMessageCacheScope } from "./message-cache-persistence.js";
 import { buildTelegramConversationContext, createTelegramMessageCache } from "./message-cache.js";
 import { recordOutboundMessageForPromptContext as recordOutboundMessageForPromptContextActual } from "./outbound-message-context.js";
@@ -695,6 +700,52 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
     });
   });
 
+  it("preserves both dropped labels through the transcript recovery payload clone", async () => {
+    const { recoverFinalPayload } = await import("./bot-message-dispatch-delivery.js");
+    const truncatedText = "Transcript-backed final with enough stable prefix before recovery...";
+    const recoveredText =
+      "Transcript-backed final with enough stable prefix before recovery and enough continuation text";
+    const dropped = (label: string) => ({
+      type: "buttons" as const,
+      buttons: [{ label, value: "x".repeat(65) }],
+    });
+    const payload = {
+      text: `${truncatedText}\n\n- Legacy\n- Presentation`,
+      presentation: {
+        blocks: [
+          { type: "table" as const, caption: "Status", headers: ["Key"], rows: [["Gateway"]] },
+          dropped("Presentation"),
+        ],
+      },
+      interactive: { blocks: [dropped("Legacy")] },
+    };
+    markTelegramDroppedControlFallback(payload, truncatedText, payload.text);
+    const selectedText = await resolveTranscriptBackedChannelFinalText({
+      payload,
+      finalText: truncatedText,
+      resolveCandidateText: async () => recoveredText,
+    });
+    const recoveredPayload = recoverFinalPayload(
+      { context: { ctxPayload: {} }, sentBlockMediaUrls: new Set<string>() } as Parameters<
+        typeof recoverFinalPayload
+      >[0],
+      payload,
+      selectedText,
+      undefined,
+    );
+    const rendered = recoveredPayload
+      ? resolveFinalTelegramPresentationText({
+          richMessages: true,
+          text: recoveredPayload.text ?? selectedText,
+          payload: recoveredPayload,
+        })
+      : undefined;
+    expect(selectedText).toBe(recoveredText);
+    expect(rendered).toContain(recoveredText);
+    expect(rendered).toContain("<table>");
+    expect(rendered?.match(/Presentation/g)).toHaveLength(1);
+    expect(rendered?.match(/Legacy/g)).toHaveLength(1);
+  });
   it("treats session rebound mirror skips as non-fatal", async () => {
     setupDraftStreams({ answerMessageId: 2001 });
     const context = createContext();

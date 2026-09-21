@@ -64,6 +64,7 @@ import {
   shouldSuppressTelegramError,
 } from "./error-policy.js";
 import { shouldSuppressLocalTelegramExecApprovalPrompt } from "./exec-approvals.js";
+import { markTelegramDroppedControlFallback } from "./interactive-fallback.js";
 import { createTelegramReasoningStepState } from "./reasoning-lane-coordinator.js";
 import { resolveTelegramTargetChatType } from "./targets.js";
 
@@ -121,8 +122,17 @@ function resolvePayloadTelegramControls(
     },
   );
   const text = appendTelegramDroppedControlFallback(payload.text ?? "", droppedControls);
+  const fallback = appendTelegramDroppedControlFallback("", droppedControls);
+  const normalizedPayload =
+    text === (payload.text ?? "") ? payload : applyTextToPayload(payload, text);
   return {
-    payload: text === (payload.text ?? "") ? payload : applyTextToPayload(payload, text),
+    payload: fallback
+      ? markTelegramDroppedControlFallback(
+          normalizedPayload,
+          text === fallback ? "" : text.slice(0, -fallback.length - 2),
+          text,
+        )
+      : normalizedPayload,
     buttons,
   };
 }

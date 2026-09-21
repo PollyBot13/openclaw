@@ -285,10 +285,6 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams): 
             }),
         })
       : finalText;
-    // A finalized preview never reaches sendPayload's presentation
-    // canonicalization, so a structured presentation would silently degrade
-    // to the authored fallback text on the streamed final message. The owner
-    // renders it once here; partial updates keep the plain stream text.
     const previewText =
       finalizePreview && payload.presentation
         ? ((await params.resolveFinalPresentationText?.({
