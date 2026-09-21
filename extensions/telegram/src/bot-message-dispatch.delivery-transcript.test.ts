@@ -1,6 +1,5 @@
 import type { Message } from "grammy/types";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
-import { resolveTranscriptBackedChannelFinalText } from "openclaw/plugin-sdk/channel-outbound";
 import { dispatchReplyWithBufferedBlockDispatcher as dispatchThroughSharedOwner } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { expect, it, vi } from "vitest";
 import {
@@ -701,7 +700,7 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
   });
 
   it("preserves both dropped labels through the transcript recovery payload clone", async () => {
-    const { recoverFinalPayload } = await import("./bot-message-dispatch-delivery.js");
+    const { deliverFinalAnswerText } = await import("./bot-message-dispatch-delivery.js");
     const truncatedText = "Transcript-backed final with enough stable prefix before recovery...";
     const recoveredText =
       "Transcript-backed final with enough stable prefix before recovery and enough continuation text";
@@ -720,27 +719,29 @@ describeTelegramDispatch("dispatchTelegramMessage delivery-transcript", () => {
       interactive: { blocks: [dropped("Legacy")] },
     };
     markTelegramDroppedControlFallback(payload, truncatedText, payload.text);
-    const selectedText = await resolveTranscriptBackedChannelFinalText({
-      payload,
-      finalText: truncatedText,
-      resolveCandidateText: async () => recoveredText,
+    type Turn = Parameters<typeof deliverFinalAnswerText>[0];
+    let rendered: string | undefined;
+    const deliverLaneText = vi.fn<Turn["deliverLaneText"]>(async ({ text, payload: recovered }) => {
+      expect(text).toBe(recoveredText);
+      expect(recovered).not.toBe(payload);
+      rendered = resolveFinalTelegramPresentationText({
+        richMessages: true,
+        text,
+        payload: recovered,
+      });
+      return { kind: "skipped" };
     });
-    const recoveredPayload = recoverFinalPayload(
-      { context: { ctxPayload: {} }, sentBlockMediaUrls: new Set<string>() } as Parameters<
-        typeof recoverFinalPayload
-      >[0],
-      payload,
-      selectedText,
-      undefined,
-    );
-    const rendered = recoveredPayload
-      ? resolveFinalTelegramPresentationText({
-          richMessages: true,
-          text: recoveredPayload.text ?? selectedText,
-          payload: recoveredPayload,
-        })
-      : undefined;
-    expect(selectedText).toBe(recoveredText);
+    const turn: Partial<Turn> = {
+      context: createContext(),
+      sentBlockMediaUrls: new Set<string>(),
+      resolveCurrentTurnTranscriptFinal: async () => ({
+        text: recoveredText,
+        openclawDelivery: undefined,
+      }),
+      deliverLaneText,
+    };
+    await deliverFinalAnswerText(turn as Turn, payload, truncatedText);
+    expect(deliverLaneText).toHaveBeenCalledTimes(1);
     expect(rendered).toContain(recoveredText);
     expect(rendered).toContain("<table>");
     expect(rendered?.match(/Presentation/g)).toHaveLength(1);

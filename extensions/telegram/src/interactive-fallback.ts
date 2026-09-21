@@ -372,6 +372,7 @@ export function resolveFinalTelegramPresentationText(params: {
     allowWebAppButtons: params.allowWebAppButtons === true,
     questionOptionIndices: resolveAskUserQuestionOptionIndices(params.payload),
   };
+  // SAFETY: untyped channelData buttons are only forwarded for resolver precedence; this path never reads their entries.
   const telegramData = params.payload.channelData?.telegram as
     | { buttons?: Parameters<typeof resolveTelegramInlineButtons>[0]["buttons"] }
     | undefined;

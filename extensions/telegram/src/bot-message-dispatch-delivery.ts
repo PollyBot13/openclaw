@@ -506,7 +506,7 @@ async function deliverTelegramProgressModeFinalAnswer(
   return { kind: "sent" };
 }
 
-export function recoverFinalPayload(
+function recoverFinalPayload(
   turn: Turn,
   payload: ReplyPayload,
   text: string,

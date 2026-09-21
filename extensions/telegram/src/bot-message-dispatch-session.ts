@@ -88,7 +88,7 @@ function resolveTelegramScopedTranscriptSession(params: {
   return sessionId ? { sessionId, storePath } : undefined;
 }
 
-export async function mirrorTelegramAssistantReplyToTranscript(params: {
+async function mirrorTelegramAssistantReplyToTranscript(params: {
   cfg: OpenClawConfig;
   idempotencyKey: string;
   loadFreshSessionEntry: FreshTelegramSessionEntryLoader;
