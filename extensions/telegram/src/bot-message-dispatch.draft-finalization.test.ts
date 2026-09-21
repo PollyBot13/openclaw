@@ -48,6 +48,193 @@ describeTelegramDispatch("dispatchTelegramMessage draft-finalization", () => {
     );
   });
 
+  it.each([true, false])(
+    "respects richMessages=%s on the finalized status preview",
+    async (richMessages) => {
+      const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
+      dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+        await dispatcherOptions.deliver(
+          {
+            text: "Gateway status as plain text",
+            presentationTextMode: "fallback",
+            presentation: {
+              blocks: [
+                {
+                  type: "table",
+                  caption: "Status",
+                  headers: ["Key", "Value"],
+                  rows: [["Gateway", "running"]],
+                  rowHeaderColumnIndex: 0,
+                },
+              ],
+            },
+          },
+          { kind: "final" },
+        );
+        return { queuedFinal: true };
+      });
+
+      await dispatchWithContext({
+        context: createContext(),
+        streamMode: "partial",
+        telegramCfg: { richMessages, streaming: { mode: "partial" } },
+      });
+
+      const finalUpdate = answerDraftStream.update.mock.calls.at(-1)?.[0] as string;
+      if (richMessages) {
+        expect(finalUpdate).toContain("<table><caption>Status</caption>");
+        expect(finalUpdate).toContain("<td>running</td>");
+      } else {
+        expect(finalUpdate).toBe("Gateway status as plain text");
+      }
+      expect(deliverReplies).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the dropped-control label when a fallback final mixes a table with an unencodable control", async () => {
+    const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver(
+        {
+          text: "Gateway status as plain text",
+          presentationTextMode: "fallback",
+          presentation: {
+            blocks: [
+              {
+                type: "table",
+                caption: "Status",
+                headers: ["Key", "Value"],
+                rows: [["Gateway", "running"]],
+                rowHeaderColumnIndex: 0,
+              },
+              {
+                type: "buttons",
+                buttons: [{ label: "Copy manually", value: "x".repeat(65) }],
+              },
+            ],
+          },
+        },
+        { kind: "final" },
+      );
+      return { queuedFinal: true };
+    });
+
+    await dispatchWithContext({
+      context: createContext(),
+      streamMode: "partial",
+      telegramCfg: { richMessages: true, streaming: { mode: "partial" } },
+    });
+
+    const finalUpdate = answerDraftStream.update.mock.calls.at(-1)?.[0] as string;
+    expect(finalUpdate).toContain("<table><caption>Status</caption>");
+    expect(finalUpdate).toContain("- Copy manually");
+    expect(finalUpdate).not.toBe("Gateway status as plain text");
+    expect(deliverReplies).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "fallback"] as const)(
+    "keeps one dropped legacy-control label with mode %s",
+    async (presentationTextMode) => {
+      const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
+      dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+        await dispatcherOptions.deliver(
+          {
+            text: "Gateway status as plain text",
+            presentationTextMode,
+            presentation: {
+              blocks: [
+                {
+                  type: "table",
+                  caption: "Status",
+                  headers: ["Key", "Value"],
+                  rows: [["Gateway", "running"]],
+                  rowHeaderColumnIndex: 0,
+                },
+              ],
+            },
+            interactive: {
+              blocks: [
+                {
+                  type: "buttons",
+                  buttons: [{ label: "Copy manually", value: "x".repeat(65) }],
+                },
+              ],
+            },
+          },
+          { kind: "final" },
+        );
+        return { queuedFinal: true };
+      });
+
+      await dispatchWithContext({
+        context: createContext(),
+        streamMode: "partial",
+        telegramCfg: { richMessages: true, streaming: { mode: "partial" } },
+      });
+
+      const finalUpdate = answerDraftStream.update.mock.calls.at(-1)?.[0] as string;
+      expect(finalUpdate).toContain("<table><caption>Status</caption>");
+      expect(finalUpdate.match(/Copy manually/g)).toHaveLength(1);
+      expect(finalUpdate).not.toBe("Gateway status as plain text");
+      expect(deliverReplies).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the group web-app label when a fallback final mixes a table with a web-app control", async () => {
+    const { answerDraftStream } = setupDraftStreams({ answerMessageId: 2001 });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver(
+        {
+          text: "Gateway status as plain text",
+          presentationTextMode: "fallback",
+          presentation: {
+            blocks: [
+              {
+                type: "table",
+                caption: "Status",
+                headers: ["Key", "Value"],
+                rows: [["Gateway", "running"]],
+                rowHeaderColumnIndex: 0,
+              },
+              {
+                type: "buttons",
+                buttons: [
+                  {
+                    label: "Launch",
+                    action: { type: "web-app", url: "https://example.com/app" },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        { kind: "final" },
+      );
+      return { queuedFinal: true };
+    });
+
+    await dispatchWithContext({
+      context: createContext({
+        chatId: -1001234,
+        isGroup: true,
+        msg: {
+          chat: { id: -1001234, type: "supergroup" },
+          message_id: 456,
+          message_thread_id: 777,
+        } as TelegramMessageContext["msg"],
+        threadSpec: { id: 777, scope: "forum" },
+      }),
+      streamMode: "partial",
+      telegramCfg: { richMessages: true, streaming: { mode: "partial" } },
+    });
+
+    const finalUpdate = answerDraftStream.update.mock.calls.at(-1)?.[0] as string;
+    expect(finalUpdate).toContain("<table><caption>Status</caption>");
+    expect(finalUpdate).toContain("Launch: https://example.com/app");
+    expect(finalUpdate).not.toBe("Gateway status as plain text");
+    expect(deliverReplies).not.toHaveBeenCalled();
+  });
+
   it("does not suppress text-only blocks as delivered when answer draft is inactive", async () => {
     setupDraftStreams({ answerMessageId: 2001 });
     dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {

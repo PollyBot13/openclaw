@@ -22,6 +22,9 @@ export function createHarness(params?: {
   resolveFinalPayloadCandidate?: Parameters<
     typeof createLaneTextDeliverer
   >[0]["resolveFinalPayloadCandidate"];
+  resolveFinalPresentationText?: Parameters<
+    typeof createLaneTextDeliverer
+  >[0]["resolveFinalPresentationText"];
 }) {
   const answer =
     params?.answerStream === null
@@ -71,6 +74,7 @@ export function createHarness(params?: {
     editStreamMessage,
     createPromptContextSequence,
     resolveFinalPayloadCandidate: params?.resolveFinalPayloadCandidate,
+    resolveFinalPresentationText: params?.resolveFinalPresentationText,
     log,
     markDelivered,
   });
