@@ -15,9 +15,9 @@ import { subtitleForRoute, titleForRoute } from "../../app-navigation.ts";
 import { pathForAgentPanel } from "../../app-route-paths.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import type { DecisionModelEntry } from "../../components/decision-model-picker.ts";
+import type { DecisionTaskEntry } from "../../components/decision-task-rows.ts";
 import {
   beginPanelRefresh,
-  completePanelRefresh,
   createPanelRefreshStatus,
   failPanelRefresh,
 } from "../../components/panel-refresh-status.ts";
@@ -52,11 +52,7 @@ import {
   type GatewayMethodOperatorScope,
 } from "../../lib/gateway-methods.ts";
 import { IdentityAvatarController } from "../../lib/identity-avatar-loader.ts";
-import {
-  loadModelCatalog,
-  modelCatalogRefreshError,
-  subscribeModelCatalogChanges,
-} from "../../lib/model-catalog-store.ts";
+import { loadModelCatalog, subscribeModelCatalogChanges } from "../../lib/model-catalog-store.ts";
 import { parseAgentSessionKey } from "../../lib/sessions/session-key.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
@@ -77,7 +73,11 @@ import {
   setIdentityDraftField,
   togglePinnedAgent,
 } from "./identity-actions.ts";
-import { createAgentModelActions } from "./model-config.ts";
+import {
+  agentModelCatalogState,
+  agentModelCatalogView,
+  createAgentModelActions,
+} from "./model-config.ts";
 import type { AgentIdentityDraft } from "./panels-overview.ts";
 import {
   navigateToAgent,
@@ -115,6 +115,7 @@ class AgentsPage
   @state() toolsEffectiveResult: ToolsEffectiveResult | null = null;
   @state() chatModelCatalog: ModelCatalogEntry[] = [];
   @state() decisionModels: DecisionModelEntry[] = [];
+  @state() decisionTasks: DecisionTaskEntry[] = [];
   @state() chatModelCatalogStatus = createPanelRefreshStatus();
   private chatModelCatalogPending: Promise<unknown> | null = null;
   private chatModelCatalogRequest: AbortController | null = null;
@@ -678,6 +679,7 @@ class AgentsPage
     this.chatModelCatalogSubscription = null;
     this.chatModelCatalog = [];
     this.decisionModels = [];
+    this.decisionTasks = [];
     this.chatModelCatalogStatus = createPanelRefreshStatus();
     this.chatModelCatalogPending = null;
   }
@@ -728,12 +730,7 @@ class AgentsPage
           if (!ownsRequest()) {
             return;
           }
-          this.chatModelCatalog = result.models;
-          this.decisionModels = result.decisionModels ?? [];
-          const error = modelCatalogRefreshError(result);
-          this.chatModelCatalogStatus = error
-            ? failPanelRefresh(completePanelRefresh(), new Error(error), this.gateway.snapshot)
-            : completePanelRefresh();
+          Object.assign(this, agentModelCatalogState(result, this.gateway.snapshot));
         },
         (error: unknown) => {
           if (ownsRequest()) {
@@ -1089,9 +1086,7 @@ class AgentsPage
               this.context.navigate("profile", { hash: "#settings-profile-github-connections" }),
             runtimeSessionKey: this.sessionKey,
             runtimeSessionMatchesSelectedAgent: selectedAgentId === this.chatAgentId(),
-            modelCatalog: this.chatModelCatalog,
-            decisionModels: this.decisionModels,
-            modelCatalogStatus: this.chatModelCatalogStatus,
+            ...agentModelCatalogView(this, currentConfigObject(configState)),
             pinnedAgentIds: this.context.navigation.snapshot.pinnedAgentIds,
             onTogglePinnedAgent: (agentId) => togglePinnedAgent(this.context.navigation, agentId),
             onRefresh: () => this.refreshAgents(),

@@ -8,6 +8,38 @@ import type { OpenClawConfig } from "./types.openclaw.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 describe("decision model configuration", () => {
+  it("keeps saved inventory independent of selection and provider activation", () => {
+    const parsed = OpenClawSchema.parse({
+      models: { decisionModels: [" fixture/fast ", "fixture/fast", "local/other"] },
+    });
+    expect(parsed.models?.decisionModels).toEqual(["fixture/fast", "local/other"]);
+    const config: OpenClawConfig = {
+      models: { decisionModels: parsed.models?.decisionModels },
+    };
+    expect(resolveDecisionModelSetting(config)).toBeUndefined();
+    expect(getConfiguredDecisionProviderIds(config)).toEqual([]);
+    expect(parsed.plugins).toBeUndefined();
+    expect(
+      resolveDecisionModelSetting({
+        ...config,
+        agents: { defaults: { decisionModel: "other/selected" } },
+      }),
+    ).toEqual({ provider: "other", model: "selected" });
+    expect(OpenClawSchema.parse({ models: { decisionModels: [] } }).models?.decisionModels).toEqual(
+      [],
+    );
+    expect(
+      OpenClawSchema.toJSONSchema({ io: "input", target: "draft-07", unrepresentable: "any" }),
+    ).toHaveProperty("properties.models.properties.decisionModels.type", "array");
+  });
+
+  it.each(["", "  ", "bare-model", "/model", "provider/", false, null])(
+    "rejects invalid saved decision inventory entries: %j",
+    (value) => {
+      expect(OpenClawSchema.safeParse({ models: { decisionModels: [value] } }).success).toBe(false);
+    },
+  );
+
   it("keeps decision routing independent of chat and utility models and preserves agent disablement", () => {
     const config: OpenClawConfig = {
       agents: {

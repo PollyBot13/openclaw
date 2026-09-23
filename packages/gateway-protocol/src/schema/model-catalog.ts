@@ -119,6 +119,17 @@ export const ModelCatalogProviderOutcomeSchema = closedObject({
 
 export const ModelsListResultSchema = closedObject({
   models: Type.Array(ModelChoiceSchema),
+  /** Declared core and enabled plugin consumers, independent of the provider filter. */
+  decisionTasks: Type.Optional(
+    Type.Array(
+      closedObject({
+        id: NonEmptyString,
+        title: Type.String({ minLength: 1, maxLength: 128 }),
+        description: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+        pluginId: Type.Optional(NonEmptyString),
+      }),
+    ),
+  ),
   /** Manifest-owned decision choices, separate from conversational model routing. */
   decisionModels: Type.Optional(
     Type.Array(

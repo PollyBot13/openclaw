@@ -49,6 +49,20 @@ export function modelDefaultsActions(
   };
 }
 
+export function modelDecisionTaskActions(
+  patchConfig: (mutation: ModelProviderConfigMutation) => Promise<void>,
+) {
+  const save = (taskId: string, model: string | null) =>
+    void patchConfig({
+      key: "defaults",
+      raw: { agents: { defaults: { decisionModelsByTask: { [taskId]: model } } } },
+      note: t("modelProviders.notes.defaultModel"),
+    });
+  return {
+    onDecisionTaskChange: save,
+  };
+}
+
 export function readModelBehaviorConfig(
   agentsDefaults: Record<string, unknown> | null,
 ): ModelBehaviorConfig {
@@ -67,7 +81,18 @@ export function readModelBehaviorConfig(
  * destructive-array guard rejects such merge patches unless the exact path is
  * confirmed via replacePaths.
  */
-export const DEFAULT_MODELS_REPLACE_PATHS = ["agents.defaults.model.fallbacks"];
+const DEFAULT_MODELS_REPLACE_PATHS = ["agents.defaults.model.fallbacks"];
+
+export function modelDefaultsMutation(
+  defaults: Parameters<typeof buildDefaultsPatch>[0],
+): ModelProviderConfigMutation {
+  return {
+    key: "defaults",
+    raw: buildDefaultsPatch(defaults),
+    note: t("modelProviders.notes.defaultModel"),
+    replacePaths: DEFAULT_MODELS_REPLACE_PATHS,
+  };
+}
 
 export function buildDefaultsPatch(params: {
   primary: string;
@@ -160,10 +185,15 @@ export function modelProviderConfigBusy(context: ApplicationContext): boolean {
 
 export type ModelProviderConfigMutation = {
   key: string;
-  raw: Record<string, unknown>;
-  note: string;
-  replacePaths?: string[];
-};
+} & (
+  | {
+      raw: Record<string, unknown>;
+      note: string;
+      replacePaths?: string[];
+      buildFromSnapshot?: never;
+    }
+  | { buildFromSnapshot: Parameters<RuntimeConfigCapability["patchFromSnapshot"]>[0] }
+);
 
 type ModelProviderConfigMutationOwner = {
   runtimeConfig: RuntimeConfigCapability;
@@ -210,11 +240,13 @@ export async function runModelProviderConfigMutation(
     if (!owner.isCurrentClient()) {
       return;
     }
-    const patched = await runtimeConfig.patch({
-      raw: params.raw,
-      note: params.note,
-      ...(params.replacePaths ? { replacePaths: params.replacePaths } : {}),
-    });
+    const patched = params.buildFromSnapshot
+      ? await runtimeConfig.patchFromSnapshot(params.buildFromSnapshot)
+      : await runtimeConfig.patch({
+          raw: params.raw,
+          note: params.note,
+          ...(params.replacePaths ? { replacePaths: params.replacePaths } : {}),
+        });
     if (!owner.isCurrentClient()) {
       return;
     }

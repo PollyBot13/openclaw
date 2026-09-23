@@ -29,8 +29,9 @@ page for its host requirements.
 | `utilityModel`  | Short language tasks such as titles and summaries        | Generated text                          |
 | `decisionModel` | Classification, rubric scoring, and predicate evaluation | Typed answers and probability estimates |
 
-Decision models have a separate **Decision** picker in the Control UI. Selection
-chooses the provider for explicit evaluation and supported consumers. The core
+Decision models have a separate **Decision models** inventory and **Default decision
+model** picker in the Control UI. Selection chooses the provider for explicit
+evaluation and supported consumers. The core
 `decision_evaluate` tool follows that selection plus ordinary tool policy.
 Selection does not start background work or replace the chat model.
 Automatic experimental consumers additionally require explicit
@@ -89,6 +90,38 @@ disables decisions for that agent. An unset or empty global default leaves the
 role off unless a task-specific model is configured. There is no automatic
 fallback to a conversational model.
 
+### Save decision models
+
+`models.decisionModels` stores the global inventory of saved decision model
+references, separately from default and task selections:
+
+```json5
+{
+  models: {
+    decisionModels: ["onnx/gliclass-edge-v3.0", "typesafe/jev-latest"],
+  },
+}
+```
+
+The Control UI's **Add decision model** action starts setup without writing configuration.
+Choose a model to configure, open its provider settings in a separate tab, and
+configure credentials or a local endpoint through the existing plugin settings.
+Return and confirm **Add to Decision models** to edit the inventory only; this
+does not test connectivity, select a default, or assign tasks.
+Removing an unreferenced model also changes only the
+inventory. For a referenced model, **Remove** identifies its uses and requires an
+explicit replacement. One config patch removes the inventory entry and reassigns
+all matching default and task selections, including dormant selections on disabled
+agents. Explicit empty disable values and unrelated settings remain unchanged.
+
+The inventory is not an execution allowlist and does not itself enable plugins,
+change credentials, or start work. Reassigned selections follow the existing
+selection and provider-activation rules. Empty inventory entries are invalid;
+duplicate references are removed during validation. Existing saved selections
+remain valid and visible without an inventory entry.
+The available choices come from `models.list.decisionModels`, which describes
+manifest-declared models, not credential readiness or live service health.
+
 ### Select a model per task
 
 Keep `decisionModel` as the default and use `decisionModelsByTask` for tasks
@@ -125,6 +158,17 @@ question keys, or `purpose`. The tool cannot choose a task or model in its input
 For multi-entry plugins, use the complete entry ID: `pack/one/check` belongs
 only to `pack/one`, not `pack` or `pack/two`. The runtime rejects a plugin's
 attempt to select another owner's task.
+
+The Control UI populates task rows from `models.list.decisionTasks`: core declares
+**Decision model** (`decision_evaluate`), and enabled, eligible plugins declare
+their own `decisionTasks` in the [manifest](/plugins/manifest/capabilities#decision-tasks-reference).
+Task declarations are display metadata, not a new runtime grant. There is no
+manual task-ID entry or apply-to-all task action. Stored overrides for an absent
+plugin are retained rather than silently deleted.
+The scalar **Decision model** is the normal built-in selection. A separate
+**Saved built-in task override** row appears only when an explicit
+`decision_evaluate` override already exists, including an empty disabled value;
+it can be returned to inheritance without changing plugin-task assignments.
 
 Task-only providers use the same preparation and reload lifecycle as default
 providers. A changed selection invalidates an outstanding result. Configuring a

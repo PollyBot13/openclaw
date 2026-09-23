@@ -101,6 +101,37 @@ describe("agent model config", () => {
     expect(runtimeConfig.state.configForm).toEqual({ agents: { defaults, entries: { main: {} } } });
     runtimeConfig.dispose();
   });
+
+  it("stages per-task overrides, preserves explicit disables, and removes inheritance", async () => {
+    const runtimeConfig = createRuntimeConfig({
+      agents: {
+        defaults: { decisionModel: "typesafe/jev-latest" },
+        entries: { main: { decisionModelsByTask: { "plugin/check": "typesafe/old" } } },
+      },
+    });
+    await runtimeConfig.ensureLoaded();
+    const actions = modelActionsFor(runtimeConfig);
+
+    actions.onDecisionTaskChange("main", "plugin/check", "typesafe/new");
+    expect(runtimeConfig.state.configForm).toEqual({
+      agents: {
+        defaults: { decisionModel: "typesafe/jev-latest" },
+        entries: { main: { decisionModelsByTask: { "plugin/check": "typesafe/new" } } },
+      },
+    });
+    actions.onDecisionTaskChange("main", "plugin/check", "");
+    expect(runtimeConfig.state.configForm).toEqual({
+      agents: {
+        defaults: { decisionModel: "typesafe/jev-latest" },
+        entries: { main: { decisionModelsByTask: { "plugin/check": "" } } },
+      },
+    });
+    actions.onDecisionTaskChange("main", "plugin/check", null);
+    expect(runtimeConfig.state.configForm).toEqual({
+      agents: { defaults: { decisionModel: "typesafe/jev-latest" }, entries: { main: {} } },
+    });
+    runtimeConfig.dispose();
+  });
   it("writes primary and fallback changes through keyed agent entries", async () => {
     const runtimeConfig = createRuntimeConfig({
       agents: {

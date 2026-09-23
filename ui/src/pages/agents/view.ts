@@ -4,6 +4,7 @@ import { keyed } from "lit/directives/keyed.js";
 import type { AgentIdentityResult, AgentsListResult, ModelCatalogEntry } from "../../api/types.ts";
 import { handleCopyButton } from "../../components/copy-button.ts";
 import type { DecisionModelEntry } from "../../components/decision-model-picker.ts";
+import type { DecisionTaskEntry } from "../../components/decision-task-rows.ts";
 import { renderHubTabs } from "../../components/hub-tabs.ts";
 import type { PanelRefreshStatus } from "../../components/panel-refresh-status.ts";
 import {
@@ -101,6 +102,7 @@ type AgentsProps = {
   runtimeSessionMatchesSelectedAgent: boolean;
   modelCatalog: ModelCatalogEntry[];
   decisionModels: DecisionModelEntry[];
+  decisionTasks: DecisionTaskEntry[];
   modelCatalogStatus: PanelRefreshStatus;
   pinnedAgentIds: readonly string[];
   onTogglePinnedAgent: (agentId: string) => void;
@@ -123,6 +125,7 @@ type AgentsProps = {
   onIdentitySave: () => void;
   onModelChange: (agentId: string, modelId: string | null) => void;
   onDecisionModelChange: (agentId: string, modelId: string | null) => void;
+  onDecisionTaskChange: (agentId: string, taskId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
   onModelCatalogOpen: () => void;
   onChannelsRefresh: () => void;
@@ -301,6 +304,7 @@ export function renderAgents(props: AgentsProps) {
                             configDirty: props.config.configFormDirty,
                             modelCatalog: props.modelCatalog,
                             decisionModels: props.decisionModels,
+                            decisionTasks: props.decisionTasks,
                             modelCatalogStatus: props.modelCatalogStatus,
                             onConfigReload: props.onConfigReload,
                             onConfigSave: props.onConfigSave,
@@ -309,6 +313,7 @@ export function renderAgents(props: AgentsProps) {
                             onIdentitySave: props.onIdentitySave,
                             onModelChange: props.onModelChange,
                             onDecisionModelChange: props.onDecisionModelChange,
+                            onDecisionTaskChange: props.onDecisionTaskChange,
                             onModelFallbacksChange: props.onModelFallbacksChange,
                             onModelCatalogOpen: props.onModelCatalogOpen,
                             onSelectPanel: props.onSelectPanel,

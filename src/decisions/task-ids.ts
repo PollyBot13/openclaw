@@ -3,6 +3,17 @@ export const CORE_DECISION_TASK_ID = "decision_evaluate" as const;
 
 export type DecisionTaskId = typeof CORE_DECISION_TASK_ID | `${string}/${string}`;
 
+/** Static consumer-owned settings metadata, independent of provider activation. */
+export type DecisionTaskDescriptor = {
+  id: DecisionTaskId;
+  title: string;
+  description?: string;
+};
+
+export const CORE_DECISION_TASKS: readonly DecisionTaskDescriptor[] = [
+  { id: CORE_DECISION_TASK_ID, title: "Decision model" },
+];
+
 const TASK_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
 export function isDecisionTaskId(value: unknown): value is DecisionTaskId {
