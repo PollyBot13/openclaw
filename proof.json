@@ -1,0 +1,11 @@
+{
+  "candidateHead": "4aa7ea3718b12d1dd3ad4e3c310af17c750f8dc0",
+  "boundary": "Built Control UI; synthetic Gateway/provider fixtures and browser-local persistence. No live provider authentication, inference, or production deployment.",
+  "viewport": "1440x1080",
+  "browser": "system Google Chrome, isolated Playwright context",
+  "files": [
+    "before.png",
+    "after.png",
+    "setup.png"
+  ]
+}
