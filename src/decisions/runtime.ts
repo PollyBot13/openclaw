@@ -1,4 +1,4 @@
-import { resolveDecisionModelSetting } from "../agents/decision-model-setting.js";
+import { resolveDecisionModelSelection } from "../agents/decision-model-setting.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginHostCleanupTimeout } from "../plugins/host-hook-cleanup-timeout.js";
@@ -12,6 +12,7 @@ import type { PluginRegistry } from "../plugins/registry-types.js";
 import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import type { DecisionProviderHost } from "./provider-host.js";
+import { isDecisionTaskId, isDecisionTaskOwnedBy } from "./task-ids.js";
 import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "./types.js";
 import { DecisionContractError, validateDecisionBatch } from "./validation.js";
 
@@ -37,10 +38,13 @@ export async function evaluateDecisionInRegistry(
   config: OpenClawConfig,
   consumerId?: string,
 ): Promise<DecisionOutcome> {
+  const agentId = options?.agentId;
+  const taskId = options?.taskId;
   if (
     !options ||
-    (options.agentId !== undefined &&
-      (typeof options.agentId !== "string" || !options.agentId.trim())) ||
+    (agentId !== undefined && (typeof agentId !== "string" || !agentId.trim())) ||
+    (taskId !== undefined &&
+      (!isDecisionTaskId(taskId) || !isDecisionTaskOwnedBy(taskId, consumerId))) ||
     typeof options.purpose !== "string" ||
     !options.purpose ||
     options.purpose.length > 128 ||
@@ -57,7 +61,7 @@ export async function evaluateDecisionInRegistry(
   if (!validateDecisionBatch(batch)) {
     return { status: "unavailable", reason: "unsupported-input" };
   }
-  const selected = resolveDecisionModelSetting(config, options.agentId);
+  const { selection: selected } = resolveDecisionModelSelection(config, agentId, taskId);
   if (!selected) {
     return { status: "unavailable", reason: "disabled" };
   }
@@ -76,7 +80,14 @@ export async function evaluateDecisionInRegistry(
   // Root callers carry their own work signal: provider replacement may still allow fallback.
   // Prepared views additionally lose consumer authority when their finite view is released.
   if (getPluginRegistryResourceOwner(registry) === getPluginRegistryState()?.activeRegistry) {
-    return entry.host.evaluate(batch, options, selected.model, config, registry, consumerId);
+    return entry.host.evaluate(
+      batch,
+      { ...options, agentId, taskId },
+      selected.model,
+      config,
+      registry,
+      consumerId,
+    );
   }
   const authority = capturePluginLifecycleAuthority(registry, undefined, { scopedRuntime: true });
   const lifetime = capturePluginRegistryLifecycleSignal(
@@ -90,7 +101,7 @@ export async function evaluateDecisionInRegistry(
   const signal = AbortSignal.any([options.signal, lifetime]);
   const result = await entry.host.evaluate(
     batch,
-    { ...options, signal },
+    { ...options, agentId, taskId, signal },
     selected.model,
     config,
     registry,

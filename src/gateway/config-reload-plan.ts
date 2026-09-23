@@ -211,7 +211,7 @@ const CORE_RELOAD_POLICIES: ReloadPolicy[] = [
     actions: AGENT_ROSTER_RELOAD_ACTIONS,
   },
   {
-    prefixes: ["agents.entries.*.decisionModel"],
+    prefixes: ["agents.entries.*.decisionModel", "agents.entries.*.decisionModelsByTask"],
     kind: "hot",
     actions: [...AGENT_ROSTER_RELOAD_ACTIONS, "reloadPlugins"],
   },
@@ -226,7 +226,7 @@ const CORE_RELOAD_POLICIES: ReloadPolicy[] = [
     actions: ["reconcileSystemJobs"],
   },
   {
-    prefixes: ["agents.defaults.decisionModel"],
+    prefixes: ["agents.defaults.decisionModel", "agents.defaults.decisionModelsByTask"],
     kind: "hot",
     actions: ["reloadPlugins"],
   },
