@@ -6,7 +6,6 @@ import type {
   AgentIdentityResult,
   AgentsFilesListResult,
   AgentsListResult,
-  ModelCatalogEntry,
   SkillStatusReport,
   ToolsCatalogResult,
   ToolsEffectiveResult,
@@ -14,10 +13,9 @@ import type {
 import { subtitleForRoute, titleForRoute } from "../../app-navigation.ts";
 import { pathForAgentPanel } from "../../app-route-paths.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
-import type { DecisionModelEntry } from "../../components/decision-model-picker.ts";
-import type { DecisionTaskEntry } from "../../components/decision-task-rows.ts";
 import {
   beginPanelRefresh,
+  completePanelRefresh,
   createPanelRefreshStatus,
   failPanelRefresh,
 } from "../../components/panel-refresh-status.ts";
@@ -52,7 +50,13 @@ import {
   type GatewayMethodOperatorScope,
 } from "../../lib/gateway-methods.ts";
 import { IdentityAvatarController } from "../../lib/identity-avatar-loader.ts";
-import { loadModelCatalog, subscribeModelCatalogChanges } from "../../lib/model-catalog-store.ts";
+import {
+  loadModelCatalog,
+  modelCatalogRefreshError,
+  readAgentModelCatalog,
+  subscribeModelCatalogCache,
+  subscribeModelCatalogChanges,
+} from "../../lib/model-catalog-store.ts";
 import { parseAgentSessionKey } from "../../lib/sessions/session-key.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
@@ -73,11 +77,7 @@ import {
   setIdentityDraftField,
   togglePinnedAgent,
 } from "./identity-actions.ts";
-import {
-  agentModelCatalogState,
-  agentModelCatalogView,
-  createAgentModelActions,
-} from "./model-config.ts";
+import { createAgentModelActions } from "./model-config.ts";
 import type { AgentIdentityDraft } from "./panels-overview.ts";
 import {
   navigateToAgent,
@@ -113,9 +113,12 @@ class AgentsPage
   @state() toolsEffectiveResultKey: string | null = null;
   @state() toolsEffectiveError: string | null = null;
   @state() toolsEffectiveResult: ToolsEffectiveResult | null = null;
-  @state() chatModelCatalog: ModelCatalogEntry[] = [];
-  @state() decisionModels: DecisionModelEntry[] = [];
-  @state() decisionTasks: DecisionTaskEntry[] = [];
+  get modelCatalog() {
+    return readAgentModelCatalog(
+      this.connected ? this.client : null,
+      this.resolveSelectedAgentId(),
+    );
+  }
   @state() chatModelCatalogStatus = createPanelRefreshStatus();
   private chatModelCatalogPending: Promise<unknown> | null = null;
   private chatModelCatalogRequest: AbortController | null = null;
@@ -195,6 +198,7 @@ class AgentsPage
     ensureInitialData: () => this.ensureInitialData(),
   });
   private readonly subscriptions = new SubscriptionsController(this)
+    .watch(() => this.client, subscribeModelCatalogCache)
     .effect(
       () => this.context?.settingsAgentSelection,
       (selection) => {
@@ -677,9 +681,6 @@ class AgentsPage
     this.chatModelCatalogRequest = null;
     this.chatModelCatalogSubscription?.unsubscribe();
     this.chatModelCatalogSubscription = null;
-    this.chatModelCatalog = [];
-    this.decisionModels = [];
-    this.decisionTasks = [];
     this.chatModelCatalogStatus = createPanelRefreshStatus();
     this.chatModelCatalogPending = null;
   }
@@ -730,7 +731,10 @@ class AgentsPage
           if (!ownsRequest()) {
             return;
           }
-          Object.assign(this, agentModelCatalogState(result, this.gateway.snapshot));
+          const error = modelCatalogRefreshError(result);
+          this.chatModelCatalogStatus = error
+            ? failPanelRefresh(completePanelRefresh(), new Error(error), this.gateway.snapshot)
+            : completePanelRefresh();
         },
         (error: unknown) => {
           if (ownsRequest()) {
@@ -1086,7 +1090,8 @@ class AgentsPage
               this.context.navigate("profile", { hash: "#settings-profile-github-connections" }),
             runtimeSessionKey: this.sessionKey,
             runtimeSessionMatchesSelectedAgent: selectedAgentId === this.chatAgentId(),
-            ...agentModelCatalogView(this, currentConfigObject(configState)),
+            modelCatalog: this.modelCatalog,
+            modelCatalogStatus: this.chatModelCatalogStatus,
             pinnedAgentIds: this.context.navigation.snapshot.pinnedAgentIds,
             onTogglePinnedAgent: (agentId) => togglePinnedAgent(this.context.navigation, agentId),
             onRefresh: () => this.refreshAgents(),

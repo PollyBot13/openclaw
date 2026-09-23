@@ -4,7 +4,29 @@ import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationGatewayPhase } from "../../app/gateway.ts";
 import { createRuntimeConfigCapability } from "../../lib/config/runtime-config-capability.ts";
-import { createAgentModelActions } from "./model-config.ts";
+import { agentDecisionCatalogView, createAgentModelActions } from "./model-config.ts";
+
+it.each(["restricted", "retired"])(
+  "does not expose saved decision models through a %s catalog",
+  (state) => {
+    expect(
+      agentDecisionCatalogView(
+        {
+          models: [],
+          hasSnapshot: true,
+          retired: state === "retired",
+          decisionModels: [
+            { provider: "private", id: "model", name: "Private", pluginId: "private" },
+          ],
+          ...(state === "restricted"
+            ? { modelSelectionPolicy: { restricted: true as const, defaultModel: null } }
+            : {}),
+        },
+        { models: { decisionModels: ["private/model"] } },
+      ).decisionModels,
+    ).toEqual([]);
+  },
+);
 
 function createRuntimeConfig(sourceConfig: Record<string, unknown>) {
   const client = {

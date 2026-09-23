@@ -130,6 +130,13 @@ export const ModelsListResultSchema = closedObject({
       }),
     ),
   ),
+  /** The Gateway owns role restrictions and the effective permitted reset target. */
+  modelSelectionPolicy: Type.Optional(
+    closedObject({
+      restricted: Type.Literal(true),
+      defaultModel: Type.Union([NonEmptyString, Type.Null()]),
+    }),
+  ),
   /** Manifest-owned decision choices, separate from conversational model routing. */
   decisionModels: Type.Optional(
     Type.Array(

@@ -1,10 +1,8 @@
 // Control UI view renders agents screen content.
 import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
-import type { AgentIdentityResult, AgentsListResult, ModelCatalogEntry } from "../../api/types.ts";
+import type { AgentIdentityResult, AgentsListResult } from "../../api/types.ts";
 import { handleCopyButton } from "../../components/copy-button.ts";
-import type { DecisionModelEntry } from "../../components/decision-model-picker.ts";
-import type { DecisionTaskEntry } from "../../components/decision-task-rows.ts";
 import { renderHubTabs } from "../../components/hub-tabs.ts";
 import type { PanelRefreshStatus } from "../../components/panel-refresh-status.ts";
 import {
@@ -25,7 +23,9 @@ import {
   type RuntimeConfigState,
 } from "../../lib/config/config-state-model.ts";
 import type { CronState } from "../../lib/cron/types.ts";
+import type { ModelCatalogPresentation } from "../../lib/model-catalog-store.ts";
 import type { AgentFilesViewState } from "./files.ts";
+import { agentDecisionCatalogView } from "./model-config.ts";
 import { renderAgentFiles } from "./panels-files.ts";
 import type { AgentIdentityDraft, IdentityAvatarLoader } from "./panels-overview.ts";
 import { renderAgentOverview } from "./panels-overview.ts";
@@ -100,9 +100,7 @@ type AgentsProps = {
   onOpenGitHubConnections: () => void;
   runtimeSessionKey: string;
   runtimeSessionMatchesSelectedAgent: boolean;
-  modelCatalog: ModelCatalogEntry[];
-  decisionModels: DecisionModelEntry[];
-  decisionTasks: DecisionTaskEntry[];
+  modelCatalog: ModelCatalogPresentation;
   modelCatalogStatus: PanelRefreshStatus;
   pinnedAgentIds: readonly string[];
   onTogglePinnedAgent: (agentId: string) => void;
@@ -302,9 +300,10 @@ export function renderAgents(props: AgentsProps) {
                             configLoading: props.config.configLoading,
                             configSaving: props.config.configSaving,
                             configDirty: props.config.configFormDirty,
-                            modelCatalog: props.modelCatalog,
-                            decisionModels: props.decisionModels,
-                            decisionTasks: props.decisionTasks,
+                            modelCatalog: props.modelCatalog.models,
+                            ...agentDecisionCatalogView(props.modelCatalog, config),
+                            modelSelectionPolicy: props.modelCatalog.modelSelectionPolicy,
+                            modelCatalogRetired: props.modelCatalog.retired,
                             modelCatalogStatus: props.modelCatalogStatus,
                             onConfigReload: props.onConfigReload,
                             onConfigSave: props.onConfigSave,

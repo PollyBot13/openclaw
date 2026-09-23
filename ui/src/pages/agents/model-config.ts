@@ -1,42 +1,25 @@
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 // Agent model selection staged against the runtime config form, split out of
 // agents-page.ts to keep that page inside the TS LOC ratchet.
-import type { ModelCatalogResult } from "../../api/types.ts";
-import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
-import { completePanelRefresh, failPanelRefresh } from "../../components/panel-refresh-status.ts";
+import type { ApplicationContext } from "../../app/context.ts";
 import type { AgentConfigEntryTarget } from "../../lib/config/config-state-model.ts";
 import { readDecisionModelInventory } from "../../lib/decision-model-inventory.ts";
-import { modelCatalogRefreshError } from "../../lib/model-catalog-store.ts";
+import type { ModelCatalogPresentation } from "../../lib/model-catalog-store.ts";
 
 type RuntimeConfig = ApplicationContext["runtimeConfig"];
 
-export function agentModelCatalogState(
-  result: ModelCatalogResult,
-  gateway: ApplicationGatewaySnapshot | null,
-) {
-  const error = modelCatalogRefreshError(result);
-  return {
-    chatModelCatalog: result.models,
-    decisionModels: result.decisionModels ?? [],
-    decisionTasks: result.decisionTasks ?? [],
-    chatModelCatalogStatus: error
-      ? failPanelRefresh(completePanelRefresh(), new Error(error), gateway)
-      : completePanelRefresh(),
-  };
-}
-
-export function agentModelCatalogView(
-  state: ReturnType<typeof agentModelCatalogState>,
+export function agentDecisionCatalogView(
+  catalog: ModelCatalogPresentation,
   config: Record<string, unknown> | null,
 ) {
-  const inventory = readDecisionModelInventory(config, state.decisionModels);
+  const available = catalog.decisionModels ?? [];
+  const visibleConfig = catalog.retired || catalog.modelSelectionPolicy?.restricted ? null : config;
+  const inventory = readDecisionModelInventory(visibleConfig, available);
   return {
-    modelCatalog: state.chatModelCatalog,
-    decisionModels: state.decisionModels.filter((model) =>
+    decisionModels: available.filter((model) =>
       inventory.some((entry) => entry.ref === `${model.provider}/${model.id}`),
     ),
-    decisionTasks: state.decisionTasks,
-    modelCatalogStatus: state.chatModelCatalogStatus,
+    decisionTasks: catalog.decisionTasks ?? [],
   };
 }
 

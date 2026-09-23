@@ -47,6 +47,34 @@ it("starts and cancels setup without writing inventory or task assignments", asy
   expect(submissions).toEqual([]);
 });
 
+it.each(["restricted", "retired"])(
+  "does not recover saved references from a %s catalog",
+  async (state) => {
+    const { controller } = await createHarness(
+      {
+        models: { decisionModels: ["private/model"] },
+        agents: {
+          defaults: {
+            decisionModel: "private/model",
+            decisionModelsByTask: { "private/task": "private/model" },
+          },
+        },
+      },
+      {},
+    );
+    controller.view(catalog).decisionInventory.onSetup?.("fixture/one");
+    const view = controller.view({
+      ...catalog,
+      ...(state === "retired"
+        ? { retired: true }
+        : { modelSelectionPolicy: { restricted: true as const, defaultModel: null } }),
+    });
+    expect(view.decisionInventory.inventory).toEqual([]);
+    expect(view.decisionModels).toEqual([]);
+    expect(view.decisionInventory.setupRef).toBeNull();
+  },
+);
+
 async function createHarness(
   config: Record<string, unknown>,
   concurrentPatch: Record<string, unknown>,

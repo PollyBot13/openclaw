@@ -70,18 +70,22 @@ export class DecisionInventoryController {
     }
   }
 
-  view(catalog: ModelCatalogResult | undefined) {
+  view(catalog: (ModelCatalogResult & { retired?: boolean }) | undefined) {
     const available = catalog?.decisionModels ?? [];
     const tasks = catalog?.decisionTasks ?? [];
-    const inventory = readDecisionModelInventory(this.owner.getConfig(), available);
+    const catalogOwnsChoices = catalog?.retired || catalog?.modelSelectionPolicy?.restricted;
+    const inventory = readDecisionModelInventory(
+      catalogOwnsChoices ? null : this.owner.getConfig(),
+      available,
+    );
     const decisionInventory: Omit<DecisionInventoryViewProps, "disabled"> = {
       inventory,
       available,
       tasks,
-      removeRef: this.removeRef,
-      replacement: this.replacement,
+      removeRef: catalogOwnsChoices ? null : this.removeRef,
+      replacement: catalogOwnsChoices ? "" : this.replacement,
       basePath: this.owner.getBasePath?.(),
-      setupRef: this.setupRef,
+      setupRef: catalogOwnsChoices ? null : this.setupRef,
       onSetup: (ref) => {
         this.setupRef = ref;
         this.host.requestUpdate();

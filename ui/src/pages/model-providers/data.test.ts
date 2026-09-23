@@ -8,11 +8,42 @@ import type {
 } from "../../api/types.ts";
 import {
   buildModelProviderCards,
-  buildSelectableDefaultModels,
   buildUnconfiguredProviderOptions,
+  type DefaultModelSelection,
   modelCatalogRef,
   readModelProviderConfig,
+  resolveDefaultModelPresentation,
 } from "./data.ts";
+
+it.each(["restricted", "retired"])(
+  "does not restore configured task references when the catalog is %s",
+  (state) => {
+    const { defaults } = resolveDefaultModelPresentation(
+      {
+        models: [],
+        hasSnapshot: true,
+        retired: state === "retired",
+        ...(state === "restricted"
+          ? { modelSelectionPolicy: { restricted: true as const, defaultModel: null } }
+          : {}),
+      },
+      {
+        primary: "private/chat",
+        fallbacks: [],
+        utilityModel: null,
+        decisionModel: "private/model",
+        decisionModelsByTask: { "private/task": "private/model" },
+        thinkingLevel: undefined,
+        thinkingOverridden: false,
+        fastMode: undefined,
+        fastModeOverridden: false,
+      },
+      null,
+    );
+    expect(defaults.decisionModelsByTask).toBeUndefined();
+    expect(defaults.decisionModel).toBeNull();
+  },
+);
 
 function catalogEntry(overrides: Partial<ModelCatalogEntry> & { provider: string }) {
   return {
@@ -36,6 +67,20 @@ function firstCard(cards: ReturnType<typeof buildModelProviderCards>) {
 
 function providerConfig(value: string): { apiKey: string } {
   return Object.fromEntries([["apiKey", value]]) as { apiKey: string };
+}
+
+function defaultModelChoices(models: ModelCatalogEntry[] | null, selection: DefaultModelSelection) {
+  return resolveDefaultModelPresentation(
+    { models: models ?? [], hasSnapshot: models !== null, retired: false },
+    {
+      ...selection,
+      thinkingLevel: undefined,
+      thinkingOverridden: false,
+      fastMode: undefined,
+      fastModeOverridden: false,
+    },
+    null,
+  ).configuredModels;
 }
 
 const EMPTY_INPUT = {
@@ -605,7 +650,7 @@ describe("model provider configuration data", () => {
       catalogEntry({ provider: "openai", id: "gpt-ready", available: true }),
       catalogEntry({ provider: "openai", id: "gpt-disabled", available: false }),
     ];
-    const selectable = buildSelectableDefaultModels(models, {
+    const selectable = defaultModelChoices(models, {
       primary: "openai/gpt-saved",
       fallbacks: ["openai/gpt-disabled"],
       utilityModel: null,
@@ -622,13 +667,13 @@ describe("model provider configuration data", () => {
     (primary) => {
       const selection = { primary, fallbacks: [], utilityModel: null };
 
-      expect(buildSelectableDefaultModels(null, selection)[0]).not.toHaveProperty("available");
-      expect(buildSelectableDefaultModels([], selection)[0]).toMatchObject({ available: false });
+      expect(defaultModelChoices(null, selection)[0]).not.toHaveProperty("available");
+      expect(defaultModelChoices([], selection)[0]).toMatchObject({ available: false });
     },
   );
 
   it("preserves alias-valued and bare model defaults as picker options", () => {
-    const selectable = buildSelectableDefaultModels(
+    const selectable = defaultModelChoices(
       [catalogEntry({ provider: "anthropic", id: "claude-opus", alias: "Opus", available: true })],
       { primary: "opus", fallbacks: ["unknown-model"], utilityModel: null },
     );
