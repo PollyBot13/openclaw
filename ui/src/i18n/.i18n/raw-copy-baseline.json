@@ -325,13 +325,6 @@
     },
     {
       "count": 1,
-      "kind": "object-property",
-      "name": "title",
-      "path": "ui/src/pages/agents/agents-view.test-helpers.ts",
-      "text": "Decision model"
-    },
-    {
-      "count": 1,
       "kind": "html-text",
       "name": "text",
       "path": "ui/src/pages/agents/memory/view.ts",
