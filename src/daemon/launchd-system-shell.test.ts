@@ -19,6 +19,7 @@ function runFallback(
     directory?: boolean;
     missingReader?: boolean;
     loadedAfterScan?: boolean;
+    extractionFailure?: 2 | 126 | 127 | "signal";
   } = {},
 ) {
   const root = tempDirs.make("openclaw-system-shell-");
@@ -40,6 +41,9 @@ function runFallback(
     parser,
     `#!/bin/sh
 for last; do :; done
+if [ "$last" = '-' ] && [ "$1" = '-extract' ]; then
+  ${options.extractionFailure === "signal" ? 'kill -TERM "$$"' : options.extractionFailure ? `exit ${options.extractionFailure}` : ":"}
+fi
 if [ "$last" = '-' ] || [ "${options.parserDenied === false ? "0" : "1"}" = "0" ]; then
   exec /usr/bin/plutil "$@"
 fi
@@ -115,6 +119,13 @@ describe.skipIf(process.platform !== "darwin")("detached launchd native fallback
       "unrelated-name.plist",
     );
   });
+
+  it.each([2, 126, 127, "signal"] as const)(
+    "refuses incomplete snapshot extraction (%s) even when lint would pass",
+    (extractionFailure) => {
+      expect(runFallback(plist(label), { extractionFailure })).toContain("unrelated-name.plist");
+    },
+  );
 
   it.skipIf(process.getuid?.() === 0)(
     "classifies actual read denial after readable preflight",

@@ -86,6 +86,8 @@ if [ -z "$openclaw_system_launchd_conflict" ]; then
             continue
           fi
           # Preserve exact string labels, including trailing newlines, on both parser paths.
+          # plutil documents exit 1 for parse failure. Signals/execution errors cannot
+          # establish a missing Label, even if a later lint accepts the same plist.
           if openclaw_system_launchd_plist_label=$(/usr/bin/plutil -extract Label raw -expect string -n -o - -- "$openclaw_system_launchd_plist" 2>&1; openclaw_system_launchd_parse_status=$?; printf '.'; exit "$openclaw_system_launchd_parse_status"); then
             openclaw_system_launchd_plist_label=\${openclaw_system_launchd_plist_label%.}
             if [ "$openclaw_system_launchd_plist_label" != "$openclaw_system_launchd_label" ]; then
@@ -94,7 +96,7 @@ if [ -z "$openclaw_system_launchd_conflict" ]; then
             openclaw_system_launchd_conflict="$openclaw_system_launchd_plist"
             openclaw_system_launchd_detail="installed same-label system LaunchDaemon plist $openclaw_system_launchd_plist"
             break
-          elif /usr/bin/plutil -lint -- "$openclaw_system_launchd_plist" >/dev/null 2>&1; then
+          elif [ "$?" -eq 1 ] && /usr/bin/plutil -lint -- "$openclaw_system_launchd_plist" >/dev/null 2>&1; then
             continue
           else
             # Endpoint protection can deny plutil while allowing a real read. The system
@@ -144,7 +146,7 @@ close(STDOUT) or exit 74;
                   openclaw_system_launchd_conflict="$openclaw_system_launchd_plist"
                   openclaw_system_launchd_detail="installed same-label system LaunchDaemon plist $openclaw_system_launchd_plist"
                   break
-                elif /usr/bin/plutil -lint -- - <"$openclaw_system_launchd_snapshot" >/dev/null 2>&1; then
+                elif [ "$?" -eq 1 ] && /usr/bin/plutil -lint -- - <"$openclaw_system_launchd_snapshot" >/dev/null 2>&1; then
                   /bin/rm -f "$openclaw_system_launchd_snapshot"
                   continue
                 fi
