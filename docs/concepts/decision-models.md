@@ -122,7 +122,9 @@ calls that omit a task continue to use only the existing scalar selection.
 own stable `<plugin-id>/<task-name>` IDs; the example plugin above is illustrative,
 not a built-in consumer. Task IDs are code-owned, not inferred from user text,
 question keys, or `purpose`. The tool cannot choose a task or model in its input.
-The runtime rejects a plugin's attempt to select another owner's task.
+For multi-entry plugins, use the complete entry ID: `pack/one/check` belongs
+only to `pack/one`, not `pack` or `pack/two`. The runtime rejects a plugin's
+attempt to select another owner's task.
 
 Task-only providers use the same preparation and reload lifecycle as default
 providers. A changed selection invalidates an outstanding result. Configuring a

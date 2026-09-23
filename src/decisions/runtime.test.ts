@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { createAdmittedRunOperatorAuthority } from "../agents/admitted-run-context.js";
+import { prepareOperatorModelPolicy } from "../agents/operator-model-policy.js";
+import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { withOperatorToolGatewayAuthority } from "../gateway/server-plugin-in-process-dispatch.js";
+import { createSyntheticPluginRuntimeClient } from "../gateway/server-plugin-runtime-client.js";
+import * as currentPluginMetadata from "../plugins/current-plugin-metadata-state.js";
 import { runPluginRegisterSyncInRegistry } from "../plugins/loader-module-runtime.js";
 import { createPluginRecord } from "../plugins/loader-records.js";
 import { getPluginInstance } from "../plugins/plugin-instance-scope.js";
+import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createTestPluginRegistry } from "../plugins/registry-runtime.test-helpers.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
+import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { evaluateDecisionInRegistry, prepareDecisionProviderReload } from "./runtime.js";
 import type {
@@ -50,10 +58,11 @@ function registered(
   evaluate: DecisionProviderV1["evaluate"] = async () => answer,
   isReady?: () => boolean,
   providerId = "fixture",
+  pluginId = "owner",
 ) {
   const builder = createTestPluginRegistry();
   const record = createPluginRecord({
-    id: "owner",
+    id: pluginId,
     source: "/synthetic/index.ts",
     origin: "global",
     enabled: true,
@@ -89,6 +98,107 @@ afterEach(() => {
 });
 
 describe("registered decision capability", () => {
+  it("requires a current Gateway binding for scoped operator decisions", async () => {
+    const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+    const host = registered(evaluate);
+    setRuntimeConfigSnapshot(config);
+    await expect(
+      withPluginRuntimeGatewayRequestScope(
+        {
+          client: createSyntheticPluginRuntimeClient({
+            operatorRoleActor: { kind: "operator", profileId: "decision-reader" },
+            scopes: ["operator.write"],
+          }),
+          isWebchatConnect: () => false,
+        },
+        () => host.api.runtime.decisions.evaluate(batch, options()),
+      ),
+    ).rejects.toThrow("Decision evaluation requires its current Gateway binding.");
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { model: "fixture-v1", source: "agent-tool", task: false },
+    { model: "fixture-v1", source: "agent-tool", task: true },
+    { model: "shortcut", source: "direct-tool", task: false },
+    { model: "shortcut", source: "unbound-operator", task: false },
+  ] as const)(
+    "enforces requester exclusions for $model from $source (task: $task) while preserving independent system decisions",
+    async ({ model, source, task }) => {
+      const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+      const host = registered(evaluate);
+      const metadata = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "fixture-normalizer",
+            modelIdNormalization: {
+              providers: { fixture: { aliases: { shortcut: "fixture-v1" } } },
+            },
+          },
+        ],
+      });
+      const snapshot = vi
+        .spyOn(currentPluginMetadata, "getProcessGatewayPluginMetadataSnapshot")
+        .mockReturnValue(metadata);
+      onTestFinished(() => snapshot.mockRestore());
+      const selected: OpenClawConfig = {
+        agents: {
+          entries: { main: {} },
+          defaults: {
+            model: "fixture/permitted",
+            decisionModel: task ? "fixture/permitted" : `fixture/${model}`,
+            ...(task ? { decisionModelsByTask: { "owner/check": `fixture/${model}` } } : {}),
+          },
+        },
+      };
+      setRuntimeConfigSnapshot(selected);
+      const operatorAuthority = createAdmittedRunOperatorAuthority({
+        profileId: "decision-reader",
+        scopes: ["operator.write"],
+        assertCurrent: () => {},
+        modelPolicy: prepareOperatorModelPolicy({
+          cfg: selected,
+          policy: { sourceAgent: "main", allow: ["fixture/*"], deny: ["fixture/fixture-v1"] },
+          manifestPlugins: metadata,
+        }),
+      });
+      const invoke = () =>
+        host.api.runtime.decisions.evaluate(batch, {
+          ...options(),
+          ...(task ? { taskId: "owner/check" as const } : {}),
+        });
+      await expect(
+        source === "agent-tool"
+          ? withGatewayToolCallerIdentity(
+              { agentId: "main", sessionKey: "agent:main:reader", operatorAuthority },
+              invoke,
+            )
+          : withOperatorToolGatewayAuthority(
+              {
+                authenticatedUserProfile: {
+                  profileId: operatorAuthority.profileId,
+                  displayName: "Decision Reader",
+                  hasAvatar: false,
+                  updatedAt: 1,
+                },
+                scopes: ["operator.write"],
+                ...(source === "direct-tool" ? { operatorRunAuthority: operatorAuthority } : {}),
+              },
+              invoke,
+            ),
+      ).rejects.toThrow(
+        source === "unbound-operator"
+          ? "requires original Gateway authority"
+          : "cannot use this model",
+      );
+      expect(evaluate).not.toHaveBeenCalled();
+      await expect(invoke()).resolves.toMatchObject({
+        status: "ok",
+      });
+      expect(evaluate).toHaveBeenCalledOnce();
+      expect(evaluate.mock.calls[0]?.[1].model).toBe(model);
+    },
+  );
   it.each([" fixture", "fixture ", "fixture/model"])(
     "rejects a provider ID that cannot round-trip through selection: %j",
     async (providerId) => {
@@ -179,61 +289,34 @@ describe("registered decision capability", () => {
       { model: "specialist-v1", agentId: "specialist" },
     ]);
   });
-  it("routes two trusted tasks for one agent", async () => {
+  it("captures public multi-entry task calls and enforces the exact plugin owner", async () => {
     const call = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
-    const host = registered(call);
-    const selected: OpenClawConfig = {
-      agents: {
-        defaults: {
-          decisionModelsByTask: {
-            "owner/first": "fixture/first-v1",
-            "owner/second": "fixture/second-v1",
-          },
-        },
-      },
+    const host = registered(call, undefined, "fixture", "pack/one");
+    const decisionModelsByTask = {
+      "pack/one/first": "fixture/first-v1",
+      "pack/one/second": "fixture/second-v1",
     };
-    expect(
-      await host.run({ ...options(), agentId: "same", taskId: "owner/first" }, selected, "owner"),
-    ).toMatchObject({ status: "ok" });
-    expect(
-      await host.run({ ...options(), agentId: "same", taskId: "owner/second" }, selected, "owner"),
-    ).toMatchObject({ status: "ok" });
-    expect(call.mock.calls.map(([, context]) => context.model)).toEqual(["first-v1", "second-v1"]);
-  });
-  it("rejects a task owned by another consumer or the core consumer", async () => {
-    const call = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
-    const host = registered(call);
-    const selected: OpenClawConfig = {
-      agents: { defaults: { decisionModelsByTask: { "owner/check": "fixture/check-v1" } } },
-    };
-    await expect(
-      host.run({ ...options(), taskId: "owner/check" }, selected, "other"),
-    ).rejects.toThrow("Invalid decision contract");
-    await expect(
-      host.run({ ...options(), taskId: "decision_evaluate" }, selected, "owner"),
-    ).rejects.toThrow("Invalid decision contract");
-    expect(call).not.toHaveBeenCalled();
-  });
-  it("captures each public plugin call before awaiting runtime loading", async () => {
-    const call = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
-    const host = registered(call);
-    setRuntimeConfigSnapshot({
-      agents: {
-        defaults: {
-          decisionModelsByTask: {
-            "owner/first": "fixture/first-v1",
-            "owner/second": "fixture/second-v1",
-          },
-        },
-      },
-    });
+    setRuntimeConfigSnapshot({ agents: { defaults: { decisionModelsByTask } } });
     const mutable = { ...options(), agentId: "first-agent" };
-    mutable.taskId = "owner/first";
+    mutable.taskId = "pack/one/first";
     const first = host.api.runtime.decisions.evaluate(batch, mutable);
     mutable.agentId = "second-agent";
-    mutable.taskId = "owner/second";
+    mutable.taskId = "pack/one/second";
     const second = host.api.runtime.decisions.evaluate(batch, mutable);
     expect(await Promise.all([first, second])).toMatchObject([{ status: "ok" }, { status: "ok" }]);
+    for (const taskId of [
+      "pack/check",
+      "pack/two/check",
+      "pack/one/child/check",
+      "decision_evaluate",
+    ] as const) {
+      await expect(
+        host.api.runtime.decisions.evaluate(batch, { ...options(), taskId }),
+      ).rejects.toThrow("Invalid decision contract");
+    }
+    await expect(
+      host.run({ ...options(), taskId: "pack/one/first" }, config, "pack"),
+    ).rejects.toThrow("Invalid decision contract");
     expect(call.mock.calls.map(([, { agentId, model }]) => ({ agentId, model }))).toEqual([
       { agentId: "first-agent", model: "first-v1" },
       { agentId: "second-agent", model: "second-v1" },

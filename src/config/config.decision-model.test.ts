@@ -52,8 +52,8 @@ describe("decision model configuration", () => {
           decisionModel: "fallback/scalar",
           decisionModelsByTask: {
             decision_evaluate: "global/task",
-            "review-plugin/review": "global/plugin-task",
-            "review-plugin/off": "",
+            [`${"x".repeat(128)}/review`]: "global/plugin-task",
+            "@P/Entry.v2/off": "",
           },
         },
         entries: {
@@ -73,7 +73,7 @@ describe("decision model configuration", () => {
       disabled: false,
       selection: { provider: "agent", model: "task" },
     });
-    expect(resolveDecisionModelSetting(config, "worker", "review-plugin/review")).toEqual({
+    expect(resolveDecisionModelSetting(config, "worker", `${"x".repeat(128)}/review`)).toEqual({
       provider: "global",
       model: "plugin-task",
     });
@@ -94,7 +94,7 @@ describe("decision model configuration", () => {
     expect(
       resolveDecisionModelSetting(config, "taskDisabled", "decision_evaluate"),
     ).toBeUndefined();
-    expect(resolveDecisionModelSetting(config, "worker", "review-plugin/off")).toBeUndefined();
+    expect(resolveDecisionModelSetting(config, "worker", "@P/Entry.v2/off")).toBeUndefined();
     expect(getConfiguredDecisionProviderIds(config)).toEqual(["fallback", "global", "agent"]);
   });
 
@@ -124,7 +124,7 @@ describe("decision model configuration", () => {
     expect(OpenClawSchema.safeParse({ judgments: { provider: "typesafe" } }).success).toBe(false);
   });
 
-  it.each(["not-a-task", "plugin/task/extra", "bad task", "x".repeat(129)])(
+  it.each(["not-a-task", "plugin//", "plugin/task\n", "x".repeat(129)])(
     "rejects an invalid task selector key: %j",
     (taskId) => {
       expect(

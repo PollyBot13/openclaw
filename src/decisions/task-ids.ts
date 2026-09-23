@@ -3,19 +3,25 @@ export const CORE_DECISION_TASK_ID = "decision_evaluate" as const;
 
 export type DecisionTaskId = typeof CORE_DECISION_TASK_ID | `${string}/${string}`;
 
-const PLUGIN_TASK_ID_PATTERN = /^(?=.{1,128}$)[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/;
+const TASK_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
 export function isDecisionTaskId(value: unknown): value is DecisionTaskId {
+  if (value === CORE_DECISION_TASK_ID) {
+    return true;
+  }
+  if (typeof value !== "string" || value !== value.trim()) {
+    return false;
+  }
+  const separator = value.lastIndexOf("/");
+  const owner = value.slice(0, separator);
   return (
-    value === CORE_DECISION_TASK_ID ||
-    (typeof value === "string" && PLUGIN_TASK_ID_PATTERN.test(value))
+    separator > 0 && owner === owner.trim() && TASK_NAME_PATTERN.test(value.slice(separator + 1))
   );
 }
 
-/** Core callers omit consumerId; plugin callers may use only their namespace. */
 export function isDecisionTaskOwnedBy(taskId: DecisionTaskId, consumerId?: string): boolean {
   if (taskId === CORE_DECISION_TASK_ID) {
     return consumerId === undefined;
   }
-  return consumerId !== undefined && taskId.startsWith(`${consumerId}/`);
+  return consumerId !== undefined && taskId.slice(0, taskId.lastIndexOf("/")) === consumerId;
 }
