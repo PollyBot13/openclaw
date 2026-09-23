@@ -382,10 +382,6 @@ export function renderDefaultModels(props: DefaultModelsViewProps) {
           models: props.decisionModels,
           disabled: !props.canMutate || saving,
           getSelection: (taskId) => resolveGlobalDecisionTaskSelection(props.selection, taskId),
-          getInheritedLabel: (selection) =>
-            t("chat.modelControls.decisionTaskInherit", {
-              model: selection.inheritedModel ?? t("chat.modelControls.decisionDisabled"),
-            }),
           onChange: (taskId, model) => props.onDecisionTaskChange(taskId, model),
         })}
       `,

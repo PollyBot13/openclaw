@@ -92,23 +92,10 @@ export function resolveGlobalDecisionTaskSelection(
   defaults: DecisionTaskConfig | undefined,
   taskId: DecisionTaskId,
 ): DecisionTaskSelection {
-  const scalar = scalarValue(defaults?.decisionModel);
-  const task = ownTaskValue(defaults?.decisionModelsByTask, taskId);
-  if (task !== undefined) {
-    return {
-      value: task,
-      effectiveModel: task || undefined,
-      source: "global-task",
-      disabled: task === "",
-      inheritedModel: scalar || undefined,
-    };
-  }
   return {
-    value: undefined,
-    effectiveModel: scalar || undefined,
-    source: scalar === undefined ? "none" : "default",
-    disabled: scalar === "",
-    inheritedModel: scalar || undefined,
+    ...resolveDecisionTaskSelection(defaults, undefined, taskId),
+    value: ownTaskValue(defaults?.decisionModelsByTask, taskId),
+    inheritedModel: scalarValue(defaults?.decisionModel) || undefined,
   };
 }
 

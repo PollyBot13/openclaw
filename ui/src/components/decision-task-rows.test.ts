@@ -39,88 +39,31 @@ describe("decision task UI precedence", () => {
       { id: "decision_evaluate", title: "Saved built-in task override" },
     ]);
   });
-  it("stays in parity with the canonical runtime resolver", () => {
-    const cases: Array<{
-      config: Parameters<typeof resolveDecisionModelSelection>[0];
-      agentId?: string;
-    }> = [
-      {
-        config: {
-          agents: {
-            defaults: {
-              decisionModel: "global/scalar",
-              decisionModelsByTask: { [task]: "global/task" },
-            },
-            entries: {
-              worker: {
-                decisionModel: "agent/scalar",
-                decisionModelsByTask: { [task]: "agent/task" },
-              },
-            },
-          },
-        },
-        agentId: "worker",
-      },
-      {
-        config: {
-          agents: {
-            defaults: { decisionModel: "global/scalar" },
-            entries: { worker: { decisionModel: "" } },
-          },
-        },
-        agentId: "worker",
-      },
-      {
-        config: {
-          agents: { defaults: { decisionModelsByTask: { [task]: "task/only" } } },
-        },
-      },
-      {
-        config: {
-          agents: {
-            defaults: {
-              decisionModel: "global/scalar",
-              decisionModelsByTask: { [task]: "" },
-            },
-            entries: {
-              worker: {
-                decisionModel: "agent/scalar",
-                decisionModelsByTask: { [task]: "agent/task" },
-              },
-            },
-          },
-        },
-        agentId: "worker",
-      },
-      {
-        config: {
-          agents: {
-            defaults: {
-              decisionModel: "global/scalar",
-              decisionModelsByTask: { [task]: "global/task" },
-            },
-            entries: {
-              worker: {
-                decisionModel: "",
-                decisionModelsByTask: { [task]: "agent/task" },
-              },
-            },
-          },
-        },
-        agentId: "worker",
-      },
-    ];
-    for (const item of cases) {
-      const defaults = item.config.agents?.defaults;
-      const entry = item.agentId ? item.config.agents?.entries?.[item.agentId] : undefined;
-      const ui = resolveDecisionTaskSelection(defaults, entry, task);
+  it.each([
+    ["agent task", "global/scalar", "global/task", "agent/scalar", "agent/task"],
+    ["agent disable", "global/scalar", undefined, "", undefined],
+    ["task-only default", undefined, "task/only", undefined, undefined],
+    ["override disabled global task", "global/scalar", "", "agent/scalar", "agent/task"],
+    ["agent disable dominates task", "global/scalar", "global/task", "", "agent/task"],
+  ])(
+    "matches the canonical runtime resolver: %s",
+    (_, globalModel, globalTask, agentModel, agentTask) => {
+      const entry = (decisionModel: string | undefined, taskModel: string | undefined) => ({
+        decisionModel,
+        decisionModelsByTask: taskModel === undefined ? undefined : { [task]: taskModel },
+      });
+      const defaults = entry(globalModel, globalTask);
+      const agentId = agentModel === undefined && agentTask === undefined ? undefined : "worker";
+      const agent = agentId ? entry(agentModel, agentTask) : undefined;
+      const config = { agents: { defaults, entries: agent ? { worker: agent } : undefined } };
+      const ui = resolveDecisionTaskSelection(defaults, agent, task);
       expect({
         source: ui.source,
         disabled: ui.disabled,
         effectiveModel: ui.effectiveModel,
-      }).toEqual(runtimeProjection(item.config, item.agentId));
-    }
-  });
+      }).toEqual(runtimeProjection(config, agentId));
+    },
+  );
 
   it("matches the runtime order for agent task, global task, scalar agent, scalar default", () => {
     expect(

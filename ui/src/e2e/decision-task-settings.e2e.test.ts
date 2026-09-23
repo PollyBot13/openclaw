@@ -1,3 +1,4 @@
+import type { Page } from "playwright";
 import { expect, it } from "vitest";
 import { applyMergePatch } from "../../../src/config/merge-patch.js";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
@@ -18,6 +19,37 @@ const decisionModels = [
   { provider: "typesafe", id: "jev-latest", name: "Jev", pluginId: "typesafe" },
   { provider: "typesafe", id: "jev-preview", name: "Jev Preview", pluginId: "typesafe" },
 ];
+
+function configSnapshot(config: unknown, hash = "decision-0") {
+  return {
+    config,
+    sourceConfig: config,
+    raw: JSON.stringify(config),
+    hash,
+    valid: true,
+    issues: [],
+  };
+}
+
+function installDecisionGateway(
+  page: Page,
+  config: unknown,
+  scenario: Parameters<typeof installMockGateway>[1] = {},
+) {
+  return installMockGateway(page, {
+    ...scenario,
+    methodResponses: {
+      "models.list": {
+        models: [],
+        decisionModels,
+        decisionTasks: [{ id: taskId, title: "Decision model" }],
+      },
+      "config.get": configSnapshot(config),
+      "models.authStatus": { ts: 1, providers: [] },
+      ...scenario.methodResponses,
+    },
+  });
+}
 
 suite.define(() => {
   it("adds inventory without assignment and replaces every saved use before removing a model", async () => {
@@ -45,15 +77,8 @@ suite.define(() => {
         },
       };
       let revision = 0;
-      const snapshot = () => ({
-        config,
-        sourceConfig: config,
-        raw: JSON.stringify(config),
-        hash: `inventory-${revision}`,
-        valid: true,
-        issues: [],
-      });
-      const gateway = await installMockGateway(page, {
+      const snapshot = () => configSnapshot(config, `inventory-${revision}`);
+      const gateway = await installDecisionGateway(page, config, {
         methodResponses: {
           "models.list": {
             models: [],
@@ -64,7 +89,6 @@ suite.define(() => {
             ],
           },
           "config.get": snapshot(),
-          "models.authStatus": { ts: 1, providers: [] },
         },
       });
       const save = async (act: () => Promise<unknown>) => {
@@ -149,15 +173,8 @@ suite.define(() => {
           },
         };
         let revision = 0;
-        const snapshot = () => ({
-          config,
-          sourceConfig: config,
-          hash: `task-${revision}`,
-          raw: JSON.stringify(config),
-          valid: true,
-          issues: [],
-        });
-        const gateway = await installMockGateway(page, {
+        const snapshot = () => configSnapshot(config, `task-${revision}`);
+        const gateway = await installDecisionGateway(page, config, {
           methodResponses: {
             "agents.list": {
               agents: [
@@ -168,12 +185,6 @@ suite.define(() => {
               mainKey: "main",
               scope: "per-sender",
             },
-            "models.list": {
-              models: [],
-              decisionModels,
-              decisionTasks: [{ id: "sample/check", title: "Decision model" }],
-            },
-            "models.authStatus": { ts: 1, providers: [] },
             "config.get": snapshot(),
             "usage.status": { updatedAt: 1, providers: [] },
             "sessions.usage": { aggregates: { byProvider: [] } },
@@ -274,24 +285,7 @@ suite.define(() => {
           entries: { main: { default: true } },
         },
       };
-      const gateway = await installMockGateway(page, {
-        methodResponses: {
-          "models.list": {
-            models: [],
-            decisionModels,
-            decisionTasks: [{ id: "sample/check", title: "Decision model" }],
-          },
-          "config.get": {
-            config,
-            sourceConfig: config,
-            raw: JSON.stringify(config),
-            hash: "errors-0",
-            valid: true,
-            issues: [],
-          },
-          "models.authStatus": { ts: 1, providers: [] },
-        },
-      });
+      const gateway = await installDecisionGateway(page, config);
       await page.goto(`${suite.server.baseUrl}settings/model-providers`);
       const row = page.locator(`[data-decision-task-id="${taskId}"]`);
       const picker = row.locator("openclaw-select-picker");
@@ -320,24 +314,8 @@ suite.define(() => {
           entries: { main: { default: true } },
         },
       };
-      const gateway = await installMockGateway(page, {
+      const gateway = await installDecisionGateway(page, config, {
         operatorScopes: ["operator.read"],
-        methodResponses: {
-          "models.list": {
-            models: [],
-            decisionModels,
-            decisionTasks: [{ id: "sample/check", title: "Decision model" }],
-          },
-          "config.get": {
-            config,
-            sourceConfig: config,
-            raw: JSON.stringify(config),
-            hash: "readonly-0",
-            valid: true,
-            issues: [],
-          },
-          "models.authStatus": { ts: 1, providers: [] },
-        },
       });
       await page.goto(`${suite.server.baseUrl}settings/model-providers`);
       const picker = page.locator(`[data-decision-task-id="${taskId}"] openclaw-select-picker`);
