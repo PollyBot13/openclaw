@@ -70,6 +70,7 @@ import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-cha
 import { buildDeviceAuthPayloadV3 } from "./device-auth.js";
 import { gatewayFixtureLifetime } from "./gateway-fixture-lifetime.test-support.js";
 import type { GatewayServerOptions } from "./server.js";
+import { disposeSessionReadContexts } from "./session-read-contexts.test-support.js";
 import { invalidateSessionSharingSnapshot } from "./session-sharing.js";
 import { loadGatewayTestConfig } from "./test-helpers.config-runtime.js";
 import { GATEWAY_STARTUP_MUTATED_ENV_KEYS } from "./test-helpers.env.js";
@@ -500,6 +501,8 @@ async function resetGatewayTestState(options: { uniqueConfigRoot: boolean }) {
 async function cleanupGatewayTestHome(options: { restoreEnv: boolean }) {
   gatewayFixtureLifetime.assertReleased();
   vi.useRealTimers();
+  // Direct handler projections outlive replies and must release reads before registry closure.
+  await disposeSessionReadContexts();
   resetGatewayLifecycleTestState({ preserveRuntimeBindings: false });
   resetLogger();
   resetTaskRegistryForTests({ persist: false });
