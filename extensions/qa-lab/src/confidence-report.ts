@@ -6,6 +6,8 @@ import {
   isRecord,
   normalizeOptionalString as readString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { evaluateDecisionEvaluationSummary } from "./decision-evaluation.js";
+import type { DecisionEvaluationReport } from "./decision-evaluation.js";
 import {
   formatGatewayLogSentinelSummary,
   type GatewayLogSentinelFinding,
@@ -35,6 +37,7 @@ const QA_CONFIDENCE_LANE_KINDS = [
   "token-efficiency-summary",
   "jsonl-replay-summary",
   "self-test-summary",
+  "decision-evaluation-summary",
   "generic-pass-summary",
 ] as const;
 type QaConfidenceLaneKind = (typeof QA_CONFIDENCE_LANE_KINDS)[number];
@@ -75,6 +78,7 @@ type QaConfidenceLaneResult = QaConfidenceLane & {
   details: string;
   skippedCount?: number;
   skipBackfilled?: boolean;
+  decisionEvaluation?: DecisionEvaluationReport;
 };
 
 type QaConfidenceReport = {
@@ -292,6 +296,7 @@ type QaConfidenceLaneEvaluation = {
   skippedCount?: number;
   status?: QaConfidenceLaneStatus;
   verdict?: QaConfidenceVerdict;
+  decisionEvaluation?: DecisionEvaluationReport;
 };
 
 // Explicit unknown evidence bypasses failureVerdict; status-less failures are classified separately.
@@ -570,6 +575,8 @@ function evaluateLaneArtifact(
       return evaluateTokenEfficiencySummary(payload, lane.expectedTokenUsageSource);
     case "jsonl-replay-summary":
       return evaluateJsonlReplaySummary(payload);
+    case "decision-evaluation-summary":
+      return evaluateDecisionEvaluationSummary(payload);
     default:
       return evaluateSelfTestSummary(payload);
   }
@@ -650,6 +657,7 @@ async function evaluateLane(
     ...(verdict ? { verdict } : {}),
     details: evaluated.details,
     ...(evaluated.skippedCount === undefined ? {} : { skippedCount: evaluated.skippedCount }),
+    ...(evaluated.decisionEvaluation ? { decisionEvaluation: evaluated.decisionEvaluation } : {}),
   };
 }
 
