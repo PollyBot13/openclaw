@@ -131,7 +131,9 @@ export function createCapabilityRegistrars(state: PluginRegistryState) {
     if (!result.ok) {
       reportRegistrationError(
         record,
-        `context engine already registered: ${normalizedId} (${result.existingOwner})`,
+        result.existingOwner === null
+          ? `context engine has no approved selected owner: ${normalizedId}`
+          : `context engine already registered: ${normalizedId} (${result.existingOwner})`,
       );
       return;
     }
