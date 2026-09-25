@@ -62,7 +62,9 @@ struct StatusMenuRecoveryPresentationTests {
         window.orderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         let elements = try await AppKitTestSupport.accessibilityElements(in: hosting)
-        let buttons = elements.filter { $0.accessibilityRole?() == .button }
+        let controls = elements.filter {
+            $0.accessibilityRole?() == .button || $0.accessibilityRole?() == .link
+        }
         let directory = try #require(ProcessInfo.processInfo.environment["OPENCLAW_TEST_MENU_CAPTURE_DIR"])
         let image = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: image)
@@ -75,14 +77,20 @@ struct StatusMenuRecoveryPresentationTests {
             "synthetic": true,
             "baselinePresentationReconstructed": name == "worker-schema-before",
             "updateActionAvailable": onCheckForUpdates != nil,
+            "accessibilityElements": elements.map {
+                [
+                    "role": String(describing: $0.accessibilityRole?()),
+                    "name": AppKitTestSupport.accessibilityName(of: $0) ?? "",
+                ]
+            },
             "requiresVisualInspection": true,
         ]
         try JSONSerialization.data(withJSONObject: status, options: [.sortedKeys])
             .write(to: output.appendingPathComponent("\(name)-capture-status.json"))
 
-        try verify(buttons.compactMap(AppKitTestSupport.accessibilityName(of:)))
+        try verify(controls.compactMap(AppKitTestSupport.accessibilityName(of:)))
         if onCheckForUpdates != nil {
-            let button = try #require(buttons.first {
+            let button = try #require(controls.first {
                 AppKitTestSupport.accessibilityName(of: $0) == "Update"
             })
             #expect(button.accessibilityPerformPress?() == true)
