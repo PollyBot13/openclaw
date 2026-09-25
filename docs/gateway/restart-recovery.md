@@ -247,6 +247,11 @@ invocation, node connection, pairing generation, and owning lifecycle. This
 lets cleanup finish without waiting for a command timeout. It does not reopen
 admission for new requests.
 
+Operators can also inspect and answer pending questions or resolve approvals
+while the Gateway drains. These requests must belong to still-pending work
+admitted before shutdown; normal authorization checks still apply. New question
+and approval requests remain fenced.
+
 Only work that cannot finish inside the drain budget (or any run interrupted
 by a forced restart or a crash) is aborted — and before that happens, each
 affected session is marked for recovery.
@@ -480,6 +485,11 @@ state before admission, so a rejected send cannot trap the conversation in a
 transcript. A live run or cloud worker still prevents this repair. Tombstoned
 sessions retain their separate recovery path into a new session.
 
+If recovery fails during preparation before the agent starts, the Gateway restores
+the interrupted state and releases that attempt's delivery claim. The next recovery
+attempt uses a fresh run ID while retaining the original interrupted turn and retry
+budget, so a rejected pending input cannot leave the conversation permanently busy.
+
 ## Automatic resume
 
 A few seconds after startup, the gateway re-dispatches each marked session
@@ -493,6 +503,13 @@ reconciles tool results whose outcomes are unknown, and continues without asking
 the user to repeat the request. Preparing a new message cannot consume the
 interruption marker; the recovery owner retains it until work is adopted or
 settled.
+
+Recovery reads the interrupted turn's source before starting another run, even
+when a final reply is already pending. If the transcript cannot be read, the
+saved reply and any admitted completion claim remain available for a later
+attempt. Delegated requests and unverified internal inputs cannot resume
+automatically without surviving authority. Child-completion follow-ups still use their
+existing recovery and delivery ownership checks.
 
 When a recovered turn starts with an eligible channel delivery route, OpenClaw
 sends a resumption notice to that conversation, retaining its account and topic.
