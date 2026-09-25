@@ -17,10 +17,16 @@ struct StatusMenuHeaderView: View {
     private let nodesStore = NodesStore.shared
     private let nodeChannelStatus = MacNodeChannelStatusStore.shared
     private let dashboardManager = DashboardManager.shared
+    private let onCheckForUpdates: (@MainActor () -> Void)?
 
-    init(state: AppState, isSleeping: Bool = false) {
+    init(
+        state: AppState,
+        isSleeping: Bool = false,
+        onCheckForUpdates: (@MainActor () -> Void)? = nil)
+    {
         self._state = Bindable(wrappedValue: state)
         self.isSleeping = isSleeping
+        self.onCheckForUpdates = onCheckForUpdates
     }
 
     var body: some View {
@@ -78,6 +84,11 @@ struct StatusMenuHeaderView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(problems, id: \.label) { problem in
                     self.statusLine(label: problem.label, diagnostic: problem.diagnostic, color: problem.color)
+                }
+                if self.shouldOfferAppUpdate, let onCheckForUpdates {
+                    Button(String(localized: "Update"), action: onCheckForUpdates)
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.link)
                 }
             }
         }
@@ -277,6 +288,13 @@ struct StatusMenuHeaderView: View {
 
         guard !self.nodesStore.isLoading, !self.nodesStore.nodes.isEmpty else { return nil }
         return (String(localized: "Mac capabilities offline"), nil, .orange)
+    }
+
+    private var shouldOfferAppUpdate: Bool {
+        guard self.state.connectionMode != .unconfigured,
+              case .connected = self.controlChannel.state
+        else { return false }
+        return self.nodeChannelStatus.state.operatorStatusLine?.recoveryAction == .checkForUpdates
     }
 
     private func statusLine(label: String, diagnostic: String? = nil, color: Color) -> some View {
