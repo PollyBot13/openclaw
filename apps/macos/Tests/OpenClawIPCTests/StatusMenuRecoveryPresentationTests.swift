@@ -63,12 +63,6 @@ struct StatusMenuRecoveryPresentationTests {
         hosting.layoutSubtreeIfNeeded()
         let elements = try await AppKitTestSupport.accessibilityElements(in: hosting)
         let buttons = elements.filter { $0.accessibilityRole?() == .button }
-        try verify(buttons.compactMap { $0.accessibilityLabel?() })
-        if onCheckForUpdates != nil {
-            let button = try #require(buttons.first { $0.accessibilityLabel?() == "Update" })
-            #expect(button.accessibilityPerformPress?() == true)
-        }
-
         let directory = try #require(ProcessInfo.processInfo.environment["OPENCLAW_TEST_MENU_CAPTURE_DIR"])
         let image = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: image)
@@ -85,5 +79,13 @@ struct StatusMenuRecoveryPresentationTests {
         ]
         try JSONSerialization.data(withJSONObject: status, options: [.sortedKeys])
             .write(to: output.appendingPathComponent("\(name)-capture-status.json"))
+
+        try verify(buttons.compactMap(AppKitTestSupport.accessibilityName(of:)))
+        if onCheckForUpdates != nil {
+            let button = try #require(buttons.first {
+                AppKitTestSupport.accessibilityName(of: $0) == "Update"
+            })
+            #expect(button.accessibilityPerformPress?() == true)
+        }
     }
 }
