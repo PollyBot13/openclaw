@@ -3,6 +3,7 @@ import { isTranscriptOnlyOpenClawAssistantMessage } from "../../../shared/transc
 import type { AgentMessage } from "../../runtime/index.js";
 import { buildSessionsYieldContextMessage } from "../../sessions-yield-context.js";
 import type { SessionManager } from "../../sessions/index.js";
+import { buildUsageWithNoCost } from "../../stream-message-shared.js";
 /**
  * Handles sessions-yield interruption, persistence, and artifact cleanup.
  */
@@ -37,20 +38,7 @@ export function createYieldAbortedResponse(model: {
     api: model.api ?? "",
     provider: model.provider ?? "",
     model: model.id ?? "",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
-      },
-    },
+    usage: buildUsageWithNoCost({}),
     timestamp: Date.now(),
   };
   return {
@@ -120,7 +108,7 @@ export function stripSessionsYieldArtifacts(activeSession: {
   messages: AgentMessage[];
   agent: { state: { messages: AgentMessage[] } };
   sessionManager: Pick<SessionManager, "removeTrailingEntries">;
-}) {
+}): boolean {
   const strippedMessages = activeSession.messages.slice();
 
   // The tool-calling assistant turn and synthetic abort artifacts form one
@@ -138,7 +126,7 @@ export function stripSessionsYieldArtifacts(activeSession: {
 
   const removedMessages = activeSession.messages.slice(strippedMessages.length);
   if (removedMessages.length === 0) {
-    return;
+    return false;
   }
 
   // The interrupt marker can settle independently in live and persisted state.
@@ -146,7 +134,7 @@ export function stripSessionsYieldArtifacts(activeSession: {
   let remainingAssistantCount = removedMessages.filter(
     (message) => message.role === "assistant",
   ).length;
-  activeSession.sessionManager.removeTrailingEntries(
+  const removedEntries = activeSession.sessionManager.removeTrailingEntries(
     (entry) => {
       if (
         entry.type === "custom_message" &&
@@ -173,4 +161,5 @@ export function stripSessionsYieldArtifacts(activeSession: {
     },
   );
   activeSession.agent.state.messages = strippedMessages;
+  return removedEntries > 0;
 }

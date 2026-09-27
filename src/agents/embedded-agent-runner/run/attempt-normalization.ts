@@ -18,7 +18,7 @@ import { resolveRunFailoverDecision } from "./failover-policy.js";
 import {
   buildErrorAgentMeta,
   normalizeAssistantUsageForContext,
-  resolveActiveErrorContext,
+  resolveReportedModelRef,
   resolveLatestCallUsage,
 } from "./helpers.js";
 import {
@@ -44,7 +44,7 @@ import {
 } from "./terminal-outcome.js";
 
 type PreparedRuntime = Awaited<ReturnType<typeof prepareEmbeddedRunRuntime>>;
-type SessionPromptState = ReturnType<typeof createEmbeddedRunSessionPromptState>;
+type SessionPromptState = Awaited<ReturnType<typeof createEmbeddedRunSessionPromptState>>;
 
 type ReplayState = ReturnType<typeof createEmbeddedRunReplayState>;
 
@@ -96,7 +96,7 @@ export async function normalizeEmbeddedRunAttempt(input: {
         ReturnType<typeof normalizeEmbeddedRunAttemptResult>["setTerminalLifecycleMeta"]
       >;
       attemptCompactionCount: number;
-      activeErrorContext: ReturnType<typeof resolveActiveErrorContext>;
+      activeErrorContext: ReturnType<typeof resolveReportedModelRef>;
       resolveReplayInvalidForAttempt: (incompleteTurnText?: string | null) => boolean;
       assistantErrorText: string | undefined;
       canRestartForLiveSwitch: boolean;
@@ -214,38 +214,38 @@ export async function normalizeEmbeddedRunAttempt(input: {
         `provider=${provider}/${modelId} consecutive=${breakerStep.consecutive} ` +
         `cap=${MAX_CONSECUTIVE_IDLE_TIMEOUTS_BEFORE_OUTPUT}`,
     );
-    return {
-      action: "complete",
-      result: handleRetryLimitExhaustion({
-        message,
-        decision: resolveRunFailoverDecision({
-          stage: "retry_limit",
-          fallbackConfigured: runInput.fallbackConfigured,
-          failoverReason: input.lastRetryFailoverReason,
-        }),
-        provider,
-        model: modelId,
-        profileId: runtime.lastProfileId,
-        durationMs: Date.now() - runInput.startedAtMs,
-        agentMeta: buildErrorAgentMeta({
-          sessionId: sessionPromptState.sessionId,
-          sessionFile: sessionPromptState.sessionFile,
-          provider,
-          model: preparedRuntime.model.id,
-          credentialSource: attempt.modelAttempt?.credentialSource,
-          ...runtime.outerContextTokenMeta,
-          usageAccumulator: input.usageAccumulator,
-          lastRunPromptUsage,
-        }),
-        replayInvalid: input.replayState.replayInvalid ? true : undefined,
-        livenessState: "blocked",
+    const result = handleRetryLimitExhaustion({
+      message,
+      decision: resolveRunFailoverDecision({
+        stage: "retry_limit",
+        fallbackConfigured: runInput.fallbackConfigured,
+        failoverReason: input.lastRetryFailoverReason,
       }),
-    };
+      provider,
+      model: modelId,
+      profileId: runtime.lastProfileId,
+      durationMs: Date.now() - runInput.startedAtMs,
+      agentMeta: buildErrorAgentMeta({
+        sessionId: sessionPromptState.sessionId,
+        sessionFile: sessionPromptState.sessionFile,
+        provider,
+        model: preparedRuntime.model.id,
+        credentialSource: attempt.modelAttempt?.credentialSource,
+        ...runtime.outerContextTokenMeta,
+        usageAccumulator: input.usageAccumulator,
+        lastRunPromptUsage,
+      }),
+      replayInvalid: input.replayState.replayInvalid ? true : undefined,
+      livenessState: "blocked",
+    });
+    // Escalating provider failures throw above; only returned results carry a terminal stop.
+    result.meta.modelFallbackStopReason = "idle_timeout_circuit_breaker";
+    return { action: "complete", result };
   }
   if (attempt.contextBudgetStatus) {
     input.contextRecoveryState.lastContextBudgetStatus = attempt.contextBudgetStatus;
   }
-  const activeErrorContext = resolveActiveErrorContext({
+  const activeErrorContext = resolveReportedModelRef({
     provider,
     model: modelId,
     assistant: attemptAssistant,

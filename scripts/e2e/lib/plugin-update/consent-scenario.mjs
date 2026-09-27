@@ -13,7 +13,7 @@ import { packFutureUpdateFixture } from "../update-first-hop-package-fixtures.mj
 import { observePostCoreCommand } from "./process-observer.mjs";
 
 // Without a core tarball, run only the plugin reinstall boundary against the supplied CLI.
-export async function runConsentScenario(entry, coreTarball) {
+export async function runConsentScenario(entry, coreTarball, options = {}) {
   assert(entry, "expected CLI entry");
   let coreTarballSha256;
   if (coreTarball) {
@@ -94,7 +94,7 @@ export async function runConsentScenario(entry, coreTarball) {
     if (args[0] === "update" && args.includes("--json")) {
       assert.doesNotThrow(() => {
         result = JSON.parse(output);
-      }, `${label} did not return JSON: ${output}\n${diagnostic}`);
+      }, `${label} did not return JSON (exit ${code}): ${output}\n${diagnostic}`);
     }
     runs.push({
       label,
@@ -190,13 +190,17 @@ export async function runConsentScenario(entry, coreTarball) {
     return { record, bytes };
   }
 
-  function assertConsentBlocked(command, result, expectedReason) {
-    assert.equal(command.code, 1, `${command.output}\n${command.diagnostic}`);
-    assert.equal(result.status, "error");
-    if (expectedReason) {
-      assert.equal(result.reason, expectedReason);
-    }
-    assert.equal(result.postUpdate?.plugins?.status, "error");
+  function assertConsentBlocked(command, result, expectedStatus) {
+    // A blocked plugin is an explicit warning, not a failed core update or repair.
+    assert.equal(command.code, 0, `${command.output}\n${command.diagnostic}`);
+    assert.equal(result.status, expectedStatus);
+    assert.equal(result.reason, undefined);
+    assert.equal(result.postUpdate?.plugins?.status, "warning");
+    assert.match(
+      result.postUpdate?.plugins?.warnings?.find((warning) => warning.pluginId === pluginId)
+        ?.reason ?? "",
+      /requires capability consent/,
+    );
     assert.equal(
       result.postUpdate?.plugins?.npm?.outcomes?.find(
         (outcome) => outcome.pluginId === pluginId && outcome.status === "error",
@@ -276,10 +280,27 @@ export async function runConsentScenario(entry, coreTarball) {
         "accepted forced reinstall replaces package and acceptance while remaining disabled",
         "explicit enable activates the reviewed replacement",
       ];
-      if (!coreTarball) {
+      if (!coreTarball || options.coreUpdateConsent === false) {
         console.log(
           JSON.stringify(
-            { status: "passed", root, assertions: reinstallAssertions, runs, snapshots },
+            {
+              status: "passed",
+              root,
+              assertions: reinstallAssertions,
+              ...(coreTarball && options.coreUpdateConsent === false
+                ? {
+                    omissions: [
+                      {
+                        scenario: "core-update-consent",
+                        reason:
+                          "selected frozen target predates the recorded update compatibility contract",
+                      },
+                    ],
+                  }
+                : {}),
+              runs,
+              snapshots,
+            },
             null,
             2,
           ),
@@ -313,7 +334,8 @@ export async function runConsentScenario(entry, coreTarball) {
         { allowFailure: true },
       );
       const deniedResult = JSON.parse(denied.output);
-      assertConsentBlocked(denied, deniedResult, "post-update-plugins");
+      assertConsentBlocked(denied, deniedResult, "ok");
+      assert.equal(deniedResult.after?.version, coreUpdateFixtures[0].targetVersion);
       assert(
         !denied.children.some(
           (child) => child.argv.includes("gateway") && child.argv.includes("restart"),
@@ -339,7 +361,7 @@ export async function runConsentScenario(entry, coreTarball) {
         ["update", "repair", "--yes", "--json"],
         { allowFailure: true },
       );
-      assertConsentBlocked(laterDenied, JSON.parse(laterDenied.output));
+      assertConsentBlocked(laterDenied, JSON.parse(laterDenied.output), "warning");
       assert.deepEqual(await snapshot("no-future-permission", 2), repaired);
       const accepted = await cli("update-accepted", [
         "update",

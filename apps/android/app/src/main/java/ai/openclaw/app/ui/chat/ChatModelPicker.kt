@@ -5,12 +5,6 @@ import ai.openclaw.app.GatewayModelUnavailableReason
 import ai.openclaw.app.i18n.NativeText
 import ai.openclaw.app.i18n.nativeText
 
-internal data class ChatModelPickerSections(
-  val pinned: List<GatewayModelSummary>,
-  val recent: List<GatewayModelSummary>,
-  val remaining: List<GatewayModelSummary>,
-)
-
 internal enum class ChatModelPickerAction {
   Select,
   OpenProviders,
@@ -28,77 +22,28 @@ internal fun thinkingSupportedForSelection(
   selectedModelRef: String?,
   catalog: List<GatewayModelSummary>,
 ): Boolean {
-  val selected = selectedModelRef ?: return true
-  return catalog.firstOrNull { it.providerQualifiedRef() == selected }?.supportsReasoning != false
+  val selected = selectedModelRef ?: return false
+  return catalog.firstOrNull { it.providerQualifiedRef() == selected }?.thinkingLevels?.any { it.id != "off" } == true
 }
 
-private val fastModeProviderIds =
-  setOf("anthropic", "minimax", "minimax-portal", "openai", "xai")
-
-private fun normalizeFastModeProvider(provider: String): String {
-  val normalized = provider.trim().lowercase()
-  return if (normalized == "codex" || normalized == "openai-codex") "openai" else normalized
-}
-
-private fun resolveFastModeProvider(
+internal fun fastModeRequestSupportedForSelection(
   selectedModelRef: String?,
   sessionModelProvider: String?,
   catalog: List<GatewayModelSummary>,
-): String? {
-  val selected = selectedModelRef?.trim()?.lowercase().orEmpty()
-  val sessionProvider =
-    sessionModelProvider
-      ?.let(::normalizeFastModeProvider)
-      ?.takeIf(String::isNotEmpty)
-  return if (selected.isEmpty()) {
-    sessionProvider
-  } else {
-    val idProviders = linkedSetOf<String>()
-    val qualifiedProviders = linkedSetOf<String>()
-    var hasCatalogMatch = false
-    catalog.forEach { entry ->
-      val matchesId = entry.id.trim().lowercase() == selected
-      val matchesQualified = entry.providerQualifiedRef().trim().lowercase() == selected
-      if (!matchesId && !matchesQualified) return@forEach
-      hasCatalogMatch = true
-      val entryProvider = normalizeFastModeProvider(entry.provider)
-      if (entryProvider.isEmpty()) return@forEach
-      if (matchesId) idProviders += entryProvider
-      if (matchesQualified) qualifiedProviders += entryProvider
+): Boolean {
+  val selected = selectedModelRef?.trim() ?: return false
+  val qualified = catalog.filter { it.providerQualifiedRef().equals(selected, ignoreCase = true) }
+  val matches =
+    qualified.ifEmpty {
+      catalog.filter { it.id == selected && it.provider == sessionModelProvider }
     }
-    when {
-      qualifiedProviders.size == 1 -> qualifiedProviders.first()
-
-      sessionProvider != null &&
-        sessionProvider in idProviders &&
-        sessionProvider !in qualifiedProviders -> sessionProvider
-
-      idProviders.size == 1 -> idProviders.first()
-
-      hasCatalogMatch -> null
-
-      '/' in selected -> normalizeFastModeProvider(selected.substringBefore('/'))
-
-      else -> sessionProvider
-    }
-  }
+  return matches.isNotEmpty() && matches.all { it.supportsFastMode == true }
 }
-
-internal fun fastModeProviderSupportedForSelection(
-  selectedModelRef: String?,
-  sessionModelProvider: String?,
-  catalog: List<GatewayModelSummary>,
-): Boolean =
-  resolveFastModeProvider(
-    selectedModelRef = selectedModelRef,
-    sessionModelProvider = sessionModelProvider,
-    catalog = catalog,
-  ) in fastModeProviderIds
 
 internal fun fastModeSupportedForSelection(
-  providerSupported: Boolean,
+  requestSupported: Boolean,
   hasConfiguredFastModeOverride: Boolean,
-): Boolean = providerSupported || hasConfiguredFastModeOverride
+): Boolean = requestSupported || hasConfiguredFastModeOverride
 
 internal fun selectedChatModelUnavailableReason(
   selectedModelRef: String?,
@@ -139,6 +84,8 @@ internal fun chatModelSendBlocked(
 
 internal fun chatModelPickerAction(model: GatewayModelSummary): ChatModelPickerAction =
   when {
+    model.manualSelectionAllowed == false -> ChatModelPickerAction.Disabled
+
     model.available != false -> ChatModelPickerAction.Select
 
     model.unavailableReason == GatewayModelUnavailableReason.MissingAuth ||
@@ -156,21 +103,19 @@ internal fun chatModelUnavailableText(reason: GatewayModelUnavailableReason?): N
     else -> null
   }
 
-internal fun chatModelPickerSections(
+internal fun chatModelPickerChoices(
   catalog: List<GatewayModelSummary>,
   favorites: List<String>,
   recents: List<String>,
-): ChatModelPickerSections {
-  val modelsByRef = catalog.associateBy { it.providerQualifiedRef() }
+): List<GatewayModelSummary> {
+  val choices = catalog.filter { it.manualSelectionAllowed != false }
+  val modelsByRef = choices.associateBy { it.providerQualifiedRef() }
   val includedRefs = mutableSetOf<String>()
-  val pinned =
-    favorites.mapNotNull { ref ->
-      modelsByRef[ref]?.takeIf { includedRefs.add(ref) }
+  return buildList {
+    for (ref in favorites + recents) {
+      val model = modelsByRef[ref] ?: continue
+      if (includedRefs.add(ref)) add(model)
     }
-  val recent =
-    recents.mapNotNull { ref ->
-      modelsByRef[ref]?.takeIf { includedRefs.add(ref) }
-    }
-  val remaining = catalog.filter { model -> includedRefs.add(model.providerQualifiedRef()) }
-  return ChatModelPickerSections(pinned = pinned, recent = recent, remaining = remaining)
+    addAll(choices.filter { includedRefs.add(it.providerQualifiedRef()) })
+  }
 }

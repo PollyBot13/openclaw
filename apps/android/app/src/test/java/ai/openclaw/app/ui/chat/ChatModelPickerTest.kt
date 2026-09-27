@@ -2,9 +2,12 @@ package ai.openclaw.app.ui.chat
 
 import ai.openclaw.app.GatewayModelSummary
 import ai.openclaw.app.GatewayModelUnavailableReason
+import ai.openclaw.app.parseGatewayModels
 import ai.openclaw.app.ui.design.providerBrandTintArgb
 import ai.openclaw.app.ui.design.providerFallbackLabel
 import ai.openclaw.app.ui.design.providerIconSlug
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,13 +15,46 @@ import org.junit.Test
 
 class ChatModelPickerTest {
   @Test
+  fun fastModeUsesPublishedModelCapabilityInsteadOfProviderName() {
+    val catalog =
+      parseGatewayModels(
+        Json
+          .parseToJsonElement(
+            """[
+      {"id":"standard","name":"Standard","provider":"openai","manualSelectionAllowed":false,"supportsFastMode":false,"input":["audio","document"],"supportsTools":false,"agentRuntime":{"id":"openclaw","source":"model"}},
+      {"id":"priority","name":"Priority","provider":"openai","manualSelectionAllowed":false,"supportsFastMode":true},
+      {"id":"quick","name":"Quick","provider":"fixture","manualSelectionAllowed":true,"supportsFastMode":true},
+      {"id":"legacy","name":"Legacy","provider":"fixture"}
+    ]""",
+          ).jsonArray,
+      )
+
+    assertFalse(fastModeRequestSupportedForSelection("openai/standard", "openai", catalog))
+    assertTrue(fastModeRequestSupportedForSelection("openai/priority", "openai", catalog))
+    assertTrue(fastModeRequestSupportedForSelection("fixture/quick", "fixture", catalog))
+    assertFalse(fastModeRequestSupportedForSelection("openai/unknown", "openai", catalog))
+    assertTrue(catalog.first().supportsAudio)
+    assertTrue(catalog.first().supportsDocuments)
+    assertFalse(catalog.first().supportsVision)
+    assertEquals(false, catalog.first().supportsTools)
+    assertEquals("OpenClaw", catalog.first().runtimeName)
+    assertEquals(ChatModelPickerAction.Disabled, chatModelPickerAction(catalog[0]))
+    assertEquals(ChatModelPickerAction.Disabled, chatModelPickerAction(catalog[1]))
+    assertEquals(ChatModelPickerAction.Select, chatModelPickerAction(catalog[2]))
+    assertEquals(ChatModelPickerAction.Select, chatModelPickerAction(catalog[3]))
+    val choices = chatModelPickerChoices(catalog, listOf("openai/standard"), listOf("openai/priority"))
+    assertEquals(listOf("fixture/quick", "fixture/legacy"), choices.map { it.providerQualifiedRef() })
+    assertFalse(chatModelSendBlocked(true, "openai/standard", catalog))
+  }
+
+  @Test
   fun providerQualifiedRefAddsProviderOnlyWhenNeeded() {
     assertEquals("anthropic/claude-opus-4", model(id = "claude-opus-4", provider = "anthropic").providerQualifiedRef())
     assertEquals("anthropic/claude-opus-4", model(id = "anthropic/claude-opus-4", provider = "anthropic").providerQualifiedRef())
   }
 
   @Test
-  fun sectionsPreservePinAndRecentOrderAndKeepRemainingCatalogOrder() {
+  fun choicesPreservePinAndRecentOrderAndKeepRemainingCatalogOrder() {
     val catalog =
       listOf(
         model(id = "a", provider = "one"),
@@ -27,87 +63,38 @@ class ChatModelPickerTest {
         model(id = "d", provider = "three"),
       )
 
-    val sections =
-      chatModelPickerSections(
+    val choices =
+      chatModelPickerChoices(
         catalog = catalog,
         favorites = listOf("one/c", "missing/model", "one/a"),
         recents = listOf("one/a", "three/d", "missing/recent"),
       )
 
-    assertEquals(listOf("one/c", "one/a"), sections.pinned.map { it.providerQualifiedRef() })
-    assertEquals(listOf("three/d"), sections.recent.map { it.providerQualifiedRef() })
-    assertEquals(listOf("two/b"), sections.remaining.map { it.providerQualifiedRef() })
+    assertEquals(listOf("one/c", "one/a", "three/d", "two/b"), choices.map { it.providerQualifiedRef() })
   }
 
   @Test
-  fun thinkingSupportFailsOpenUnlessMatchedModelDisablesReasoning() {
+  fun thinkingUsesPublishedChoicesAndUnknownModelsOfferNone() {
     val catalog =
-      listOf(
-        model(id = "reasoning", provider = "openai", supportsReasoning = true),
-        model(id = "plain", provider = "openai", supportsReasoning = false),
+      parseGatewayModels(
+        Json
+          .parseToJsonElement(
+            """[
+      {"id":"reasoning","name":"Reasoning","provider":"fixture","thinkingLevels":[{"id":"off","label":"Off"},{"id":"deep","label":"Deep"}]},
+      {"id":"plain","name":"Plain","provider":"fixture","reasoning":true,"thinkingLevels":[]}
+    ]""",
+          ).jsonArray,
       )
-
-    assertTrue(thinkingSupportedForSelection(selectedModelRef = null, catalog = catalog))
-    assertTrue(thinkingSupportedForSelection(selectedModelRef = "openai/unknown", catalog = catalog))
-    assertTrue(thinkingSupportedForSelection(selectedModelRef = "openai/reasoning", catalog = catalog))
-    assertFalse(thinkingSupportedForSelection(selectedModelRef = "openai/plain", catalog = catalog))
+    assertFalse(thinkingSupportedForSelection(null, catalog))
+    assertFalse(thinkingSupportedForSelection("fixture/unknown", catalog))
+    assertTrue(thinkingSupportedForSelection("fixture/reasoning", catalog))
+    assertFalse(thinkingSupportedForSelection("fixture/plain", catalog))
   }
 
   @Test
-  fun fastModeSupportFollowsTheResolvedProviderAndExistingOverrides() {
-    val catalog =
-      listOf(
-        model(id = "gpt-5.6", provider = "openai"),
-        model(id = "claude-opus-4", provider = "anthropic"),
-        model(id = "gemini-pro", provider = "google"),
-      )
-
-    val openAiSupported =
-      fastModeProviderSupportedForSelection(
-        selectedModelRef = "openai/gpt-5.6",
-        sessionModelProvider = null,
-        catalog = catalog,
-      )
-    val legacyCodexSupported =
-      fastModeProviderSupportedForSelection(
-        selectedModelRef = "openai-codex/gpt-5.6",
-        sessionModelProvider = null,
-        catalog = emptyList(),
-      )
-    val googleSupported =
-      fastModeProviderSupportedForSelection(
-        selectedModelRef = "google/gemini-pro",
-        sessionModelProvider = null,
-        catalog = catalog,
-      )
-
-    assertTrue(openAiSupported)
-    assertTrue(legacyCodexSupported)
-    assertFalse(googleSupported)
-    assertTrue(
-      fastModeSupportedForSelection(
-        providerSupported = openAiSupported,
-        hasConfiguredFastModeOverride = false,
-      ),
-    )
-    assertTrue(
-      fastModeSupportedForSelection(
-        providerSupported = legacyCodexSupported,
-        hasConfiguredFastModeOverride = false,
-      ),
-    )
-    assertFalse(
-      fastModeSupportedForSelection(
-        providerSupported = googleSupported,
-        hasConfiguredFastModeOverride = false,
-      ),
-    )
-    assertTrue(
-      fastModeSupportedForSelection(
-        providerSupported = googleSupported,
-        hasConfiguredFastModeOverride = true,
-      ),
-    )
+  fun savedFastOverrideCanBeClearedWithoutAdvertisingSupport() {
+    assertTrue(fastModeSupportedForSelection(requestSupported = false, hasConfiguredFastModeOverride = true))
+    assertFalse(fastModeSupportedForSelection(requestSupported = false, hasConfiguredFastModeOverride = false))
   }
 
   @Test

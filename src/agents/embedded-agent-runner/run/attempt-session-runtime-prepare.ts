@@ -1,3 +1,4 @@
+import type { ContextEngine } from "../../../context-engine/types.js";
 /** Prepares the session-owned runtime used by one embedded attempt. */
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
 import { createCacheTrace } from "../../cache-trace.js";
@@ -7,7 +8,6 @@ import { getProviderPromptState } from "../provider-prompt-state.js";
 import { getEmbeddedSessionPromptState } from "../session-prompt-state.js";
 import { restoreCacheTtlToolResultProjections } from "../tool-result-truncation.js";
 import type { prepareEmbeddedAttemptBundleTools } from "./attempt-bundle-tools.js";
-import type { AttemptContextEngine } from "./attempt-context-engine-helpers.js";
 import {
   prepareEmbeddedAttemptAgentSession,
   prepareEmbeddedAttemptSessionBoundary,
@@ -41,12 +41,12 @@ type EmbeddedAttemptSessionRuntimeState = {
 
 export async function prepareEmbeddedAttemptSessionRuntime(input: {
   attempt: EmbeddedRunAttemptParams;
-  activeContextEngine?: AttemptContextEngine;
+  activeContextEngine?: ContextEngine;
   agentDir: string;
   isRawModelRun: boolean;
   resolveActiveContextEnginePluginId: () => string | undefined;
   setup: EmbeddedAttemptSetup;
-  toolBase: ReturnType<typeof prepareEmbeddedAttemptToolBase>;
+  toolBase: Awaited<ReturnType<typeof prepareEmbeddedAttemptToolBase>>;
   toolCatalog: ReturnType<typeof prepareEmbeddedAttemptToolCatalog>;
   bundleTools: Awaited<ReturnType<typeof prepareEmbeddedAttemptBundleTools>>;
   systemPrompt: Awaited<ReturnType<typeof prepareEmbeddedAttemptSystemPrompt>>;
@@ -107,6 +107,8 @@ export async function prepareEmbeddedAttemptSessionRuntime(input: {
   });
   const { isOpenAIResponsesApi, preparedUserTurnMessage, sessionManager, transcriptPolicy } =
     preparedSessionManager;
+  resources.getUserTranscriptContexts =
+    preparedSessionManager.userMessageBoundary.getUserTranscriptContexts;
 
   const state: EmbeddedAttemptSessionRuntimeState = {
     currentTurnImageFailureCount: 0,
@@ -150,7 +152,7 @@ export async function prepareEmbeddedAttemptSessionRuntime(input: {
     sessionAgentId,
     transcriptLifecycle: sessionLock.transcriptLifecycle,
     sessionManager,
-    assertInitialUserTurnReplay: preparedSessionManager.assertInitialUserTurnReplay,
+    prepareInitialUserTurnReplay: preparedSessionManager.prepareInitialUserTurnReplay,
   });
   const { activeSession, setActiveSessionSystemPrompt, settingsManager } = preparedAgentSession;
   const recordCurrentTurnImageFailure = (count: number) => {

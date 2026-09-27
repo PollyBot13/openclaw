@@ -1,6 +1,13 @@
 import { formatErrorMessage } from "../infra/errors.js";
-import { findActiveUpdateRun, getUpdateRun } from "../infra/update-run-ledger.js";
-import type { UpdateRunPhase } from "../infra/update-run-record.js";
+import type { GatewayScheduledJob } from "../infra/gateway-scheduler.js";
+import type { UpdateCheckLifecycle } from "../infra/update-check-lifecycle.js";
+import { reconcileInterruptedUpdateRuns } from "../infra/update-run-interruption.js";
+import {
+  findActiveUpdateRun,
+  getUpdateRun,
+  reconcileAbandonedUpdateRuns,
+} from "../infra/update-run-ledger.js";
+import type { UpdateRunPhase, UpdateRunRecord } from "../infra/update-run-record.js";
 import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { reconcileOpenClawStateSchemaPublication } from "../state/openclaw-state-db.js";
 import { GATEWAY_EVENT_UPDATE_RUN_CHANGED } from "./events.js";
@@ -16,20 +23,23 @@ export function wakeUpdateRunWatcher(): void {
 
 /** The update-check lifecycle joins notices and their transport tails before Gateway teardown. */
 export function startUpdateRunWatcher(params: {
+  lifecycle: UpdateCheckLifecycle;
   broadcast: GatewayBroadcastFn;
   log: { warn: (message: string) => void };
 }): { stop: () => Promise<void> } {
   const work = new AsyncWorkScope();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let publicationTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduler = params.lifecycle.scheduler;
+  let timer: GatewayScheduledJob | undefined;
+  let publicationTimer: GatewayScheduledJob | undefined;
   let watched: { runId: string; revision?: number; phase?: UpdateRunPhase } | undefined;
   let notices = Promise.resolve();
+  const reconciled: UpdateRunRecord[] = [];
+  let polling = false;
+  let pollAgain = false;
 
   const schedulePublication = () => {
-    if (publicationTimer) {
-      clearTimeout(publicationTimer);
-      publicationTimer = undefined;
-    }
+    publicationTimer?.cancel();
+    publicationTimer = undefined;
     if (work.isClosing) {
       return;
     }
@@ -37,31 +47,40 @@ export function startUpdateRunWatcher(params: {
       const blocker = reconcileOpenClawStateSchemaPublication();
       if (blocker?.publishAfterMs != null) {
         // Deadline belongs to the ledger row, so process restarts never restart the grace.
-        publicationTimer = setTimeout(
-          schedulePublication,
-          Math.min(2_147_483_647, Math.max(0, blocker.publishAfterMs - Date.now())),
-        );
-        publicationTimer.unref?.();
+        publicationTimer = scheduler.schedule({
+          id: "update.schema-publication",
+          atMs: blocker.publishAfterMs,
+          run: schedulePublication,
+        });
       }
     } catch (error) {
       params.log.warn(`state schema publication deferred: ${formatErrorMessage(error)}`);
     }
   };
 
-  const poll = () => {
+  const scan = (reconcileAll = true) => {
     if (work.isClosing) {
       return;
     }
+    timer?.cancel();
     timer = undefined;
     try {
+      reconciled.push(
+        ...reconcileAbandonedUpdateRuns({ legacyOnly: !reconcileAll }).filter(
+          (run) => run.runId !== watched?.runId,
+        ),
+      );
       schedulePublication();
-      const run = watched ? getUpdateRun(watched.runId) : findActiveUpdateRun();
+      const run = watched
+        ? getUpdateRun(watched.runId)
+        : (reconciled.shift() ?? findActiveUpdateRun());
       if (!run) {
         watched = undefined;
         return;
       }
       watched ??= { runId: run.runId };
       const terminal = run.status !== "running";
+      params.lifecycle.campaign?.reconcileRun(run);
       if (watched.revision !== run.updatedAtMs || terminal) {
         params.broadcast(GATEWAY_EVENT_UPDATE_RUN_CHANGED, {
           runId: run.runId,
@@ -98,18 +117,61 @@ export function startUpdateRunWatcher(params: {
       }
       if (terminal) {
         watched = undefined;
-        poll();
+        scan(reconcileAll);
         return;
       }
       // Named freshness-poll exception: the detached orchestrator writes the
       // shared ledger. Observe one active run until terminal or teardown so a
       // late repair still clears the clients' update-in-progress state.
-      timer = setTimeout(poll, UPDATE_RUN_POLL_MS);
-      timer.unref?.();
+      timer = scheduler.schedule({
+        id: "update.run-poll",
+        delayMs: UPDATE_RUN_POLL_MS,
+        run: poll,
+      });
     } catch (error) {
       watched = undefined;
       params.log.warn(`update run watcher stopped: ${formatErrorMessage(error)}`);
     }
+  };
+  const poll = () => {
+    if (work.isClosing) {
+      return;
+    }
+    timer = undefined;
+    // Candidate verification must not delay terminal observations or schema publication.
+    // Other abandonment still waits for candidate verification.
+    scan(false);
+    if (polling) {
+      pollAgain = true;
+      return;
+    }
+    polling = true;
+    void work
+      .track(async () => {
+        const settled = await reconcileInterruptedUpdateRuns({ signal: work.signal });
+        if (work.isClosing) {
+          return;
+        }
+        reconciled.push(...settled.filter((run) => run.runId !== watched?.runId));
+        if (settled.length || watched || pollAgain) {
+          scan();
+        }
+      })
+      .catch((error: unknown) => {
+        if (!work.isClosing) {
+          params.log.warn(`update run reconciliation deferred: ${formatErrorMessage(error)}`);
+          scan();
+        }
+      })
+      .finally(() => {
+        polling = false;
+        if (pollAgain) {
+          pollAgain = false;
+          if (!timer) {
+            poll();
+          }
+        }
+      });
   };
   const wake = () => {
     if (!timer && !watched) {
@@ -120,14 +182,10 @@ export function startUpdateRunWatcher(params: {
   wake();
   return {
     stop: () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      if (publicationTimer) {
-        clearTimeout(publicationTimer);
-        publicationTimer = undefined;
-      }
+      timer?.cancel();
+      timer = undefined;
+      publicationTimer?.cancel();
+      publicationTimer = undefined;
       if (wakeCurrentWatcher === wake) {
         wakeCurrentWatcher = undefined;
       }

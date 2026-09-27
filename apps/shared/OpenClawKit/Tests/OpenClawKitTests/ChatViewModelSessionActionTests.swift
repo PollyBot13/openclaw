@@ -817,9 +817,11 @@ struct ChatViewModelSessionActionTests {
             fileName: "old.png",
             mimeType: "image/png",
             preview: nil)]
+        self.retainCompletedNarration(in: viewModel)
 
         await viewModel.rewindToMessage(self.userMessage(entryID: "message-42"))
 
+        #expect(viewModel.transcriptMessages.isEmpty)
         #expect(viewModel.input == "edit this turn")
         #expect(viewModel.attachments.count == 1)
         #expect(viewModel.attachments.first?.data == imageData)
@@ -1002,7 +1004,7 @@ struct ChatViewModelSessionActionTests {
         let viewModel = OpenClawChatViewModel(sessionKey: "main", transport: transport)
         viewModel.sessionBranches = staleBranches
 
-        await viewModel.refreshSessionBranchesForMenuPresentation()
+        await viewModel.refreshSessionBranches()
 
         #expect(viewModel.sessionBranches == freshBranches)
         #expect(await transport.branchListSessionKeys() == ["main"])
@@ -1038,7 +1040,7 @@ struct ChatViewModelSessionActionTests {
             outbox: store)
         viewModel.reconciledOutboxBranchScopes.insert(scope)
 
-        await viewModel.refreshSessionBranchesForMenuPresentation()
+        await viewModel.refreshSessionBranches()
 
         #expect(viewModel.reconciledOutboxBranchScopes.contains(scope))
         #expect(await store.branchState(for: scope)?.switchPendingSince == nil)
@@ -1064,7 +1066,7 @@ struct ChatViewModelSessionActionTests {
 
         #expect(viewModel.sessionBranches == newBranches)
         firstGate.release()
-        await firstRefresh.value
+        _ = await firstRefresh.value
 
         #expect(viewModel.sessionBranches == newBranches)
         #expect(viewModel.isLoadingSessionBranches == false)
@@ -1076,9 +1078,11 @@ struct ChatViewModelSessionActionTests {
         let transport = SessionActionTransport(branches: branches)
         let viewModel = OpenClawChatViewModel(sessionKey: "main", transport: transport)
         viewModel.sessionBranches = branches
+        self.retainCompletedNarration(in: viewModel)
 
         await viewModel.switchToBranch("leaf-new")
 
+        #expect(viewModel.transcriptMessages.isEmpty)
         #expect(await transport.switchedBranches().map { [$0.sessionKey, $0.leafEntryID] } == [
             ["main", "leaf-new"],
         ])
@@ -1301,19 +1305,20 @@ struct ChatViewModelSessionActionTests {
         #expect(await transport.forkedMessages().map { [$0.sessionKey, $0.entryID] } == [["main", "message-42"]])
     }
 
-    @Test func `remote rewind refreshes current transcript only`() async {
+    @Test func `remote rewind refreshes current transcript only`() async throws {
         let transport = SessionActionTransport()
         let viewModel = OpenClawChatViewModel(sessionKey: "main", transport: transport)
 
         viewModel.handleTransportEvent(.sessionsChanged(.init(sessionKey: "other", reason: "rewind")))
         viewModel.handleTransportEvent(.sessionsChanged(.init(sessionKey: "main", reason: "rewind")))
 
-        let refreshed = await self.waitForHistoryRequest(transport)
-        #expect(refreshed)
+        try await waitUntil("remote rewind history request") {
+            await transport.historySessionKeys().isEmpty == false
+        }
         #expect(await transport.historySessionKeys() == ["main"])
     }
 
-    @Test func `remote branch switch refreshes current transcript and branches only`() async {
+    @Test func `remote branch switch refreshes current transcript and branches only`() async throws {
         let transport = SessionActionTransport(branches: self.branches())
         let viewModel = OpenClawChatViewModel(sessionKey: "main", transport: transport)
         viewModel.setReplyTarget(messageID: UUID(), text: "old branch", senderLabel: "User")
@@ -1326,8 +1331,9 @@ struct ChatViewModelSessionActionTests {
         #expect(viewModel.hasBlockingRunActivity)
         #expect(viewModel.canSend == false)
 
-        let refreshed = await self.waitForBranchListRequest(transport)
-        #expect(refreshed)
+        try await waitUntil("remote branch switch branch list request") {
+            await transport.branchListSessionKeys().isEmpty == false
+        }
         let unlocked = await self.waitForBranchSwitchActivityToClear(viewModel)
         #expect(unlocked)
         #expect(viewModel.replyTarget == nil)
@@ -1395,7 +1401,9 @@ struct ChatViewModelSessionActionTests {
         #expect(viewModel.sessionKey == "other")
         #expect(await transport.forkedParentKeys() == ["main"])
     }
+}
 
+extension ChatViewModelSessionActionTests {
     private func waitForForkStart(
         _ gate: SessionActionCompletionGate,
         timeout: Duration = .seconds(15)) async -> Bool
@@ -1411,36 +1419,6 @@ struct ChatViewModelSessionActionTests {
             group.cancelAll()
             return started
         }
-    }
-
-    private func waitForHistoryRequest(
-        _ transport: SessionActionTransport,
-        timeout: Duration = .seconds(15)) async -> Bool
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while clock.now < deadline {
-            if await transport.historySessionKeys().isEmpty == false {
-                return true
-            }
-            await Task.yield()
-        }
-        return false
-    }
-
-    private func waitForBranchListRequest(
-        _ transport: SessionActionTransport,
-        timeout: Duration = .seconds(15)) async -> Bool
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while clock.now < deadline {
-            if await transport.branchListSessionKeys().isEmpty == false {
-                return true
-            }
-            await Task.yield()
-        }
-        return false
     }
 
     private func waitForBranchSwitchActivityToClear(
@@ -1504,6 +1482,25 @@ struct ChatViewModelSessionActionTests {
             await Task.yield()
         }
         return false
+    }
+
+    private func retainCompletedNarration(in viewModel: OpenClawChatViewModel) {
+        // This transport emits no sessions.changed echo. The successful local
+        // mutation must discard retained narration from the previous branch.
+        viewModel.updateActiveSessionRunIDs(["completed-run"])
+        viewModel.handleTransportEvent(.agent(OpenClawAgentEventPayload(
+            runId: "completed-run",
+            seq: 1,
+            stream: "item",
+            ts: 1000,
+            data: [
+                "kind": AnyCodable("preamble"), "itemId": AnyCodable("old-narration"),
+                "phase": AnyCodable("end"), "progressText": AnyCodable("Previous branch narration"),
+            ])))
+        viewModel.retireTerminalRun("completed-run")
+        #expect(viewModel.transcriptMessages.map { ChatMessageVisibleText.visibleText(in: $0) } == [
+            "Previous branch narration",
+        ])
     }
 
     private func userMessage(entryID: String) -> OpenClawChatMessage {

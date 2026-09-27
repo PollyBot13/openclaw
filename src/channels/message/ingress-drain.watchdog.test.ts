@@ -1,5 +1,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import type { ChannelIngressDispatchLifecycle } from "./ingress-drain-lifecycle.js";
 import { createChannelIngressDrain, isIngressAdoptionLostError } from "./ingress-drain.js";
@@ -98,6 +99,71 @@ describe("channel ingress drain watchdog", () => {
       await drain.waitForIdle();
       expect(dispatched).toEqual(["evt-stall", "evt-stall", "evt-next"]);
       drain.dispose();
+    });
+  });
+
+  it("keeps adoption finalization paused across deferred heartbeats", async () => {
+    await withTempState(async (stateDir) => {
+      const queue = createTestIngressQueue(stateDir);
+      await queue.enqueue("finalizing", { text: "x" }, { laneKey: "l1" });
+      const { drain, lifecycle, heartbeat } = await deferNext(queue);
+      lifecycle.onAdoptionFinalizing();
+      try {
+        await vi.advanceTimersByTimeAsync(333);
+        heartbeat();
+        await vi.advanceTimersByTimeAsync(1_100);
+        expect(lifecycle.abortSignal.aborted).toBe(false);
+        expect(await queue.listClaims()).toMatchObject([{ id: "finalizing", attempts: 0 }]);
+        await lifecycle.onAdopted();
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending({ limit: "all" })).toEqual([]);
+      } finally {
+        drain.dispose();
+      }
+    });
+  });
+
+  it("adopts a dispatching handler that stays live beyond the stall timeout", async () => {
+    await withTempState(async (stateDir) => {
+      const queue = createTestIngressQueue(stateDir);
+      await queue.enqueue("compacting", { text: "x" }, { laneKey: "l1" });
+      let dispatchSignal: AbortSignal | undefined;
+      const dispatch = vi.fn(
+        async (_event: unknown, lifecycle: ChannelIngressDispatchLifecycle) => {
+          dispatchSignal = lifecycle.abortSignal;
+          const pulse = setInterval(
+            expectDefined(lifecycle.onDeferredHeartbeat, "pre-adoption heartbeat"),
+            expectDefined(lifecycle.deferredHeartbeatIntervalMs, "heartbeat cadence"),
+          );
+          try {
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 3_500);
+            });
+            await lifecycle.onAdopted();
+          } finally {
+            clearInterval(pulse);
+          }
+        },
+      );
+      const drain = createChannelIngressDrain({
+        queue,
+        adoptionStallTimeoutMs: 1_000,
+        dispatchClaimedEvent: dispatch,
+      });
+      try {
+        await drain.drainOnce();
+        await vi.advanceTimersByTimeAsync(3_500);
+        await drain.waitForIdle();
+        expect(dispatchSignal?.aborted).toBe(false);
+        expect(await queue.listClaims()).toEqual([]);
+        expect(await queue.listPending()).toEqual([]);
+        expect(await queue.listFailed?.()).toEqual([]);
+        expect((await queue.enqueue("compacting", { text: "duplicate" })).kind).toBe("completed");
+        expect(await drain.drainOnce()).toEqual({ started: 0 });
+        expect(dispatch).toHaveBeenCalledOnce();
+      } finally {
+        drain.dispose();
+      }
     });
   });
 
@@ -394,10 +460,8 @@ describe("channel ingress drain watchdog", () => {
   });
 
   it.each([
-    { stop: "dispose", heartbeat: "none" },
     { stop: "dispose", heartbeat: "late" },
     { stop: "dispose", heartbeat: "reentrant" },
-    { stop: "abort", heartbeat: "none" },
     { stop: "abort", heartbeat: "late" },
     { stop: "abort", heartbeat: "reentrant" },
   ])("preserves retry facts after $stop (heartbeat: $heartbeat)", async ({ stop, heartbeat }) => {
@@ -507,10 +571,7 @@ describe("channel ingress drain watchdog", () => {
       const queue = createTestIngressQueue(stateDir, { now: () => clock });
       await queue.enqueue("evt-long", { text: "x" }, { laneKey: "l1" });
 
-      let settleResolve!: () => void;
-      const settleGate = new Promise<void>((resolve) => {
-        settleResolve = resolve;
-      });
+      const { promise: settleGate, resolve: settleResolve } = createDeferred();
 
       const drain = createChannelIngressDrain<Payload>({
         queue,

@@ -73,5 +73,9 @@ export function createIngressDrainWakeScheduler(options: {
     );
   };
 
-  return { schedule };
+  return {
+    schedule,
+    waitForIdleWake: async () => await idleWake,
+    hasIdleWake: () => idleWake !== undefined,
+  };
 }

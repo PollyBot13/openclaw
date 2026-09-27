@@ -1,4 +1,7 @@
-import { closeOpenClawStateDatabaseForTest } from "openclaw/plugin-sdk/channel-ingress-test-runtime";
+import {
+  closeOpenClawStateDatabaseForTest,
+  observeChannelIngressQueueWrite,
+} from "openclaw/plugin-sdk/channel-ingress-test-runtime";
 // Zalouser tests cover durable socket admission, recovery, and replay semantics.
 import type { ChannelIngressQueue } from "openclaw/plugin-sdk/channel-outbound";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,11 +13,22 @@ import {
   type ZalouserTestIngressPayload,
 } from "./ingress.test-support.js";
 
-function runtime() {
-  return { error: vi.fn(), log: vi.fn() };
+function createIngress(
+  params: Omit<
+    Parameters<typeof createZalouserIngressMonitor>[0],
+    "accountId" | "ownUserId" | "runtime"
+  >,
+) {
+  return createZalouserIngressMonitor({
+    accountId: "default",
+    ownUserId: "owner-1",
+    runtime: { error: vi.fn(), log: vi.fn() },
+    ...params,
+  });
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   closeOpenClawStateDatabaseForTest();
   vi.restoreAllMocks();
 });
@@ -38,10 +52,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue: gatedQueue,
         dispatch,
       });
@@ -76,10 +87,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
-      const recovered = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const recovered = createIngress({
         queue,
         dispatch,
       });
@@ -97,10 +105,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -132,10 +137,7 @@ describe("Zalouser durable ingress", () => {
           return await realEnqueue(...args);
         },
       };
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue: observedQueue,
         dispatch: async (_message, lifecycle) => {
           await lifecycle.onAdopted();
@@ -171,10 +173,7 @@ describe("Zalouser durable ingress", () => {
         }
         await lifecycle.onAdopted();
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
         pollIntervalMs: 60_000,
@@ -207,10 +206,7 @@ describe("Zalouser durable ingress", () => {
           await lifecycle.onAdopted();
         },
       );
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -233,24 +229,21 @@ describe("Zalouser durable ingress", () => {
 
   it("holds a timed-out claim until deferred bookkeeping settles", async () => {
     await withZalouserIngressTestQueue(async (queue) => {
-      let deferredLifecycle: ZalouserIngressLifecycle | undefined;
-      const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
-        deferredLifecycle = lifecycle;
-        lifecycle.onDeferred();
-      });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const deferred = Promise.withResolvers<ZalouserIngressLifecycle>();
+      const ingress = createIngress({
         queue,
-        dispatch,
+        dispatch: async (_message, lifecycle) => {
+          lifecycle.onDeferred();
+          deferred.resolve(lifecycle);
+        },
         pollIntervalMs: 60_000,
         adoptionStallTimeoutMs: 10,
       });
       await ingress.receive(createRawZalouserMessage({ msgId: "deferred-timeout" }));
-      await vi.waitFor(() => expect(deferredLifecycle?.abortSignal.aborted).toBe(true));
+      const lifecycle = await deferred.promise;
+      await vi.waitFor(() => expect(lifecycle.abortSignal.aborted).toBe(true));
       expect(await queue.listClaims()).toHaveLength(1);
-      await deferredLifecycle?.onAbandoned();
+      await lifecycle.onAbandoned();
       await vi.waitFor(async () => {
         expect(await queue.listClaims()).toEqual([]);
         expect(await queue.listFailed?.({ limit: "all" })).toEqual([]);
@@ -262,7 +255,6 @@ describe("Zalouser durable ingress", () => {
           },
         ]);
       });
-
       await ingress.stop();
     });
   });
@@ -274,10 +266,7 @@ describe("Zalouser durable ingress", () => {
         deferredLifecycle = lifecycle;
         lifecycle.onDeferred();
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -299,10 +288,7 @@ describe("Zalouser durable ingress", () => {
         { receivedAt: 1, laneKey: "direct:sender-1" },
       );
       const dispatch = vi.fn();
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -329,10 +315,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async () => {
         throw Object.assign(new Error("expired session"), { code: 401 });
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -360,10 +343,7 @@ describe("Zalouser durable ingress", () => {
           return await realEnqueue(...args);
         },
       };
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue: gatedQueue,
         dispatch: vi.fn(),
       });
@@ -394,10 +374,7 @@ describe("Zalouser durable ingress", () => {
         await lifecycle.onAdopted();
         await deliveryGate;
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -428,10 +405,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async () => {
         await deliveryGate;
       });
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue,
         dispatch,
       });
@@ -473,10 +447,7 @@ describe("Zalouser durable ingress", () => {
         },
       };
       const dispatch = vi.fn();
-      const ingress = createZalouserIngressMonitor({
-        accountId: "default",
-        ownUserId: "owner-1",
-        runtime: runtime(),
+      const ingress = createIngress({
         queue: gatedQueue,
         dispatch,
       });
