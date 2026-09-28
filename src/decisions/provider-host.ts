@@ -26,7 +26,7 @@ import type {
 import { DecisionContractError, validateDecisionResult } from "./validation.js";
 
 type Options = Parameters<DecisionRuntimeV1["evaluate"]>[1];
-const FAILURE_REASONS = new Set<ProviderFailureReason>([
+const FAILURE_REASONS = new Set<UnavailableReason>([
   "credentials-unavailable",
   "authentication",
   "rate-limited",
@@ -34,6 +34,9 @@ const FAILURE_REASONS = new Set<ProviderFailureReason>([
   "unsupported-input",
   "invalid-response",
 ]);
+function isProviderFailureReason(reason: UnavailableReason): reason is ProviderFailureReason {
+  return FAILURE_REASONS.has(reason);
+}
 const MAX_CONCURRENT = 4;
 const COOLDOWN_MS = 10_000;
 const MAX_RETRY_AFTER_MS = 60_000;
@@ -392,10 +395,15 @@ export class DecisionProviderHost {
         throw new DecisionContractError();
       }
       // Validate and publish the same primitives even if a provider envelope is executable.
-      const { reason, retryAfterMs } = outcome;
-      if (!FAILURE_REASONS.has(reason)) {
+      const { reason } = outcome;
+      if (!isProviderFailureReason(reason)) {
         throw new DecisionContractError();
       }
+      const retryAfterDescriptor = Object.getOwnPropertyDescriptor(outcome, "retryAfterMs");
+      if (retryAfterDescriptor && !("value" in retryAfterDescriptor)) {
+        throw new DecisionContractError();
+      }
+      const retryAfterMs = retryAfterDescriptor?.value;
       this.fail(health, reason, retryAfterMs);
       return this.unavailable(reason);
     } catch (error) {
