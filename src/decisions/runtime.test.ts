@@ -451,6 +451,27 @@ describe("registered decision capability", () => {
       });
     },
   );
+  it("does not dispatch after task selection changes during Gateway authority preparation", async () => {
+    const call = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+    const host = registered(call);
+    const selected: OpenClawConfig = {
+      agents: { defaults: { decisionModelsByTask: { "owner/check": "fixture/check-v1" } } },
+    };
+    setRuntimeConfigSnapshot(selected);
+    const pending = host.run({ ...options(), taskId: "owner/check" }, selected, "owner");
+    // Ambient authority preparation is asynchronous even when it resolves immediately.
+    // Publish the changed selection during that yield, before the provider-host admission.
+    setRuntimeConfigSnapshot({
+      agents: { defaults: { decisionModelsByTask: { "owner/check": "" } } },
+    });
+
+    expect(await pending).toEqual({ status: "unavailable", reason: "retiring" });
+    expect(call).not.toHaveBeenCalled();
+    expect(host.registry.decisionProviders[0]!.host.inspect(selected)).toMatchObject({
+      successCount: 0,
+      activeRequests: 0,
+    });
+  });
   it("fences a changed agent selection without retiring another agent's concurrent request", async () => {
     const releases = new Map<string, () => void>();
     const started = createDeferredCore();

@@ -331,6 +331,10 @@ export class DecisionProviderHost {
         outcome = await instance.runInRegistry(
           registry,
           () => {
+            const stopped = interrupted();
+            if (stopped) {
+              return stopped;
+            }
             facts.dispatched = true;
             return this.provider.evaluate(submitted, {
               model,

@@ -2,6 +2,7 @@ import { bindOperatorModelExecution } from "../agents/admitted-run-context.js";
 import { resolveDecisionModelSelection } from "../agents/decision-model-setting.js";
 import { normalizeModelRef } from "../agents/model-ref-shared.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { createRuntimeConfigReader } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { captureAmbientGatewayOperatorAuthority } from "../gateway/operator-invocation-authority.js";
 import { getProcessGatewayPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-state.js";
@@ -88,6 +89,7 @@ export async function evaluateDecisionInRegistry(
   if (config.plugins?.entries?.[entry.pluginId]?.enabled === false) {
     return skipped(entry.host.unavailable("disabled"));
   }
+  const readConfig = createRuntimeConfigReader(config);
   let submitted: DecisionBatch;
   try {
     submitted = structuredClone(batch);
@@ -120,6 +122,13 @@ export async function evaluateDecisionInRegistry(
       missingBindingError: () =>
         new Error("Decision evaluation requires its current Gateway binding."),
     });
+    const currentSelection = resolveDecisionModelSelection(readConfig(), agentId, taskId).selection;
+    if (
+      currentSelection?.provider !== selected.provider ||
+      currentSelection.model !== selected.model
+    ) {
+      return skipped({ status: "unavailable", reason: "retiring" });
+    }
     modelExecution = bindOperatorModelExecution(capturedOperator.authority, model);
     const modelSignal = modelExecution
       ? AbortSignal.any([options.signal, modelExecution.signal])
