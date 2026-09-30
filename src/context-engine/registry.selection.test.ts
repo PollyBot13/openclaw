@@ -19,12 +19,12 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const engineId = "synthetic-engine";
 const ownerId = "synthetic-owner";
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("context-engine-selection-"));
-  resetContextEngineRuntimeQuarantineForTests();
+  await resetContextEngineRuntimeQuarantineForTests();
 });
-afterEach(() => {
-  resetContextEngineRuntimeQuarantineForTests();
+afterEach(async () => {
+  await resetContextEngineRuntimeQuarantineForTests();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -101,7 +101,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
             owner: undefined,
             failure: undefined,
           });
-          expect(listContextEngineQuarantines()).toEqual([]);
+          expect(await listContextEngineQuarantines()).toEqual([]);
         });
         expect(factory).not.toHaveBeenCalled();
         expect(warn).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
         expect(
           await resolve({ plugins: { enabled: false, slots: { contextEngine: slot } } }),
         ).toEqual({ id: "legacy", owner: undefined, failure: undefined });
-        expect(listContextEngineQuarantines()).toEqual([]);
+        expect(await listContextEngineQuarantines()).toEqual([]);
       });
       expect(factory).not.toHaveBeenCalled();
     });
@@ -148,7 +148,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
             plugins: { allow: [ownerId], slots: { contextEngine: selectedId } },
           }),
         ).toEqual({ id: selectedId, owner: ownerId, failure: undefined });
-        expect(listContextEngineQuarantines()).toEqual([]);
+        expect(await listContextEngineQuarantines()).toEqual([]);
       });
       expect(factory).toHaveBeenCalledOnce();
     });
@@ -161,7 +161,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
             plugins: { allow: ["unrelated"], slots: { contextEngine: engineId } },
           }),
         ).toEqual({ id: engineId, owner: engineId, failure: undefined });
-        expect(listContextEngineQuarantines()).toEqual([]);
+        expect(await listContextEngineQuarantines()).toEqual([]);
       });
       expect(factory).toHaveBeenCalledOnce();
     });
@@ -180,7 +180,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
           );
         } else {
           expect(result.id).toBe("legacy");
-          expect(listContextEngineQuarantines()).toEqual([
+          expect(await listContextEngineQuarantines()).toEqual([
             expect.objectContaining({
               engineId,
               operation: failure === "missing" ? "resolve" : "factory",
@@ -202,7 +202,7 @@ for (const path of ["standalone", "logical-turn"] as const) {
           expect((await resolve(setPluginEnabledInConfig(disabled, owner, true))).id).toBe(
             engineId,
           );
-          expect(listContextEngineQuarantines()).toEqual([]);
+          expect(await listContextEngineQuarantines()).toEqual([]);
         });
         expect(disabled.plugins?.slots?.contextEngine).toBe(engineId);
         expect(factory).toHaveBeenCalledOnce();
@@ -241,7 +241,7 @@ it.each([true, false])(
           await lease.dispose();
         }
       }
-      expect(listContextEngineQuarantines()).toEqual([]);
+      expect(await listContextEngineQuarantines()).toEqual([]);
     });
     expect(factory).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();

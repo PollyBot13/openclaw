@@ -89,7 +89,9 @@ export function setPluginRuntimeLoadContext(
     activationResultFingerprint: activationResultFingerprint(context),
     ...(capturedIdentity ? { loaderCacheIdentity: capturedIdentity } : {}),
     // Selection belongs to the generation that registered these closures, not later metadata.
-    selectedContextEngine: previous ? previous.selectedContextEngine : context.selectedContextEngine,
+    selectedContextEngine: previous
+      ? previous.selectedContextEngine
+      : context.selectedContextEngine,
     // Host preparation may rebind metadata, but it cannot change already-registered closures.
     registrationConfigKey:
       previous?.registrationConfigKey ??

@@ -23,6 +23,50 @@ afterEach(() => {
 });
 afterAll(cleanupPluginLoaderFixturesForTest);
 
+it.each([false, true])(
+  "preserves declared ownership when repairing plugin-ID selection: %s",
+  async (hasDeclaredOwner) => {
+    useNoBundledPlugins();
+    vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+    const plugins = [
+      { id: "vendor-plugin", engineId: "canonical-engine" },
+      ...(hasDeclaredOwner ? [{ id: "owner-a", engineId: "vendor-plugin" }] : []),
+    ].map(({ id, engineId }) => {
+      const plugin = writePlugin({
+        id,
+        filename: "index.cjs",
+        body: "throw new Error(" + JSON.stringify("slot selection must not import runtime") + ");",
+      });
+      fs.writeFileSync(
+        path.join(plugin.dir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id,
+          kind: "context-engine",
+          contextEngineIds: [engineId],
+          configSchema: EMPTY_PLUGIN_SCHEMA,
+        }),
+      );
+      return plugin;
+    });
+    const config: OpenClawConfig = {
+      plugins: {
+        allow: plugins.map((plugin) => plugin.id),
+        load: { paths: plugins.map((plugin) => plugin.file) },
+        slots: { memory: "none", contextEngine: "vendor-plugin" },
+      },
+    };
+    const metadata = loadPluginMetadataSnapshot({
+      config,
+      allowCurrent: false,
+      preferPersisted: false,
+    });
+    const selected = await applySlotSelectionForPlugin(config, "vendor-plugin", metadata);
+    expect(selected.config.plugins?.slots?.contextEngine).toBe(
+      hasDeclaredOwner ? "vendor-plugin" : "canonical-engine",
+    );
+  },
+);
+
 it.each(["unapproved", "reassigned", "enabled", "allowlisted", "denied", "disabled"] as const)(
   "checks %s workspace ownership before module execution",
   async (policy) => {

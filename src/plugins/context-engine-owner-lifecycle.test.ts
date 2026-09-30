@@ -19,8 +19,8 @@ import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.
 import { disposePluginRegistryInstances } from "./runtime.js";
 import { getPluginRuntimeLoadContextState } from "./runtime/load-context-state.js";
 
-afterEach(() => {
-  resetContextEngineRuntimeQuarantineForTests();
+afterEach(async () => {
+  await resetContextEngineRuntimeQuarantineForTests();
   resetPluginLoaderTestStateForTest();
   clearPluginMetadataLifecycleCaches();
   vi.unstubAllEnvs();
@@ -150,7 +150,7 @@ it("rebuilds declared factories when switching engines on the same owner", async
       previousRegistry: replacement,
     });
     try {
-      ensureContextEnginesInitialized();
+      await ensureContextEnginesInitialized();
       expect(unchanged.plugins.find((plugin) => plugin.id === "ordinary")).toBe(
         replacement.plugins.find((plugin) => plugin.id === "ordinary"),
       );
@@ -174,8 +174,11 @@ it("rebuilds declared factories when switching engines on the same owner", async
           await turn.configured.engine.assemble({ sessionId: "synthetic", messages: [] }),
         ).toMatchObject({ systemPromptAddition: "vendor" });
       } finally {
-        for (const engine of new Set([turn.configured.engine, turn.fallback.engine])) {
-          await disposeContextEngineSources(engine, turn.sourceResources?.get(engine) ?? []);
+        for (const turnEngine of new Set([turn.configured.engine, turn.fallback.engine])) {
+          await disposeContextEngineSources(
+            turnEngine,
+            turn.sourceResources?.get(turnEngine) ?? [],
+          );
         }
       }
       expect(fs.readFileSync(path.join(workspaceDir, "factories"), "utf8")).toBe(
@@ -215,10 +218,11 @@ it.each(["standalone", "logical-turn"] as const)(
         declaredEngineIds: ["existing-engine"],
       }),
     ];
-    // Neither plugin has independent approval; only the memory slot admits ordinary capability.
+    // A restrictive allowlist leaves neither plugin approved; the memory slot still admits its owner.
     const config: OpenClawConfig = {
       plugins: {
         load: { paths: plugins.map((plugin) => plugin.file) },
+        allow: ["unrelated-plugin"],
         slots: { memory: "existing-engine", contextEngine: "existing-engine" },
       },
     };
@@ -229,7 +233,7 @@ it.each(["standalone", "logical-turn"] as const)(
       runtimeSideEffects: true,
     });
     try {
-      ensureContextEnginesInitialized();
+      await ensureContextEnginesInitialized();
       expect(fs.readFileSync(path.join(workspaceDir, "registrations"), "utf8")).toBe(
         "existing-engine\n",
       );

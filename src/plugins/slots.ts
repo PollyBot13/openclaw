@@ -9,12 +9,6 @@ import type { PluginKind } from "./plugin-kind.types.js";
 
 export type PluginSlotKey = keyof PluginSlotsConfig;
 
-type SlotPluginRecord = {
-  id: string;
-  kind?: PluginKind | PluginKind[];
-  contextEngineIds?: readonly string[];
-};
-
 const SLOT_BY_KIND: Record<PluginKind, PluginSlotKey> = {
   memory: "memory",
   "context-engine": "contextEngine",
@@ -146,7 +140,7 @@ export function applyExclusiveSlotSelection(params: {
   selectedId: string;
   selectedKind?: PluginKind | PluginKind[];
   contextEngineIds?: readonly string[];
-  registry?: { plugins: SlotPluginRecord[] };
+  legacyContextEngineOwnerId?: string;
 }): SlotSelectionResult {
   const slotKeys = slotKeysForPluginKind(params.selectedKind);
   if (slotKeys.length === 0) {
@@ -174,7 +168,11 @@ export function applyExclusiveSlotSelection(params: {
         );
         continue;
       }
-      if (prevSlot && prevSlot !== defaultSlotIdForKey(slotKey) && prevSlot !== params.selectedId) {
+      if (
+        prevSlot &&
+        prevSlot !== defaultSlotIdForKey(slotKey) &&
+        (prevSlot !== params.selectedId || params.legacyContextEngineOwnerId !== params.selectedId)
+      ) {
         warnings.push(
           `Preserved explicit context engine selection "${prevSlot}". To use "${params.selectedId}", set plugins.slots.contextEngine to "${engineIds[0]}".`,
         );
@@ -189,47 +187,7 @@ export function applyExclusiveSlotSelection(params: {
       slots[slotKey] = nextSlot;
     }
 
-    const disabledIds: string[] = [];
-    if (params.registry) {
-      for (const plugin of params.registry.plugins) {
-        if (plugin.id === params.selectedId) {
-          continue;
-        }
-        const kindForSlot = (Object.keys(SLOT_BY_KIND) as PluginKind[]).find(
-          (k) => SLOT_BY_KIND[k] === slotKey,
-        );
-        if (!kindForSlot || !hasKind(plugin.kind, kindForSlot)) {
-          continue;
-        }
-        // Don't disable a plugin that still owns another slot (explicit or default).
-        const stillOwnsOtherSlot = (Object.keys(SLOT_BY_KIND) as PluginKind[])
-          .map((k) => SLOT_BY_KIND[k])
-          .filter((sk) => sk !== slotKey)
-          .some((sk) =>
-            sk === "contextEngine"
-              ? (plugin.contextEngineIds ?? [plugin.id]).includes(
-                  slots[sk] ?? defaultSlotIdForKey(sk),
-                )
-              : (slots[sk] ?? defaultSlotIdForKey(sk)) === plugin.id,
-          );
-        if (stillOwnsOtherSlot) {
-          continue;
-        }
-        const entry = entries[plugin.id];
-        if (!entry || entry.enabled !== false) {
-          entries[plugin.id] = { ...entry, enabled: false };
-          disabledIds.push(plugin.id);
-        }
-      }
-    }
-
-    if (disabledIds.length > 0) {
-      warnings.push(
-        `Disabled other "${slotKey}" slot plugins: ${disabledIds.toSorted().join(", ")}.`,
-      );
-    }
-
-    if (prevSlot !== nextSlot || disabledIds.length > 0) {
+    if (prevSlot !== nextSlot) {
       anyChanged = true;
     }
   }

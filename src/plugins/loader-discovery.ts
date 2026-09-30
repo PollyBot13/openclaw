@@ -2,30 +2,14 @@ import {
   resolveEligibleContextEngineDeclaredOwners,
   withContextEngineOwner,
 } from "./config-state.js";
-import {
-  discoverOpenClawPlugins,
-  type PluginCandidate,
-  type PluginDiscoveryResult,
-} from "./discovery.js";
+import { discoverOpenClawPlugins } from "./discovery.js";
 import type { PluginLoadCacheContext } from "./loader-load-context.js";
 import { buildProvenanceIndex, warnWhenAllowlistIsOpen } from "./loader-provenance.js";
 import { createPluginCandidatesFromManifestRegistry } from "./loader-shared.js";
 import type { PluginLoadOptions } from "./loader-types.js";
-import {
-  loadPluginManifestRegistryCore,
-  type PluginManifestRecord,
-  type PluginManifestRegistry,
-} from "./manifest-registry.js";
+import { loadPluginManifestRegistryCore } from "./manifest-registry.js";
 import type { PluginDiagnostic } from "./manifest-types.js";
 import type { PluginLogger } from "./types.js";
-
-type ResolvedPluginLoadDiscovery = {
-  discovery: PluginDiscoveryResult;
-  manifestRegistry: PluginManifestRegistry;
-  orderedCandidates: PluginCandidate[];
-  manifestBySource: Map<string, PluginManifestRecord>;
-  provenance: ReturnType<typeof buildProvenanceIndex>;
-};
 
 export function resolvePluginLoadDiscovery(params: {
   options: PluginLoadOptions;
@@ -35,7 +19,7 @@ export function resolvePluginLoadDiscovery(params: {
   onlyPluginIdSet: ReadonlySet<string> | null;
   emitWarning: boolean;
   warningCacheKey: string;
-}): ResolvedPluginLoadDiscovery {
+}) {
   const { options, context } = params;
   // The load context has already verified workspace, environment, config, and
   // plugin scope against the current lifecycle-owned metadata generation.
@@ -116,5 +100,5 @@ export function resolvePluginLoadDiscovery(params: {
   const orderedCandidates = discovery.candidates.filter((candidate) =>
     manifestBySource.has(candidate.source),
   );
-  return { discovery, manifestRegistry, orderedCandidates, manifestBySource, provenance };
+  return { manifestRegistry, orderedCandidates, manifestBySource, provenance };
 }

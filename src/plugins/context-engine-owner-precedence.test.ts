@@ -95,7 +95,9 @@ module.exports = { id: ${JSON.stringify(id)}, kind: "context-engine", register(a
     }
     expect(
       registry.diagnostics.some((entry) =>
-        entry.message.includes("context engine already registered: existing-engine (plugin:new-owner)"),
+        entry.message.includes(
+          "context engine already registered: existing-engine (plugin:new-owner)",
+        ),
       ),
     ).toBe(legacyRegisters);
   } finally {
