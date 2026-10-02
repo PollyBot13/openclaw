@@ -41,6 +41,7 @@ export type ConfigureWizardParams = {
 export const CONFIGURE_SECTION_OPTIONS = [
   { value: "workspace", label: "Workspace", hint: "Set workspace + sessions" },
   { value: "model", label: "Model", hint: "Pick provider + credentials" },
+  { value: "memory", label: "Memory search", hint: "Choose and verify embeddings" },
   { value: "web", label: "Web tools", hint: "Configure web search (Perplexity/Brave) + fetch" },
   { value: "gateway", label: "Gateway", hint: "Port, bind, auth, tailscale" },
   {
