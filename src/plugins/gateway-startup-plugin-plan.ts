@@ -7,6 +7,7 @@ import {
   type AmbientEnvTriggerPolicy,
 } from "../channels/config-presence.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { configuredRouterProviderIds } from "../decisions/selection.js";
 import { listGatewayActivatedChannelIds } from "./channel-presence-policy.js";
 import { canStartConfiguredChannelPlugin } from "./channel-startup-policy.js";
 import {
@@ -113,9 +114,10 @@ export function resolveGatewayStartupPluginPlanFromRegistry(params: {
   const configuredVoiceProviderIds = collectConfiguredVoiceProviderIds(activationSourceConfig);
   const configuredMemoryEmbeddingProviderIds =
     collectConfiguredMemoryEmbeddingProviderIds(activationSourceConfig);
-  const configuredDecisionProviderIds = new Set(
-    getConfiguredDecisionProviderIds(activationSourceConfig),
-  );
+  const configuredDecisionProviderIds = new Set([
+    ...getConfiguredDecisionProviderIds(activationSourceConfig),
+    ...configuredRouterProviderIds(activationSourceConfig, params.manifestRegistry.plugins),
+  ]);
   const configuredWorkerProviderIds = new Set([
     ...collectConfiguredWorkerProviderIds(activationSourceConfig),
     ...normalizeWorkerProviderIds(params.workerProviderIds ?? []),

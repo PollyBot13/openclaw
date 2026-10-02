@@ -621,6 +621,7 @@ src/daemon/constants.ts
 src/daemon/runtime-binary.ts
 src/daemon/service-inspection-error.ts
 src/daemon/service-process-env.ts
+src/decisions/task-ids.ts
 src/gateway/control-ui-bootstrap-contract.ts
 src/gateway/control-ui-session-prs-git.runtime.ts
 src/gateway/control-ui-session-prs-landing.ts
@@ -1128,6 +1129,7 @@ src/plugins/manifest-command-aliases.ts
 src/plugins/manifest-config-groups.ts
 src/plugins/manifest-contract-eligibility.ts
 src/plugins/manifest-contract-keys.ts
+src/plugins/manifest-decision-routing.ts
 src/plugins/manifest-install-owner.ts
 src/plugins/manifest-metadata-scan.ts
 src/plugins/manifest-model-id-normalization.ts

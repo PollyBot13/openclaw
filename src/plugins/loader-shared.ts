@@ -299,6 +299,7 @@ function createManifestPluginRecord(params: {
     contracts: manifestRecord.contracts,
     dashboard: manifestRecord.dashboard,
     controlUi: manifestRecord.controlUi,
+    decisionRouter: manifestRecord.decisionRouter,
     uiCapabilities: manifestRecord.uiCapabilities,
     mcpServers: manifestRecord.mcpServers,
   });

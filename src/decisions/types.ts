@@ -1,3 +1,5 @@
+import type { DecisionTaskId } from "./task-ids.js";
+
 /** Typed decision contract, version 1. */
 export type JsonValue =
   | null
@@ -143,6 +145,8 @@ export interface DecisionRuntimeV1 {
     options: {
       /** Omit for the default role; agent-owned work supplies its owner agent. */
       readonly agentId?: string;
+      /** Host-checked consumer identity; purpose remains diagnostic only. */
+      readonly taskId?: DecisionTaskId;
       readonly purpose: string;
       readonly rubricVersion: string;
       readonly timeoutMs: number;

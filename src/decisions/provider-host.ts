@@ -174,10 +174,12 @@ export class DecisionProviderHost {
     }
   }
 
-  inspect(config: OpenClawConfig) {
+  inspect(config: OpenClawConfig, configuredProviderIds?: readonly string[]) {
     const health = this.generation(config);
     const instance = getPluginInstance(this.record);
-    const configured = getConfiguredDecisionProviderIds(config).includes(this.provider.id);
+    const configured = (configuredProviderIds ?? getConfiguredDecisionProviderIds(config)).includes(
+      this.provider.id,
+    );
     const enabled =
       config.plugins?.enabled !== false &&
       config.plugins?.entries?.[this.record.id]?.enabled !== false;
@@ -214,6 +216,8 @@ export class DecisionProviderHost {
     registry: PluginRegistry,
     consumerId?: string,
     isAdmissible?: () => boolean,
+    isSelectionCurrent?: (config: OpenClawConfig) => boolean,
+    currentConfigReader?: () => OpenClawConfig,
   ): Promise<DecisionOutcome> {
     const started = performance.now();
     const facts: DecisionEvaluationFacts = { dispatched: false };
@@ -228,6 +232,8 @@ export class DecisionProviderHost {
         facts,
         consumerId,
         isAdmissible,
+        isSelectionCurrent,
+        currentConfigReader,
       );
       return outcome;
     } finally {
@@ -251,6 +257,8 @@ export class DecisionProviderHost {
     facts: DecisionEvaluationFacts,
     consumerId?: string,
     isAdmissible?: () => boolean,
+    isSelectionCurrent?: (config: OpenClawConfig) => boolean,
+    currentConfigReader?: () => OpenClawConfig,
   ): Promise<DecisionOutcome> {
     options.signal.throwIfAborted();
     const instance = getPluginInstance(this.record);
@@ -263,7 +271,7 @@ export class DecisionProviderHost {
       facts.jsonInputBytes = Buffer.byteLength(JSON.stringify(submitted));
     }
     const health = this.generation(config);
-    const readConfig = createRuntimeConfigReader(config);
+    const readConfig = currentConfigReader ?? createRuntimeConfigReader(config);
     if (!instance.runInRegistry(registry, () => this.ready())) {
       return this.unavailable("credentials-unavailable");
     }
@@ -327,14 +335,17 @@ export class DecisionProviderHost {
         throw error;
       }
       const currentConfig = readConfig();
-      const selection = resolveDecisionModelSetting(currentConfig, options.agentId);
+      const selection = isSelectionCurrent
+        ? undefined
+        : resolveDecisionModelSetting(currentConfig, options.agentId);
       if (
         getActiveSecretsRuntimeSnapshotRevisionState() !== health.secretRevision ||
         this.health !== health ||
         currentConfig.plugins?.enabled === false ||
         !isDeepStrictEqual(currentConfig.plugins?.entries?.[this.record.id], health.config) ||
-        selection?.provider !== this.provider.id ||
-        selection.model !== model
+        (isSelectionCurrent
+          ? !isSelectionCurrent(currentConfig)
+          : selection?.provider !== this.provider.id || selection.model !== model)
       ) {
         return this.unavailable("retiring");
       }
@@ -343,6 +354,10 @@ export class DecisionProviderHost {
     try {
       // Await physical settlement. A callback that ignores abort keeps its native lease
       // and is fenced by normal failed-drain recovery, never detached as "disposed".
+      const beforeDispatch = interrupted();
+      if (beforeDispatch) {
+        return beforeDispatch;
+      }
       let outcome;
       let questions: DecisionBatch["questions"];
       try {
@@ -357,16 +372,13 @@ export class DecisionProviderHost {
               ...(options.agentId ? { agentId: options.agentId } : {}),
               signal,
               deadlineMonotonicMs,
-              ...(isAdmissible
-                ? {
-                    isAdmissible: () => {
-                      // The same owner fences consumer and provider generations. Keep
-                      // its observed outcome even if config changes back during cleanup.
-                      observedInterruption ??= interrupted();
-                      return observedInterruption === undefined;
-                    },
-                  }
-                : {}),
+              isAdmissible: () => {
+                // The provider's final I/O guard must fence selection changes even
+                // when this caller has no separate consumer admission callback.
+                // Keep the observed outcome if config changes back during cleanup.
+                observedInterruption ??= interrupted();
+                return observedInterruption === undefined;
+              },
             });
           },
           // The provider callback's physical settlement is already tracked by

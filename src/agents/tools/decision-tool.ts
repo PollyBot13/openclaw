@@ -1,7 +1,9 @@
 import { getRuntimeConfig } from "../../config/config.js";
+import { resolveDecisionSelection } from "../../decisions/selection.js";
+import { CORE_DECISION_TASKS } from "../../decisions/task-ids.js";
 import { getGatewayPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-state.js";
 import { listAvailableManifestContractPlugins } from "../../plugins/manifest-contract-eligibility.js";
-import { resolveDecisionModelSetting } from "../decision-model-setting.js";
+import { getPluginRegistryForContext } from "../../plugins/runtime/gateway-request-scope.js";
 import type { OpenClawToolsOptions } from "../openclaw-tools.types.js";
 import type { AnyAgentTool } from "./common.js";
 import {
@@ -19,7 +21,12 @@ export function createDecisionTool(
   options?: Pick<OpenClawToolsOptions, "config" | "preparedModelRuntime">,
 ): AnyAgentTool | null {
   const config = options?.config ?? getRuntimeConfig();
-  const selected = resolveDecisionModelSetting(config, agentId);
+  const selected = resolveDecisionSelection(
+    config,
+    agentId,
+    CORE_DECISION_TASKS.decisionEvaluate,
+    getPluginRegistryForContext(),
+  );
   if (!agentId.trim() || !selected) {
     return null;
   }
@@ -60,7 +67,12 @@ export function createDecisionTool(
       const { evaluateDecision } = await import("../../decisions/runtime.js");
       operationSignal.throwIfAborted();
       const currentConfig = getRuntimeConfig();
-      const currentSelection = resolveDecisionModelSetting(currentConfig, agentId);
+      const currentSelection = resolveDecisionSelection(
+        currentConfig,
+        agentId,
+        CORE_DECISION_TASKS.decisionEvaluate,
+        getPluginRegistryForContext(),
+      );
       const currentCapabilities =
         currentSelection &&
         models.find(
@@ -69,6 +81,7 @@ export function createDecisionTool(
         )?.capabilities;
       const outcome = await evaluateDecision(batch, {
         agentId,
+        taskId: CORE_DECISION_TASKS.decisionEvaluate,
         purpose: "decision_evaluate",
         rubricVersion: rubricVersion(batch),
         timeoutMs: 30_000,

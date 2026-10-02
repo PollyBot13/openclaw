@@ -1,7 +1,8 @@
 import { bindOperatorModelExecution } from "../agents/admitted-run-context.js";
-import { resolveDecisionModelSetting } from "../agents/decision-model-setting.js";
+import { getConfiguredDecisionProviderIds } from "../agents/decision-model-setting.js";
 import { normalizeModelRef } from "../agents/model-ref-shared.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { createRuntimeConfigReader } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { captureAmbientGatewayOperatorAuthority } from "../gateway/operator-invocation-authority.js";
 import { getProcessGatewayPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-state.js";
@@ -17,6 +18,12 @@ import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import { logDecisionEvaluation } from "./diagnostics.js";
 import type { DecisionProviderHost } from "./provider-host.js";
+import {
+  configuredRouterProviderIds,
+  resolveDecisionSelection,
+  sameDecisionSelection,
+} from "./selection.js";
+import { isDecisionTaskId, isDecisionTaskOwnedBy } from "./task-ids.js";
 import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "./types.js";
 import { DecisionContractError, validateDecisionBatch } from "./validation.js";
 
@@ -49,6 +56,8 @@ export async function evaluateDecisionInRegistry(
     !inputOptions ||
     (options.agentId !== undefined &&
       (typeof options.agentId !== "string" || !options.agentId.trim())) ||
+    (options.taskId !== undefined &&
+      (!isDecisionTaskId(options.taskId) || !isDecisionTaskOwnedBy(options.taskId, consumerId))) ||
     typeof options.purpose !== "string" ||
     !options.purpose ||
     options.purpose.length > 128 ||
@@ -70,7 +79,12 @@ export async function evaluateDecisionInRegistry(
   if (!validateDecisionBatch(batch)) {
     return skipped({ status: "unavailable", reason: "unsupported-input" });
   }
-  const selected = resolveDecisionModelSetting(config, options.agentId);
+  const select = (currentConfig: OpenClawConfig) =>
+    resolveDecisionSelection(currentConfig, options.agentId, options.taskId, registry);
+  const selected = select(config);
+  // Bind the runtime owner before operator preparation yields. A reader created
+  // afterwards could pin the already-stale input config as an independent scope.
+  const readConfig = createRuntimeConfigReader(config);
   if (!selected) {
     return skipped({ status: "unavailable", reason: "disabled" });
   }
@@ -143,6 +157,9 @@ export async function evaluateDecisionInRegistry(
     if ((canDispatch && !canDispatch()) || (isAdmissible && !isAdmissible())) {
       return skipped({ status: "unavailable", reason: "disabled" });
     }
+    if (!sameDecisionSelection(selected, select(readConfig()))) {
+      return skipped({ status: "unavailable", reason: "retiring" });
+    }
     const result = await entry.host.evaluate(
       submitted,
       { ...options, signal },
@@ -151,6 +168,8 @@ export async function evaluateDecisionInRegistry(
       registry,
       consumerId,
       isAdmissible,
+      () => sameDecisionSelection(selected, select(readConfig())),
+      readConfig,
     );
     if (!rootCaller) {
       signal.throwIfAborted();
@@ -202,5 +221,12 @@ export function inspectDecisionProviders(
   config: OpenClawConfig,
   registry = getPluginRegistryForContext(),
 ) {
-  return registry?.decisionProviders.map((entry) => entry.host.inspect(config)) ?? [];
+  if (!registry) {
+    return [];
+  }
+  const configured = [
+    ...getConfiguredDecisionProviderIds(config),
+    ...configuredRouterProviderIds(config, registry.plugins),
+  ];
+  return registry.decisionProviders.map((entry) => entry.host.inspect(config, configured));
 }

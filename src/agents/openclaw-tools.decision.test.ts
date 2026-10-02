@@ -5,6 +5,7 @@ import {
 } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { prepareDecisionProviderReload } from "../decisions/runtime.js";
+import { CORE_DECISION_TASKS } from "../decisions/task-ids.js";
 import type {
   DecisionBatch,
   DecisionProviderV1,
@@ -100,6 +101,7 @@ function fixture(
     prepareDecisionProviderReload(builder.registry, new Set([record.id]));
     await getPluginInstance(record)?.dispose();
   });
+  return builder.registry;
 }
 
 // Disable unrelated plugin tool discovery; the core factory and wrappers remain real.
@@ -127,6 +129,62 @@ afterEach(() => {
 });
 
 describe("core decision_evaluate registered flow", () => {
+  it("routes the explicit tool independently and removes it when its task is off", async () => {
+    const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+    const registry = fixture(evaluate);
+    registry.plugins.push(
+      createPluginRecord({
+        id: "router",
+        source: "/synthetic/router.ts",
+        origin: "global",
+        enabled: true,
+        configSchema: true,
+        decisionRouter: { configMapProperty: "byTask" },
+      }),
+    );
+    const routed: OpenClawConfig = {
+      ...config,
+      plugins: {
+        entries: {
+          router: {
+            enabled: true,
+            config: {
+              byTask: {
+                [CORE_DECISION_TASKS.decisionEvaluate]: "fixture/tool-choice",
+              },
+            },
+          },
+        },
+      },
+    };
+    setRuntimeConfigSnapshot(routed);
+    expect((await assembled("main", routed)!.execute("routed", batch)).details).toMatchObject({
+      status: "ok",
+    });
+    expect(evaluate).toHaveBeenLastCalledWith(
+      batch,
+      expect.objectContaining({ model: "tool-choice" }),
+    );
+    const off: OpenClawConfig = {
+      ...routed,
+      plugins: {
+        entries: {
+          router: {
+            enabled: true,
+            config: {
+              byTask: {
+                [CORE_DECISION_TASKS.decisionEvaluate]: { off: true },
+              },
+            },
+          },
+        },
+      },
+    };
+    setRuntimeConfigSnapshot(off);
+    expect(assembled("main", off)).toBeUndefined();
+    expect(assembled("alternate", off)).toBeUndefined();
+    expect(assembled("disabled", routed)).toBeUndefined();
+  });
   it("keeps the explicit tool independent of automatic eligibility through Labs on/off transitions", async () => {
     const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
     fixture(evaluate);

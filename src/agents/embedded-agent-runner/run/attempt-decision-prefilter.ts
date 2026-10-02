@@ -1,9 +1,10 @@
 import { createRuntimeConfigReader } from "../../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { evaluateDecisionInRegistry } from "../../../decisions/runtime.js";
+import { resolveDecisionSelection, sameDecisionSelection } from "../../../decisions/selection.js";
+import { CORE_DECISION_TASKS } from "../../../decisions/task-ids.js";
 import { getPluginRegistryForContext } from "../../../plugins/runtime/gateway-request-scope.js";
 import { isDecisionAssistanceEligible } from "../../decision-assistance.js";
-import { resolveDecisionModelSetting } from "../../decision-model-setting.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import { log } from "../logger.js";
 import { prepareDecisionContext, type DecisionContextFacts } from "./attempt-decision-context.js";
@@ -51,10 +52,11 @@ export async function evaluateAttemptDecisionToolPrefilter(
   params.assertActive();
   const readConfig = createRuntimeConfigReader(params.config);
   const config = readConfig();
+  const registry = getPluginRegistryForContext();
   if (
     !params.agentId.trim() ||
     params.supportsTurnScopedToolRestrictions !== true ||
-    !isDecisionAssistanceEligible(config, params.agentId)
+    !isDecisionAssistanceEligible(config, params.agentId, registry)
   ) {
     return { shouldPruneTools: false, status: "skipped", reason: "ineligible" };
   }
@@ -96,16 +98,23 @@ export async function evaluateAttemptDecisionToolPrefilter(
     };
   }
   const started = log.isEnabled("debug") ? performance.now() : undefined;
-  const selection = resolveDecisionModelSetting(config, params.agentId);
+  const selection = resolveDecisionSelection(
+    config,
+    params.agentId,
+    CORE_DECISION_TASKS.toolPrefilter,
+    registry,
+  );
   const isCurrent = () => {
     params.signal.throwIfAborted();
     params.assertActive();
     const current = readConfig();
-    const currentSelection = resolveDecisionModelSetting(current, params.agentId);
-    return (
-      currentSelection?.provider === selection?.provider &&
-      currentSelection?.model === selection?.model
+    const currentSelection = resolveDecisionSelection(
+      current,
+      params.agentId,
+      CORE_DECISION_TASKS.toolPrefilter,
+      registry,
     );
+    return sameDecisionSelection(selection, currentSelection);
   };
   const outcome = await evaluateDecisionInRegistry(
     {
@@ -143,16 +152,17 @@ export async function evaluateAttemptDecisionToolPrefilter(
     },
     {
       agentId: params.agentId,
+      taskId: CORE_DECISION_TASKS.toolPrefilter,
       purpose: "tool-prefilter.semantic-gate",
       rubricVersion: "9",
       timeoutMs: 500,
       signal: params.signal,
     },
-    getPluginRegistryForContext(),
+    registry,
     config,
     undefined,
     isCurrent,
-    () => isDecisionAssistanceEligible(readConfig(), params.agentId),
+    () => isDecisionAssistanceEligible(readConfig(), params.agentId, registry),
   );
   const facts = {
     context: context.facts,

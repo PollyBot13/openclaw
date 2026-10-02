@@ -7,13 +7,19 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { AgentDefaultsBaseSchema } from "../../../config/zod-schema.agent-defaults-base.js";
 import type { evaluateDecisionInRegistry } from "../../../decisions/runtime.js";
 import type { DecisionOutcome } from "../../../decisions/types.js";
+import { createPluginRecord } from "../../../plugins/loader-records.js";
+import { createEmptyPluginRegistry } from "../../../plugins/registry-empty.js";
+import type { PluginRegistry } from "../../../plugins/registry-types.js";
 import { makeAssistantMessageFixture } from "../../test-helpers/assistant-message-fixtures.js";
 import { evaluateAttemptDecisionToolPrefilter } from "./attempt-decision-prefilter.js";
 
-const mocks = vi.hoisted(() => ({ evaluate: vi.fn<typeof evaluateDecisionInRegistry>() }));
+const mocks = vi.hoisted(() => ({
+  evaluate: vi.fn<typeof evaluateDecisionInRegistry>(),
+  registry: null as PluginRegistry | null,
+}));
 vi.mock("../../../decisions/runtime.js", () => ({ evaluateDecisionInRegistry: mocks.evaluate }));
 vi.mock("../../../plugins/runtime/gateway-request-scope.js", () => ({
-  getPluginRegistryForContext: () => null,
+  getPluginRegistryForContext: () => mocks.registry,
 }));
 const config: OpenClawConfig = {
   agents: {
@@ -46,11 +52,61 @@ function params() {
   };
 }
 beforeEach(() => {
+  mocks.registry = null;
   mocks.evaluate.mockReset().mockResolvedValue(answer());
 });
 afterEach(clearRuntimeConfigSnapshot);
 
 describe("Decision prefilter policy", () => {
+  it("does not prune tools after a routed model changes while the answer is pending", async () => {
+    const registry = createEmptyPluginRegistry();
+    registry.plugins.push(
+      createPluginRecord({
+        id: "router",
+        source: "/synthetic/router.ts",
+        origin: "global",
+        enabled: true,
+        configSchema: true,
+        decisionRouter: { configMapProperty: "byTask" },
+      }),
+    );
+    mocks.registry = registry;
+    const first: OpenClawConfig = {
+      ...config,
+      plugins: {
+        entries: {
+          router: {
+            enabled: true,
+            config: { byTask: { "core/tool-prefilter": "fixture/first" } },
+          },
+        },
+      },
+    };
+    const second: OpenClawConfig = {
+      ...config,
+      plugins: {
+        entries: {
+          router: {
+            enabled: true,
+            config: { byTask: { "core/tool-prefilter": "fixture/second" } },
+          },
+        },
+      },
+    };
+    setRuntimeConfigSnapshot(first);
+    mocks.evaluate.mockImplementationOnce(async () => {
+      setRuntimeConfigSnapshot(second);
+      return answer();
+    });
+    expect(
+      await evaluateAttemptDecisionToolPrefilter({ ...params(), config: first }),
+    ).toMatchObject({
+      shouldPruneTools: false,
+      status: "retained",
+      reason: "selection-changed",
+    });
+  });
+
   it("forwards one atomic Boolean batch, labeled hook fields, owner and 500ms budget", async () => {
     const promptBuildFields = {
       systemPrompt: "  replacement system  ",
@@ -87,6 +143,7 @@ describe("Decision prefilter policy", () => {
     ]);
     expect(options).toEqual({
       agentId: "main",
+      taskId: "core/tool-prefilter",
       purpose: "tool-prefilter.semantic-gate",
       rubricVersion: "9",
       timeoutMs: 500,

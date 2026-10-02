@@ -11,6 +11,7 @@ import { coerceDoctorSessionRouteStateOwners } from "./doctor-session-route-stat
 import * as capabilityNormalizers from "./manifest-capability-normalizers.js";
 import { normalizeManifestCommandAliases } from "./manifest-command-aliases.js";
 import { normalizeConfigGroups } from "./manifest-config-groups.js";
+import { parseManifestDecisionRouter } from "./manifest-decision-routing.js";
 import * as modelProviderNormalizers from "./manifest-model-provider-normalizers.js";
 import { normalizeManifestPlatforms } from "./manifest-platforms.js";
 import * as setupNormalizers from "./manifest-setup-normalizers.js";
@@ -205,6 +206,14 @@ export function loadPluginManifest(
   if (!configSchema) {
     return cacheResult({ ok: false, error: "plugin manifest requires configSchema", manifestPath });
   }
+  const decisionRouter = parseManifestDecisionRouter(raw.decisionRouter, configSchema);
+  if (!decisionRouter.ok) {
+    return cacheResult({
+      ok: false,
+      error: `invalid plugin manifest: ${decisionRouter.error}`,
+      manifestPath,
+    });
+  }
   const backupResources = parseManifestBackupResources(raw.backupResources);
   if (!backupResources.ok) {
     return cacheResult({
@@ -369,6 +378,7 @@ export function loadPluginManifest(
         raw.decisionModels,
         contracts?.decisionProviders,
       ),
+      decisionRouter: decisionRouter.value,
       transcriptSources: capabilityNormalizers.normalizeManifestTranscriptSources(
         raw.transcriptSources,
         contracts?.transcriptSourceProviders,

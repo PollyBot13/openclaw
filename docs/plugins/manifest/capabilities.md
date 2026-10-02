@@ -170,6 +170,23 @@ malformed `questionTypes` value removes the whole capability descriptor but does
 not remove the model entry. Duplicate `provider/id` entries keep the first valid
 model descriptor.
 
+## Decision routers
+
+Core reserves `core/tool-prefilter` and `core/decision-evaluate` as task IDs.
+
+`decisionRouter: { "configMapProperty": "byTask" }` declares an optional
+router whose `configSchema.properties.byTask` is an object map with an
+`additionalProperties` schema. The host reads that plugin-owned, schema-validated
+map at startup and at selection time; no plugin callback runs to choose a
+model. Set `plugins.entries.<router-id>.enabled` to `true` explicitly. The
+router's global map uses task IDs as keys and
+`provider/model` strings or `{ "off": true }` as values. An absent entry
+inherits the agent/global `decisionModel`. An explicit empty per-agent
+`decisionModel` still disables all tasks, and a scalar Decision selection is
+required before any override is active. The host supports only one enabled
+router at a time; disabling it restores scalar selection. Merely declaring a
+router grants no provider credentials, consumer opt-in, or action authority.
+
 ## Tool metadata reference
 
 `toolMetadata` uses the same `configSignals` and `authSignals` shapes as generation provider metadata, keyed by tool name. `contracts.tools` declares ownership. `toolMetadata` declares cheap availability evidence so OpenClaw can avoid importing a plugin runtime just to have its tool factory return `null`.

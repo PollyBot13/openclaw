@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveGatewayStartupMetadataPluginIds } from "./gateway-startup-plugin-metadata.js";
@@ -11,6 +14,12 @@ function fixture() {
         id: "decision-plugin",
         enabledByDefault: false,
         contracts: { decisionProviders: ["decision-provider"] },
+      },
+      {
+        id: "router",
+        enabledByDefault: false,
+        activation: { onStartup: true },
+        decisionRouter: { configMapProperty: "byTask" },
       },
       { id: "allowed-plugin" },
     ],
@@ -30,6 +39,28 @@ function fixture() {
 }
 
 describe("decision provider startup", () => {
+  it("activates a provider referenced only by an explicitly enabled router map", () => {
+    const metadata = fixture();
+    const plan = resolveGatewayStartupPluginPlanFromRegistry({
+      config: {
+        agents: { defaults: { decisionModel: "other/default" } },
+        plugins: {
+          entries: {
+            router: {
+              enabled: true,
+              config: { byTask: { "core/tool-prefilter": "decision-provider/fast" } },
+            },
+          },
+        },
+      },
+      env: {},
+      index: metadata.index,
+      manifestRegistry: metadata.manifestRegistry,
+    });
+    expect(plan.pluginIds).toContain("decision-plugin");
+    expect(plan.pluginIds).toContain("router");
+  });
+
   it.each<{ name: string; config: OpenClawConfig; expected: string[] }>([
     { name: "unselected", config: {}, expected: [] },
     {
@@ -63,15 +94,21 @@ describe("decision provider startup", () => {
   });
 
   it("maps per-agent provider IDs through contract ownership in metadata scopes", () => {
-    expect(
-      resolveGatewayStartupMetadataPluginIds({
-        config: {
-          agents: { entries: { specialist: { decisionModel: "decision-provider/fast" } } },
-          plugins: { allow: ["allowed-plugin"], slots: { memory: "none" } },
-        },
-        env: {},
-        index: fixture().index,
-      }),
-    ).toEqual(["allowed-plugin", "decision-plugin"]);
+    const stateDir = mkdtempSync(join(tmpdir(), "openclaw-decision-startup-"));
+    try {
+      expect(
+        resolveGatewayStartupMetadataPluginIds({
+          config: {
+            agents: { entries: { specialist: { decisionModel: "decision-provider/fast" } } },
+            plugins: { allow: ["allowed-plugin"], slots: { memory: "none" } },
+          },
+          // Metadata scope must not inherit this machine's bundled-discovery upgrade state.
+          env: { OPENCLAW_STATE_DIR: stateDir },
+          index: fixture().index,
+        }),
+      ).toEqual(["allowed-plugin", "decision-plugin"]);
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,5 +1,7 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveDecisionModelSetting } from "./decision-model-setting.js";
+import { resolveDecisionSelection } from "../decisions/selection.js";
+import { CORE_DECISION_TASKS } from "../decisions/task-ids.js";
+import type { PluginRegistry } from "../plugins/registry-types.js";
 
 /**
  * Outer eligibility only, over prepared config and a trusted owning agent ID.
@@ -9,9 +11,14 @@ import { resolveDecisionModelSetting } from "./decision-model-setting.js";
  * selection and live authority remain independently checked for awaited results.
  * Explicit decision_evaluate and the shared Decision runtime remain independent.
  */
-export function isDecisionAssistanceEligible(config: OpenClawConfig, agentId: string): boolean {
+export function isDecisionAssistanceEligible(
+  config: OpenClawConfig,
+  agentId: string,
+  registry?: PluginRegistry | null,
+): boolean {
   return (
     config.agents?.defaults?.experimental?.decisionAssistance === true &&
-    resolveDecisionModelSetting(config, agentId) !== undefined
+    resolveDecisionSelection(config, agentId, CORE_DECISION_TASKS.toolPrefilter, registry) !==
+      undefined
   );
 }

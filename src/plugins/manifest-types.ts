@@ -413,6 +413,11 @@ export type PluginManifestDecisionModel = {
   capabilities?: DecisionProviderCapabilities;
 };
 
+/** The host reads this plugin-owned config map for Decision selection and startup. */
+export type PluginManifestDecisionRouter = {
+  configMapProperty: string;
+};
+
 export type PluginManifest = {
   id: string;
   configSchema: JsonSchemaObject;
@@ -523,6 +528,7 @@ export type PluginManifest = {
   contracts?: PluginManifestContracts;
   /** Static model choices owned by contracts.decisionProviders; never conversational models. */
   decisionModels?: PluginManifestDecisionModel[];
+  decisionRouter?: PluginManifestDecisionRouter;
   /** Setup descriptors keyed by ids owned in contracts.transcriptSourceProviders. */
   transcriptSources?: Record<string, PluginManifestTranscriptSource>;
   /** Cheap media-understanding provider defaults without importing plugin runtime. */

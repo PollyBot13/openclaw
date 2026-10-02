@@ -54,6 +54,7 @@ export function createPluginRecord(params: {
   contracts?: PluginManifestContracts;
   dashboard?: PluginManifestDashboard;
   controlUi?: PluginManifestControlUi;
+  decisionRouter?: PluginRecord["decisionRouter"];
   uiCapabilities?: PluginRecord["uiCapabilities"];
   mcpServers?: Record<string, PluginManifestMcpServer>;
 }): PluginRecord {
@@ -115,6 +116,7 @@ export function createPluginRecord(params: {
     contracts: params.contracts,
     dashboard: params.dashboard,
     controlUi: params.controlUi,
+    decisionRouter: params.decisionRouter,
     uiCapabilities: params.uiCapabilities,
     mcpServers: params.mcpServers,
   };

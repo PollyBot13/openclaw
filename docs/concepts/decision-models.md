@@ -90,6 +90,23 @@ An unset agent override inherits the global default. An empty agent override
 disables decisions for that agent. An unset or empty global default leaves the
 role off. There is no automatic fallback to a conversational model.
 
+## Optional task routing
+
+Core currently has two stable task IDs: `core/tool-prefilter` and
+`core/decision-evaluate`. A router plugin may assign a different Decision model
+to each one.
+
+An optional router plugin can declare a validated, global task-to-model map.
+Without an enabled router, selection stays with the agent/global `decisionModel`.
+With a router, an absent task entry inherits that scalar selection; a
+`provider/model` entry overrides it, and `{ "off": true }` disables that task.
+Removing the entry restores inheritance, and disabling the router restores
+scalar selection without erasing its saved map. An explicit per-agent
+`decisionModel: ""` always disables Decision calls for that agent. A scalar
+Decision model must be selected before task overrides become active. Only one
+enabled Decision router is supported at a time. Task maps do not enable Labs
+features or bypass normal tool policy and provider authorization.
+
 For local setup verification, `openclaw onnx models` lists the presets and
 `openclaw onnx probe gliclass-edge-v3.0` runs a Choice, Score, and Boolean smoke
 evaluation after the model has been downloaded.
@@ -222,7 +239,10 @@ const outcome = await api.runtime.decisions.evaluate(
 );
 ```
 
-The host selects the provider and model from the owning agent's configuration.
+The host selects the provider and model from the owning agent's configuration,
+or a task override for one of the two core tasks when an enabled Decision router
+has an assignment. Plugin callers cannot claim a core task ID; `purpose` is
+diagnostic and does not authorize task routing.
 `purpose` identifies the consumer operation; `rubricVersion` identifies its rubric
 in result provenance. They do not replace question instructions. Change the
 rubric version when its meaning changes. Omit `agentId` only when intentionally
