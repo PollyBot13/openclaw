@@ -1,11 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type {
   EmbeddingProviderAdapter,
   EmbeddingProvider,
   EmbeddingProviderCreateResult,
 } from "../plugins/embedding-provider-types.js";
+import type { MemoryEmbeddingProviderAdapter } from "../plugins/memory-embedding-providers.js";
 import { WizardCancelledError } from "../wizard/prompts.js";
 import { runMemorySetupFlow } from "./memory-setup.js";
 
@@ -42,7 +44,7 @@ vi.mock("../cli/command-secret-targets.js", () => ({
   getMemoryEmbeddingCommandSecretTargetIds: () => new Set(["models.providers.*.apiKey"]),
 }));
 
-function adapter(id = "remote-a", provider?: EmbeddingProvider): EmbeddingProviderAdapter {
+function adapter(id = "remote-a", provider?: EmbeddingProvider): MemoryEmbeddingProviderAdapter {
   return {
     id,
     defaultModel: "embed-default",
@@ -84,6 +86,77 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("memory setup", () => {
+  it.each([
+    { selected: "openai", model: "text-embedding-3-small", fallback: "none" as const },
+    { selected: "gemini", model: "gemini-embedding-001", fallback: "none" as const },
+    { selected: "gemini", model: "gemini-embedding-2-preview", fallback: "openai" as const },
+  ])(
+    "preserves multimodal config for incompatible $selected/$model/$fallback",
+    async ({ selected, model, fallback }) => {
+      const chosen = adapter(selected);
+      chosen.supportsMultimodalEmbeddings = ({ model: candidateModel }) =>
+        selected === "gemini" && candidateModel === "gemini-embedding-2-preview";
+      mocks.get.mockReturnValue(chosen);
+      const config: OpenClawConfig = {
+        memory: {
+          search: {
+            provider: "gemini",
+            model: "gemini-embedding-2-preview",
+            fallback,
+            multimodal: { enabled: true, modalities: ["image"] },
+            query: { maxResults: 7 },
+          },
+        },
+        agents: { entries: { main: { memory: { search: { enabled: false } } } } },
+      };
+      const original = structuredClone(config);
+      const prompt = prompter({ selects: [selected, "existing"], texts: [model] });
+      const result = await runMemorySetupFlow(config, prompt);
+      expect(result).toBe(config);
+      expect(config).toEqual(original);
+      expect(chosen.create).not.toHaveBeenCalled();
+      expect(prompt.confirm).toHaveBeenCalledOnce();
+      expect(prompt.note).toHaveBeenCalledWith(
+        expect.stringContaining("compatible"),
+        "Memory setup unchanged",
+      );
+    },
+  );
+
+  it("saves compatible multimodal defaults without changing per-agent overrides", async () => {
+    const chosen = adapter("gemini");
+    chosen.supportsMultimodalEmbeddings = ({ model }) => model === "gemini-embedding-2-preview";
+    mocks.get.mockReturnValue(chosen);
+    const config: OpenClawConfig = {
+      memory: {
+        search: {
+          enabled: false,
+          provider: "gemini",
+          model: "gemini-embedding-2-preview",
+          fallback: "none",
+          multimodal: { enabled: true, modalities: ["image"] },
+          query: { maxResults: 7 },
+        },
+      },
+      agents: { entries: { main: { memory: { search: { enabled: false } } } } },
+    };
+    const original = structuredClone(config);
+    const result = await runMemorySetupFlow(
+      config,
+      prompter({ selects: ["gemini", "existing"], texts: ["gemini-embedding-2-preview"] }),
+    );
+    expect(result).not.toBe(config);
+    expect(config).toEqual(original);
+    expect(result.agents).toBe(config.agents);
+    expect(resolveMemorySearchConfig({ ...result, agents: undefined }, "main")).toMatchObject({
+      provider: "gemini",
+      model: "gemini-embedding-2-preview",
+      multimodal: { enabled: true, modalities: ["image"] },
+      query: { maxResults: 7 },
+    });
+    expect(chosen.create).toHaveBeenCalledOnce();
+  });
+
   it("does not reintroduce a registered provider excluded by manifest policy", async () => {
     mocks.registered.mockReturnValue([{ adapter: adapter("disabled-remote") }]);
     mocks.manifestIds.mockReturnValue(["remote-a"]);
@@ -165,7 +238,6 @@ describe("memory setup", () => {
     expect(
       vi.mocked(prompts.select).mock.calls[0]?.[0].options.map((entry) => entry.value),
     ).toEqual(["remote-a", "remote-b"]);
-    expect(mocks.get).toHaveBeenCalledOnce();
     expect(mocks.get).toHaveBeenCalledWith("remote-a", expect.any(Object));
   });
 
@@ -177,7 +249,7 @@ describe("memory setup", () => {
     const result = await runMemorySetupFlow({}, prompts);
     expect(vi.mocked(prompts.text).mock.calls[1]?.[0]).toMatchObject({ sensitive: true });
     expect(result.memory?.search?.remote?.apiKey).toBe("typed-key");
-    expect(mocks.get).toHaveBeenCalledOnce();
+    expect(mocks.get.mock.calls.every(([id]) => id === "remote-a")).toBe(true);
   });
 
   it("keeps existing credentials as the ref-mode default and offers no plaintext entry", async () => {
