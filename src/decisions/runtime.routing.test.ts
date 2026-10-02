@@ -276,13 +276,58 @@ describe("Decision task routing", () => {
         consumer.id,
       ),
     ).rejects.toThrow("Invalid decision contract");
+  });
+
+  it("keeps manual candidate evaluation separate from the live task map", async () => {
+    const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+    const host = registered(evaluate);
+    const evaluator = createPluginRecord({
+      id: "router-evaluator",
+      source: "/synthetic/router-evaluator.ts",
+      origin: "global",
+      enabled: true,
+      configSchema: true,
+      decisionTasks: [
+        {
+          id: "router-evaluator/manual-evaluation",
+          name: "Manual evaluation",
+          description: "Private candidate test",
+          evaluationOnly: true,
+        },
+      ],
+    });
+    runPluginRegisterSyncInRegistry(
+      () => {},
+      host.createApi(evaluator, { config }),
+      host.registry,
+      evaluator.id,
+    );
+    host.registry.plugins.push(evaluator);
+    setRuntimeConfigSnapshot(config);
+    const candidate = await evaluateDecisionInRegistry(
+      batch,
+      {
+        ...options(),
+        taskId: "router-evaluator/manual-evaluation",
+        candidateModel: "fixture/candidate-v2",
+      },
+      host.registry,
+      config,
+      evaluator.id,
+    );
+    expect(candidate).toMatchObject({ status: "ok", provenance: { providerId: "fixture" } });
+    expect(evaluate.mock.calls[0]?.[1].model).toBe("candidate-v2");
+    expect(config.agents?.defaults?.decisionModel).toBe("fixture/fixture-v1");
     await expect(
       evaluateDecisionInRegistry(
         batch,
-        { ...options(), taskId: "task-consumer/check", candidateModel: "fixture/candidate" },
+        {
+          ...options(),
+          taskId: CORE_DECISION_TASKS.toolPrefilter,
+          candidateModel: "fixture/candidate-v2",
+        },
         host.registry,
         config,
-        consumer.id,
       ),
     ).rejects.toThrow("Invalid decision contract");
   });

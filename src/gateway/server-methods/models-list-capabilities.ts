@@ -95,7 +95,9 @@ export function listDecisionTasks({
       continue;
     }
     for (const task of plugin.decisionTasks ?? []) {
-      tasks.push({ ...task, owner: plugin.id });
+      if (!task.evaluationOnly) {
+        tasks.push({ ...task, owner: plugin.id });
+      }
     }
   }
   return tasks;

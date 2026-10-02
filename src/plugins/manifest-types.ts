@@ -419,6 +419,8 @@ export type PluginManifestDecisionTask = {
   id: string;
   name: string;
   description: string;
+  /** Private evaluation-only task; not a live consumer or catalogue row. */
+  evaluationOnly?: boolean;
 };
 
 /** The host reads this plugin-owned config map for Decision selection and startup. */

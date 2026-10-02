@@ -28,7 +28,7 @@ export function parseManifestDecisionTasks(
       typeof entry.description !== "string" ||
       !entry.description.trim() ||
       entry.description.length > 400 ||
-      entry.evaluationOnly !== undefined
+      (entry.evaluationOnly !== undefined && entry.evaluationOnly !== true)
     ) {
       return {
         ok: false,
@@ -40,6 +40,7 @@ export function parseManifestDecisionTasks(
       id: entry.id,
       name: entry.name.trim(),
       description: entry.description.trim(),
+      ...(entry.evaluationOnly === true ? { evaluationOnly: true } : {}),
     });
   }
   return { ok: true, value: tasks };

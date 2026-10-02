@@ -147,6 +147,8 @@ export interface DecisionRuntimeV1 {
       readonly agentId?: string;
       /** Host-checked consumer identity; purpose remains diagnostic only. */
       readonly taskId?: DecisionTaskId;
+      /** Only for a manifest-declared evaluation-only plugin task; never selects live routing. */
+      readonly candidateModel?: string;
       readonly purpose: string;
       readonly rubricVersion: string;
       readonly timeoutMs: number;

@@ -11,9 +11,28 @@ import { DecisionContractError } from "./validation.js";
 export type DecisionSelection = {
   provider: string;
   model: string;
-  source: "scalar" | "router";
+  source: "scalar" | "router" | "candidate";
   router?: PluginRecord;
 };
+
+/** A manual evaluation may name a model, but agent-wide disable still wins. */
+export function resolveCandidateDecisionSelection(
+  config: OpenClawConfig,
+  agentId: string | undefined,
+  candidateModel: string,
+): DecisionSelection | undefined {
+  if (agentId && resolveAgentConfig(config, agentId)?.decisionModel === "") {
+    return undefined;
+  }
+  if (!resolveDecisionModelSetting(config, agentId)) {
+    return undefined;
+  }
+  const selected = parseProviderModelRef(candidateModel);
+  if (!selected) {
+    throw new DecisionContractError();
+  }
+  return { ...selected, source: "candidate" };
+}
 
 /** Selection is a local read of validated plugin config; no plugin code runs on this path. */
 export function resolveDecisionSelection(

@@ -48,17 +48,5 @@ describe("Decision routing manifest", () => {
       }),
     ).toMatchObject({ ok: false });
     expect(load({ decisionRouter: { configMapProperty: "missing" } })).toMatchObject({ ok: false });
-    expect(
-      load({
-        decisionTasks: [
-          {
-            id: "fixture/manual",
-            name: "Manual",
-            description: "Candidate evaluation requires the next contract layer",
-            evaluationOnly: true,
-          },
-        ],
-      }),
-    ).toMatchObject({ ok: false });
   });
 });

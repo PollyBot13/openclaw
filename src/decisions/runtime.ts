@@ -20,6 +20,7 @@ import { logDecisionEvaluation } from "./diagnostics.js";
 import type { DecisionProviderHost } from "./provider-host.js";
 import {
   configuredRouterProviderIds,
+  resolveCandidateDecisionSelection,
   resolveDecisionSelection,
   sameDecisionSelection,
 } from "./selection.js";
@@ -58,7 +59,10 @@ export async function evaluateDecisionInRegistry(
       (typeof options.agentId !== "string" || !options.agentId.trim())) ||
     (options.taskId !== undefined &&
       (!isDecisionTaskId(options.taskId) || !isDecisionTaskOwnedBy(options.taskId, consumerId))) ||
-    Object.hasOwn(options, "candidateModel") ||
+    (options.candidateModel !== undefined &&
+      (typeof options.candidateModel !== "string" ||
+        options.candidateModel.length > 512 ||
+        !options.candidateModel.trim())) ||
     typeof options.purpose !== "string" ||
     !options.purpose ||
     options.purpose.length > 128 ||
@@ -80,16 +84,25 @@ export async function evaluateDecisionInRegistry(
   if (!validateDecisionBatch(batch)) {
     return skipped({ status: "unavailable", reason: "unsupported-input" });
   }
-  if (consumerId && options.taskId) {
-    const declaredTask = registry?.plugins
-      .find((record) => record.id === consumerId && record.enabled && record.status === "loaded")
-      ?.decisionTasks?.find((task) => task.id === options.taskId);
-    if (!declaredTask) {
-      throw new DecisionContractError();
-    }
+  const declaredTask =
+    consumerId && options.taskId
+      ? registry?.plugins
+          .find(
+            (record) => record.id === consumerId && record.enabled && record.status === "loaded",
+          )
+          ?.decisionTasks?.find((task) => task.id === options.taskId)
+      : undefined;
+  if (
+    (consumerId && options.taskId && !declaredTask) ||
+    (options.candidateModel !== undefined && !declaredTask?.evaluationOnly) ||
+    (declaredTask?.evaluationOnly && options.candidateModel === undefined)
+  ) {
+    throw new DecisionContractError();
   }
   const select = (currentConfig: OpenClawConfig) =>
-    resolveDecisionSelection(currentConfig, options.agentId, options.taskId, registry);
+    options.candidateModel === undefined
+      ? resolveDecisionSelection(currentConfig, options.agentId, options.taskId, registry)
+      : resolveCandidateDecisionSelection(currentConfig, options.agentId, options.candidateModel);
   const selected = select(config);
   // Bind the runtime owner before operator preparation yields. A reader created
   // afterwards could pin the already-stale input config as an independent scope.

@@ -181,7 +181,9 @@ Each task needs a unique `id`, `name`, and `description`. The ID must be exactly
 `<plugin-id>/<task-name>` (including the full plugin ID if it contains a slash);
 the last task segment uses lowercase letters, digits, and hyphens. Core reserves
 `core/tool-prefilter` and `core/decision-evaluate`. A task declaration alone
-does not activate the consumer.
+does not activate the consumer. Set `evaluationOnly: true` only for a private,
+manual candidate-testing task; such tasks are excluded from the public task
+catalogue and cannot be used for live routing.
 
 `decisionRouter: { "configMapProperty": "byTask" }` declares an optional
 router whose `configSchema.properties.byTask` is an object map with an
@@ -194,7 +196,9 @@ inherits the agent/global `decisionModel`. An explicit empty per-agent
 `decisionModel` still disables all tasks, and a scalar Decision selection is
 required before any override is active. The host supports only one enabled
 router at a time; disabling it restores scalar selection. Merely declaring a
-router grants no provider credentials, consumer opt-in, or action authority.
+router or task grants no provider credentials, consumer opt-in, or action
+authority. A `candidateModel` request is permitted only for the declaring
+plugin's `evaluationOnly` task and never changes this map.
 
 ## Tool metadata reference
 
