@@ -475,6 +475,7 @@ export function buildPluginManifestRecord(params: {
     ),
     transcriptSources: params.manifest.transcriptSources,
     decisionModels: params.manifest.decisionModels,
+    decisionTasks: params.manifest.decisionTasks,
     decisionRouter: params.manifest.decisionRouter,
     mediaUnderstandingProviderMetadata: params.manifest.mediaUnderstandingProviderMetadata,
     imageGenerationProviderMetadata: params.manifest.imageGenerationProviderMetadata,

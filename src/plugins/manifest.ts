@@ -11,7 +11,10 @@ import { coerceDoctorSessionRouteStateOwners } from "./doctor-session-route-stat
 import * as capabilityNormalizers from "./manifest-capability-normalizers.js";
 import { normalizeManifestCommandAliases } from "./manifest-command-aliases.js";
 import { normalizeConfigGroups } from "./manifest-config-groups.js";
-import { parseManifestDecisionRouter } from "./manifest-decision-routing.js";
+import {
+  parseManifestDecisionRouter,
+  parseManifestDecisionTasks,
+} from "./manifest-decision-routing.js";
 import * as modelProviderNormalizers from "./manifest-model-provider-normalizers.js";
 import { normalizeManifestPlatforms } from "./manifest-platforms.js";
 import * as setupNormalizers from "./manifest-setup-normalizers.js";
@@ -206,11 +209,12 @@ export function loadPluginManifest(
   if (!configSchema) {
     return cacheResult({ ok: false, error: "plugin manifest requires configSchema", manifestPath });
   }
+  const decisionTasks = parseManifestDecisionTasks(raw.decisionTasks, id);
   const decisionRouter = parseManifestDecisionRouter(raw.decisionRouter, configSchema);
-  if (!decisionRouter.ok) {
+  if (!decisionTasks.ok || !decisionRouter.ok) {
     return cacheResult({
       ok: false,
-      error: `invalid plugin manifest: ${decisionRouter.error}`,
+      error: `invalid plugin manifest: ${!decisionTasks.ok ? decisionTasks.error : !decisionRouter.ok ? decisionRouter.error : "decision declaration"}`,
       manifestPath,
     });
   }
@@ -378,6 +382,7 @@ export function loadPluginManifest(
         raw.decisionModels,
         contracts?.decisionProviders,
       ),
+      decisionTasks: decisionTasks.value,
       decisionRouter: decisionRouter.value,
       transcriptSources: capabilityNormalizers.normalizeManifestTranscriptSources(
         raw.transcriptSources,

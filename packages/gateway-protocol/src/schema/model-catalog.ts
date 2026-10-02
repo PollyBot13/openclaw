@@ -19,6 +19,8 @@ export const ModelsListParamsSchema = Type.Object(
     provider: Type.Optional(NonEmptyString),
     includeDetails: Type.Optional(Type.Boolean()),
     includeProviderCapabilities: Type.Optional(Type.Boolean()),
+    /** Include manifest-discovered Decision task metadata. */
+    includeDecisionTasks: Type.Optional(Type.Boolean()),
     /** Include global default-model previews, independent of agent/session overrides. */
     includeDefaultModels: Type.Optional(Type.Boolean()),
     /** Reuse prepared/cached facts without starting provider discovery. */
@@ -139,6 +141,7 @@ export const ModelsListResultSchema = closedObject({
         provider: NonEmptyString,
         name: NonEmptyString,
         pluginId: NonEmptyString,
+        destination: Type.Optional(Type.Union([Type.Literal("local"), Type.Literal("hosted")])),
         capabilities: Type.Optional(
           closedObject({
             questionTypes: Type.Array(
@@ -169,6 +172,17 @@ export const ModelsListResultSchema = closedObject({
             ),
           }),
         ),
+      }),
+    ),
+  ),
+  /** Static Decision consumers; declaration does not imply live mode or provider readiness. */
+  decisionTasks: Type.Optional(
+    Type.Array(
+      closedObject({
+        id: NonEmptyString,
+        owner: NonEmptyString,
+        name: NonEmptyString,
+        description: NonEmptyString,
       }),
     ),
   ),

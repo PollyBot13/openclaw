@@ -93,8 +93,10 @@ role off. There is no automatic fallback to a conversational model.
 ## Optional task routing
 
 Core currently has two stable task IDs: `core/tool-prefilter` and
-`core/decision-evaluate`. A router plugin may assign a different Decision model
-to each one.
+`core/decision-evaluate`. Plugin consumers may declare their own task IDs in
+their manifests. Declared live tasks appear in `models.list.decisionTasks`
+while their plugin is enabled; discovery does not enable the consumer, prove
+provider readiness, or assign a model.
 
 An optional router plugin can declare a validated, global task-to-model map.
 Without an enabled router, selection stays with the agent/global `decisionModel`.
@@ -240,9 +242,9 @@ const outcome = await api.runtime.decisions.evaluate(
 ```
 
 The host selects the provider and model from the owning agent's configuration,
-or a task override for one of the two core tasks when an enabled Decision router
-has an assignment. Plugin callers cannot claim a core task ID; `purpose` is
-diagnostic and does not authorize task routing.
+or a task override when an enabled Decision router has an assignment. Plugin
+callers must supply a manifest-declared task ID owned by that plugin and cannot
+claim a core task ID; `purpose` is diagnostic and does not authorize routing.
 `purpose` identifies the consumer operation; `rubricVersion` identifies its rubric
 in result provenance. They do not replace question instructions. Change the
 rubric version when its meaning changes. Omit `agentId` only when intentionally

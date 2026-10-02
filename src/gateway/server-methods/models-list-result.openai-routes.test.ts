@@ -54,6 +54,18 @@ describe("models.list OpenAI routes", () => {
     },
   );
 
+  it("includes Decision tasks only when requested", async () => {
+    const context = createModelsListTestContext({ catalog: [] });
+    const result = await buildModelsListResult({
+      source: { kind: "gateway", context },
+      params: { view: "all", includeDecisionTasks: true },
+    });
+    expect(result.decisionTasks?.map((task) => task.id)).toEqual([
+      "core/tool-prefilter",
+      "core/decision-evaluate",
+    ]);
+  });
+
   it("uses the published owner's identity for implicit projection", async () => {
     const config: OpenClawConfig = {
       agents: {

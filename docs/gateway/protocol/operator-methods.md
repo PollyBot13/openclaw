@@ -127,6 +127,10 @@ Methods an operator client calls on behalf of a person: helper reads, exec appro
 - `"all"`: full gateway catalog, bypassing `agents.defaults.modelPolicy.allow`. Use for
   diagnostics/discovery UIs, not normal model pickers.
 
+Decision-router UIs may set `includeDecisionTasks: true` to receive enabled,
+manifest-discovered Decision task metadata in `decisionTasks`. It is omitted by
+default so ordinary model-catalog responses retain their existing shape.
+
 Clients that advertise `model-selection-policy` in connect `caps` receive
 `manualSelectionAllowed` on every `models.list` row. The same fact appears in
 their initial `models.snapshot`. Filter rows with `false` only when deriving

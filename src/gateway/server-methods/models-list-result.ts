@@ -66,6 +66,7 @@ import {
   apiKeyProviderCapabilities,
   createModelsListProviderFilter,
   listDecisionModels,
+  listDecisionTasks,
 } from "./models-list-capabilities.js";
 import type { ModelsListCatalogSource } from "./models-list-context.js";
 import {
@@ -362,6 +363,9 @@ export async function prepareModelsListResult(
     config: cfg,
     snapshot: metadataSnapshot,
   });
+  const decisionTasks = params.params.includeDecisionTasks
+    ? listDecisionTasks({ config: cfg, snapshot: metadataSnapshot })
+    : undefined;
   const selectedModel = resolveSessionModelRef(cfg, scope?.sessionEntry, agentId, {
     allowPluginNormalization: false,
   });
@@ -587,6 +591,7 @@ export async function prepareModelsListResult(
           .map(({ entry, host }) => projectPublic(entry, evaluateNative(entry, host))),
         ...readOutcomeProjection(),
         ...(decisionModels.length ? { decisionModels } : {}),
+        ...(decisionTasks ? { decisionTasks } : {}),
       }),
     };
   }
@@ -701,6 +706,7 @@ export async function prepareModelsListResult(
         }),
         ...readOutcomeProjection(),
         ...(decisionModels.length ? { decisionModels } : {}),
+        ...(decisionTasks ? { decisionTasks } : {}),
       };
     },
   };

@@ -58,6 +58,7 @@ export async function evaluateDecisionInRegistry(
       (typeof options.agentId !== "string" || !options.agentId.trim())) ||
     (options.taskId !== undefined &&
       (!isDecisionTaskId(options.taskId) || !isDecisionTaskOwnedBy(options.taskId, consumerId))) ||
+    Object.hasOwn(options, "candidateModel") ||
     typeof options.purpose !== "string" ||
     !options.purpose ||
     options.purpose.length > 128 ||
@@ -78,6 +79,14 @@ export async function evaluateDecisionInRegistry(
   };
   if (!validateDecisionBatch(batch)) {
     return skipped({ status: "unavailable", reason: "unsupported-input" });
+  }
+  if (consumerId && options.taskId) {
+    const declaredTask = registry?.plugins
+      .find((record) => record.id === consumerId && record.enabled && record.status === "loaded")
+      ?.decisionTasks?.find((task) => task.id === options.taskId);
+    if (!declaredTask) {
+      throw new DecisionContractError();
+    }
   }
   const select = (currentConfig: OpenClawConfig) =>
     resolveDecisionSelection(currentConfig, options.agentId, options.taskId, registry);

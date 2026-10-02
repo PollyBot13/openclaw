@@ -1,7 +1,11 @@
 import type { ModelsListResult } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
 import { createPreparedModelCatalogProviderNormalizer } from "../../agents/model-catalog-provider-normalizer.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { listAvailableManifestContractPlugins } from "../../plugins/manifest-contract-eligibility.js";
+import { createInstalledPluginEnabledPredicate } from "../../plugins/installed-plugin-index.js";
+import {
+  isManifestPluginAvailableForControlPlane,
+  listAvailableManifestContractPlugins,
+} from "../../plugins/manifest-contract-eligibility.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { resolveModelProviderCapabilities } from "./model-provider-capabilities.js";
 
@@ -54,6 +58,47 @@ export function listDecisionModels({
     }
   }
   return decisionModels;
+}
+
+/** Read-only task inventory; no plugin runtime, provider load or inference. */
+export function listDecisionTasks({
+  config,
+  snapshot,
+}: {
+  config: OpenClawConfig;
+  snapshot: PluginMetadataSnapshot;
+}): NonNullable<ModelsListResult["decisionTasks"]> {
+  const tasks: NonNullable<ModelsListResult["decisionTasks"]> = [
+    {
+      id: "core/tool-prefilter",
+      owner: "core",
+      name: "Conversational tool prefilter",
+      description:
+        "Decides whether a conversational turn can proceed without tools when Decision assistance is enabled.",
+    },
+    {
+      id: "core/decision-evaluate",
+      owner: "core",
+      name: "Explicit Decision evaluation",
+      description: "Evaluates a supplied Decision batch through the decision_evaluate tool.",
+    },
+  ];
+  if (config.plugins?.enabled === false) {
+    return tasks;
+  }
+  const isEnabled = createInstalledPluginEnabledPredicate(snapshot.index.plugins, config);
+  for (const plugin of snapshot.plugins) {
+    if (
+      !isEnabled(plugin.id) ||
+      !isManifestPluginAvailableForControlPlane({ snapshot, plugin, config })
+    ) {
+      continue;
+    }
+    for (const task of plugin.decisionTasks ?? []) {
+      tasks.push({ ...task, owner: plugin.id });
+    }
+  }
+  return tasks;
 }
 
 export function createModelsListProviderFilter(params: {

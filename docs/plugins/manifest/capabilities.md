@@ -148,6 +148,10 @@ saved unavailable selections remain visible for the operator to repair.
 discovery and guidance; it does not prove that credentials or the runtime are
 ready, and its limits do not raise OpenClaw's host admission bounds.
 
+`decisionModels[].destination` may be `local` or `hosted`. Omit it if the
+provider cannot declare the destination; a declared value is not a readiness
+check.
+
 | Field                     | Required | Accepted value                                                             | Omission semantics                                                                                        |
 | ------------------------- | -------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `questionTypes`           | Yes      | Non-empty array containing up to three of `boolean`, `choice`, and `score` | The entire `capabilities` object is omitted when this field is absent or invalid; duplicates are removed. |
@@ -170,9 +174,14 @@ malformed `questionTypes` value removes the whole capability descriptor but does
 not remove the model entry. Duplicate `provider/id` entries keep the first valid
 model descriptor.
 
-## Decision routers
+## Decision tasks and routers
 
-Core reserves `core/tool-prefilter` and `core/decision-evaluate` as task IDs.
+`decisionTasks` declares discoverable consumers without importing plugin code.
+Each task needs a unique `id`, `name`, and `description`. The ID must be exactly
+`<plugin-id>/<task-name>` (including the full plugin ID if it contains a slash);
+the last task segment uses lowercase letters, digits, and hyphens. Core reserves
+`core/tool-prefilter` and `core/decision-evaluate`. A task declaration alone
+does not activate the consumer.
 
 `decisionRouter: { "configMapProperty": "byTask" }` declares an optional
 router whose `configSchema.properties.byTask` is an object map with an

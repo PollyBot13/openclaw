@@ -276,6 +276,7 @@ describe("ModelsListParamsSchema", () => {
       {
         agentId: "research",
         includeProviderCapabilities: true,
+        includeDecisionTasks: true,
       },
       {
         preparedOnly: true,
@@ -290,6 +291,7 @@ describe("ModelsListParamsSchema", () => {
       { view: "provider-route" },
       { agentId: "" },
       { preparedOnly: true, refresh: true },
+      { includeDecisionTasks: "yes" },
     );
   });
 });

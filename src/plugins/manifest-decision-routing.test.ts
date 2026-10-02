@@ -24,17 +24,41 @@ function load(declaration: Record<string, unknown>) {
 }
 
 describe("Decision routing manifest", () => {
-  it("discovers a static router without loading JavaScript", () => {
+  it("discovers a static router and owner-declared tasks without loading JavaScript", () => {
     const result = load({
       decisionRouter: { configMapProperty: "byTask" },
+      decisionTasks: [{ id: "fixture/example", name: " Example ", description: " Example task " }],
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.manifest.decisionRouter).toEqual({ configMapProperty: "byTask" });
+      expect(result.manifest.decisionTasks).toEqual([
+        { id: "fixture/example", name: "Example", description: "Example task" },
+      ]);
     }
   });
 
-  it("rejects undeclared config maps", () => {
+  it("rejects foreign task ownership and undeclared config maps", () => {
+    expect(
+      load({ decisionTasks: [{ id: "other/example", name: "Foreign", description: "No" }] }),
+    ).toMatchObject({ ok: false });
+    expect(
+      load({
+        decisionTasks: [{ id: "fixture/nested/example", name: "Nested", description: "No" }],
+      }),
+    ).toMatchObject({ ok: false });
     expect(load({ decisionRouter: { configMapProperty: "missing" } })).toMatchObject({ ok: false });
+    expect(
+      load({
+        decisionTasks: [
+          {
+            id: "fixture/manual",
+            name: "Manual",
+            description: "Candidate evaluation requires the next contract layer",
+            evaluationOnly: true,
+          },
+        ],
+      }),
+    ).toMatchObject({ ok: false });
   });
 });

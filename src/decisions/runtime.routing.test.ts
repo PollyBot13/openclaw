@@ -235,4 +235,55 @@ describe("Decision task routing", () => {
       ),
     ).rejects.toThrow("Invalid decision contract");
   });
+
+  it("accepts only a loaded plugin's declared task", async () => {
+    const evaluate = vi.fn<DecisionProviderV1["evaluate"]>(async () => answer);
+    const host = registered(evaluate);
+    const consumer = createPluginRecord({
+      id: "task-consumer",
+      source: "/synthetic/task-consumer.ts",
+      origin: "global",
+      enabled: true,
+      configSchema: true,
+      decisionTasks: [
+        { id: "task-consumer/check", name: "Check", description: "Declared Decision task" },
+      ],
+    });
+    runPluginRegisterSyncInRegistry(
+      () => {},
+      host.createApi(consumer, { config }),
+      host.registry,
+      consumer.id,
+    );
+    host.registry.plugins.push(consumer);
+    setRuntimeConfigSnapshot(config);
+    expect(
+      await evaluateDecisionInRegistry(
+        batch,
+        { ...options(), taskId: "task-consumer/check" },
+        host.registry,
+        config,
+        consumer.id,
+      ),
+    ).toMatchObject({ status: "ok", provenance: { providerId: "fixture" } });
+    expect(evaluate).toHaveBeenCalledOnce();
+    await expect(
+      evaluateDecisionInRegistry(
+        batch,
+        { ...options(), taskId: "task-consumer/undeclared" },
+        host.registry,
+        config,
+        consumer.id,
+      ),
+    ).rejects.toThrow("Invalid decision contract");
+    await expect(
+      evaluateDecisionInRegistry(
+        batch,
+        { ...options(), taskId: "task-consumer/check", candidateModel: "fixture/candidate" },
+        host.registry,
+        config,
+        consumer.id,
+      ),
+    ).rejects.toThrow("Invalid decision contract");
+  });
 });

@@ -91,8 +91,18 @@ export function normalizeManifestDecisionModels(
       return undefined;
     }
     const capabilities = normalizeDecisionCapabilities(entry.capabilities);
+    const destination =
+      entry.destination === "local" || entry.destination === "hosted"
+        ? entry.destination
+        : undefined;
     seen.add(ref);
-    return { provider, id, name, ...(capabilities ? { capabilities } : {}) };
+    return {
+      provider,
+      id,
+      name,
+      ...(destination ? { destination } : {}),
+      ...(capabilities ? { capabilities } : {}),
+    };
   });
 }
 

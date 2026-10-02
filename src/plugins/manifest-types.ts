@@ -410,7 +410,15 @@ export type PluginManifestDecisionModel = {
   provider: string;
   id: string;
   name: string;
+  destination?: "local" | "hosted";
   capabilities?: DecisionProviderCapabilities;
+};
+
+/** Static task discovery; a declaration alone neither enables nor evaluates a consumer. */
+export type PluginManifestDecisionTask = {
+  id: string;
+  name: string;
+  description: string;
 };
 
 /** The host reads this plugin-owned config map for Decision selection and startup. */
@@ -528,6 +536,7 @@ export type PluginManifest = {
   contracts?: PluginManifestContracts;
   /** Static model choices owned by contracts.decisionProviders; never conversational models. */
   decisionModels?: PluginManifestDecisionModel[];
+  decisionTasks?: PluginManifestDecisionTask[];
   decisionRouter?: PluginManifestDecisionRouter;
   /** Setup descriptors keyed by ids owned in contracts.transcriptSourceProviders. */
   transcriptSources?: Record<string, PluginManifestTranscriptSource>;

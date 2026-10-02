@@ -402,6 +402,7 @@ export type PluginRecord = {
   contracts?: PluginManifestContracts;
   dashboard?: PluginManifestDashboard;
   controlUi?: PluginManifestControlUi;
+  decisionTasks?: PluginManifestRecord["decisionTasks"];
   decisionRouter?: PluginManifestRecord["decisionRouter"];
   uiCapabilities?: PluginManifestRecord["uiCapabilities"];
   mcpServers?: Record<string, PluginManifestMcpServer>;
