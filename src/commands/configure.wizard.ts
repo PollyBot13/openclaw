@@ -523,6 +523,12 @@ export async function runConfigureWizard(
       web: async () => {
         nextConfig = await promptWebToolsConfig(nextConfig, runtime, prompter);
       },
+      memory: async () => {
+        const { runMemorySetupFlow } = await import("../flows/memory-setup.js");
+        nextConfig = await runMemorySetupFlow(nextConfig, prompter, {
+          agentDir: (await resolveSetupTarget()).agentDir,
+        });
+      },
       gateway: async () => {
         const gateway = await promptGatewayConfig(nextConfig, runtime);
         nextConfig = gateway.config;
@@ -578,6 +584,7 @@ export async function runConfigureWizard(
       for (const section of [
         "workspace",
         "model",
+        "memory",
         "web",
         "gateway",
         "channels",

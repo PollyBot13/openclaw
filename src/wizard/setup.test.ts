@@ -80,6 +80,9 @@ const runSetupMigrationImport = vi.hoisted(() =>
   vi.fn<RunSetupMigrationImport>(async () => ({ kind: "no-imported-inference" })),
 );
 const runSetupMemoryImportStep = vi.hoisted(() => vi.fn(async () => {}));
+const runMemorySetupFlow = vi.hoisted(() =>
+  vi.fn<typeof import("../flows/memory-setup.js").runMemorySetupFlow>(async (config) => config),
+);
 const verifySetupInferenceConfig = vi.hoisted(() => vi.fn<VerifySetupInferenceConfig>());
 
 const setupChannels = vi.hoisted(() =>
@@ -273,6 +276,7 @@ vi.mock("../flows/channel-setup.js", async (importOriginal) => ({
 }));
 
 vi.mock("../flows/search-setup.js", () => ({ runSearchSetupFlow }));
+vi.mock("../flows/memory-setup.js", () => ({ runMemorySetupFlow }));
 
 vi.mock("../commands/onboard-remote.js", () => ({
   promptRemoteGatewayConfig,
@@ -539,6 +543,7 @@ describe("runSetupWizard", () => {
       latencyMs: 250,
     });
     runSetupMemoryImportStep.mockReset().mockResolvedValue(undefined);
+    runMemorySetupFlow.mockReset().mockImplementation(async (config) => config);
     ensureOnboardingConfig.mockClear();
   });
 
@@ -890,6 +895,22 @@ describe("runSetupWizard", () => {
 
     expect(runSearchSetupFlow).toHaveBeenCalledOnce();
     expect(finalizeSetupWizard).toHaveBeenCalledOnce();
+  });
+
+  it("persists the optional memory choice before classic setup finalization", async () => {
+    runMemorySetupFlow.mockImplementationOnce(async (config) => ({
+      ...config,
+      memory: { search: { provider: "openai", model: "embedding-model" } },
+    }));
+    await runWizard();
+    expect(runMemorySetupFlow).toHaveBeenCalledOnce();
+    expect(persistedWizardConfigs().at(-1)?.memory?.search).toEqual({
+      provider: "openai",
+      model: "embedding-model",
+    });
+    expect(runMemorySetupFlow.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizeSetupWizard.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("persists classic channel setup before hooks and Gateway finalization", async () => {
