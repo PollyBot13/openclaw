@@ -283,6 +283,20 @@ export async function runMemorySetupFlow(
     enabled: true,
     remote: remoteForSave,
   };
+  try {
+    const { resolveMemorySearchConfig } = await import("../agents/memory-search.js");
+    // Validate shared defaults without letting a per-agent override mask incompatibility.
+    resolveMemorySearchConfig(
+      { ...config, agents: undefined, memory: { ...config.memory, search: candidateSearch } },
+      "main",
+    );
+  } catch {
+    await prompter.note(
+      "The selected provider, model, or fallback is not compatible with the retained memory settings. Check the memory search configuration and try again.",
+      "Memory setup unchanged",
+    );
+    return config;
+  }
   let probeConfig: OpenClawConfig = {
     ...config,
     memory: { ...config.memory, search: { ...candidateSearch, remote: remoteForProbe } },
