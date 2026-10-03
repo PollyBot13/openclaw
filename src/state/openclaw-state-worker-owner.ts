@@ -422,21 +422,22 @@ function createSharedStateWorkerOwner() {
   });
   function retireIdleWorkers() {
     for (const entry of stores) {
-      if (
-        entry.idleTimer &&
-        entry.store &&
-        !entry.context.maintenanceScope &&
-        !hasActiveActorOperations(entry)
-      ) {
-        void runInDetachedAsyncContext(() => retire(entry)).catch((error: unknown) => {
-          log.warn("Idle shared-state worker retirement failed", {
-            path: entry.context.admission.databasePath,
-            error,
-          });
+      void runInDetachedAsyncContext(() => retireIdle(entry))?.catch((error: unknown) => {
+        log.warn("Idle shared-state worker retirement failed", {
+          path: entry.context.admission.databasePath,
+          error,
         });
-      }
+      });
     }
   }
+  const retireIdle = (entry: Entry) =>
+    entry.idleTimer &&
+    entry.store &&
+    stores.has(entry) &&
+    !entry.context.maintenanceScope &&
+    !hasActiveActorOperations(entry)
+      ? retire(entry)
+      : undefined;
   return {
     close,
     retainOperation,
@@ -617,6 +618,7 @@ function createSharedStateWorkerOwner() {
               {
                 maintenanceScope: context.maintenanceScope,
                 preparation,
+                retireIdle: () => retireIdle(admitted),
                 retainCleanup: (cleanup) => {
                   admitted.cleanup = cleanup;
                 },
