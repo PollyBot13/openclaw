@@ -85,6 +85,10 @@ export type GatewayServiceControlArgs = {
   preserveAutoStart?: boolean;
   /** Original live caller fence, rechecked at native mutation boundaries. */
   assertCurrent?: () => void;
+  /** Complete owner handoff after native inspection, before dispatch. */
+  prepareEffect?: () => Promise<void>;
+  /** State that intentionally changes after this native effect; checked only before dispatch. */
+  beforeEffect?: () => void;
   /** Native identity captured before stopping; activation must revalidate it. */
   systemdIdentity?: SystemdServiceIdentity;
   warn?: (message: string) => void;
@@ -101,6 +105,8 @@ export type SystemdServiceIdentity = {
   managerOwner: string;
   managerUid: number;
   serviceUser: string;
+  /** Explicit adopted non-root account, inspected by a root update executor. */
+  rootServiceAccount?: string;
 };
 
 export type GatewayLifecycleMutationMode =
@@ -214,6 +220,17 @@ export type GatewayServiceReadOptions = {
   loadForInspection?: GatewayServiceUnitInspection;
 };
 
+export type ReadGatewayServiceStateArgs = GatewayServiceEnvArgs & {
+  windowsStartupEntry?: string;
+  systemdReadTarget?: GatewayServiceReadOptions["systemdReadTarget"];
+  systemdInstallation?: GatewayServiceState["systemdInstallation"];
+  requireEffective?: boolean;
+  requireLoadedCommand?: boolean;
+  loadForInspection?: GatewayServiceReadOptions["loadForInspection"];
+  systemdReadBinding?: GatewayServiceReadOptions["systemdReadBinding"];
+  validateEnvBeforeStatusRead?: (env: GatewayServiceEnv) => void;
+};
+
 export type GatewayServiceEnvironmentValueSource = "inline" | "file" | "inline-and-file";
 
 export type GatewayServiceLoadState =
@@ -295,6 +312,8 @@ export type GatewayServiceManagedOverrides = {
 export type GatewayServiceCommandConfig = GatewayServiceCommandSnapshot & {
   sourcePath?: string;
   definitionPaths?: string[];
+  /** Selected login items observed with the Scheduled Task registration missing. */
+  startupEntryPaths?: string[];
   managedDefinition?: GatewayServiceCommandSnapshot;
   managedOverrides?: GatewayServiceManagedOverrides;
   reloadPending?: true;

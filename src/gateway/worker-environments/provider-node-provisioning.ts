@@ -69,7 +69,10 @@ export function createWorkerNodeProvisioning(options: WorkerNodeProvisioningOpti
     provider: WorkerProvider,
     signal?: AbortSignal,
     beforeProvision?: () => void,
-  ) => {
+  ): Promise<
+    | { identity: WorkerNodeRuntimeIdentity; installation: WorkerInstallationArtifact | undefined }
+    | undefined
+  > => {
     const prepareNodeBootstrap = options.prepareNodeBootstrap;
     if (!provider.requiresNodeEnrollment || !prepareNodeBootstrap) {
       return undefined;
@@ -81,7 +84,7 @@ export function createWorkerNodeProvisioning(options: WorkerNodeProvisioningOpti
       const [bootstrapResult, installationResult] = await racePromiseWithAbortSignal(
         Promise.allSettled([
           Promise.resolve().then(() => prepareNodeBootstrap(record, signal)),
-          record.profileSnapshot.project ? prepareBundle(undefined, signal) : undefined,
+          prepareBundle(undefined, signal),
         ]),
         signal,
       );
@@ -275,8 +278,6 @@ export function createWorkerNodeProvisioning(options: WorkerNodeProvisioningOpti
         });
         const prepared = await pending;
         assertCurrent();
-        // Enrollment overlaps process-owned packaging; failure stays with lease bootstrap.
-        void prepareInstallation().catch(() => undefined);
         return prepared;
       },
       close,
@@ -340,6 +341,8 @@ export function createWorkerNodeProvisioning(options: WorkerNodeProvisioningOpti
         !(await options.store.hasSessionAttachment(record.environmentId));
       assertCurrent();
       nodeBuild = await options.ensureNodeWorkerBundle({
+        reason: "provision",
+        environmentId: record.environmentId,
         deviceId: lease.node.deviceId,
         artifact,
         prewarm,

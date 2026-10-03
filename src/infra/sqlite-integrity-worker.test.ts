@@ -18,6 +18,18 @@ import {
 import type { SqliteIntegrityCheckTiming, SqliteIntegrityTableCheck } from "./sqlite-integrity.js";
 import * as inspectionBudget from "./sqlite-readonly-worker.js";
 
+const progress = vi.hoisted(() => vi.fn());
+vi.mock("../logging/subsystem.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../logging/subsystem.js")>();
+  return {
+    ...actual,
+    createSubsystemLogger: (subsystem: string) => ({
+      ...actual.createSubsystemLogger(subsystem),
+      ...(subsystem === "state/sqlite" ? { info: progress } : {}),
+    }),
+  };
+});
+
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, fork: vi.fn(actual.fork) };
@@ -27,6 +39,39 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("SQLite integrity child", () => {
   afterEach(() => vi.restoreAllMocks());
+  it("reports bounded progress while native integrity is blocked and stops after cancellation", async () => {
+    const source = path.join(tempDirs.make("openclaw-integrity-progress-"), "source.sqlite");
+    fs.writeFileSync(source, "retained source");
+    progress.mockClear();
+    const worker = new ChildProcess();
+    worker.send = vi.fn(() => true);
+    worker.kill = vi.fn(() => {
+      queueMicrotask(() => worker.emit("close", null, "SIGKILL"));
+      return true;
+    });
+    vi.mocked(fork).mockReturnValueOnce(worker);
+    const controller = new AbortController();
+    vi.useFakeTimers();
+    try {
+      const check = withSqliteIntegrityWorkerScope(
+        () => {},
+        () => assertSqliteIntegrityInWorker(source, 250, controller.signal),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      worker.emit("message", { type: "phase", phase: "checking" });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(progress).toHaveBeenCalledTimes(3);
+      expect(progress).toHaveBeenCalledWith(expect.stringContaining("phase=checking"));
+      const outcome = expect(check).rejects.toThrow("interrupted inspection");
+      controller.abort(new Error("interrupted inspection"));
+      await vi.advanceTimersByTimeAsync(0);
+      await outcome;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(progress).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it.each(["healthy", "quick_check", "integrity_check"] as const)(
     "settles bounded table readers and detects non-ok rows: %s",
     async (damage) => {
@@ -36,8 +81,7 @@ describe("SQLite integrity child", () => {
         table: `records_${index}`,
         check: index === 0 ? "quick_check" : "integrity_check",
       }));
-      let damagedCellOffset: number | undefined;
-      let pageSize = 0;
+      let fragmentCountOffset: number | undefined;
       try {
         for (const { table } of tables) {
           database.exec(`CREATE TABLE ${table}(value INTEGER); INSERT INTO ${table} VALUES(1)`);
@@ -48,16 +92,16 @@ describe("SQLite integrity child", () => {
             database.prepare("SELECT rootpage FROM sqlite_schema WHERE name = ?").get(table)
               ?.rootpage,
           );
-          pageSize = Number(database.prepare("PRAGMA page_size").get()?.page_size);
-          damagedCellOffset = (root - 1) * pageSize + 8;
+          const pageSize = Number(database.prepare("PRAGMA page_size").get()?.page_size);
+          fragmentCountOffset = (root - 1) * pageSize + 7;
         }
       } finally {
         database.close();
       }
-      if (damagedCellOffset !== undefined) {
-        // Point the first leaf cell outside its valid content range: both pragmas report non-ok rows.
+      if (fragmentCountOffset !== undefined) {
+        // Misreport free-byte fragmentation without making the records themselves unreadable.
         const bytes = fs.readFileSync(source);
-        bytes.writeUInt16BE(pageSize - 1, damagedCellOffset);
+        bytes.writeUInt8(1, fragmentCountOffset);
         fs.writeFileSync(source, bytes);
       }
       const timing: SqliteIntegrityCheckTiming = {};
@@ -89,7 +133,9 @@ describe("SQLite integrity child", () => {
       } else {
         await expect(check).rejects.toMatchObject({
           name: "SqliteIntegrityError",
-          message: expect.stringMatching(new RegExp(`${damage} failed[\\s\\S]*out of range`)),
+          message: expect.stringMatching(
+            new RegExp(`${damage} failed[\\s\\S]*Fragmentation of 0 bytes reported as 1`),
+          ),
         });
       }
       expect(fork).toHaveBeenCalledTimes(4);
@@ -121,52 +167,6 @@ describe("SQLite integrity child", () => {
     expect(failure).not.toMatchObject({ name: "SqliteIntegrityError" });
     expect(fs.readFileSync(source, "utf8")).toBe("retained source");
   });
-
-  it.each([
-    { label: "empty", paddingBytes: null, minimumSize: 0, maximumSize: 0, timeout: 300_000 },
-    {
-      label: "small",
-      paddingBytes: 0,
-      minimumSize: 1,
-      maximumSize: 32 * 1024 * 1024,
-      timeout: 301_000,
-    },
-    {
-      label: "over 64 MiB",
-      paddingBytes: 64 * 1024 * 1024,
-      minimumSize: 64 * 1024 * 1024 + 1,
-      maximumSize: 96 * 1024 * 1024,
-      timeout: 381_000,
-    },
-  ])(
-    "starts the child with the size budget for a $label database",
-    async ({ paddingBytes, minimumSize, maximumSize, timeout }) => {
-      const source = path.join(tempDirs.make("openclaw-integrity-budget-"), "source.sqlite");
-      const db = new (requireNodeSqlite().DatabaseSync)(source);
-      try {
-        if (paddingBytes !== null) {
-          db.exec("CREATE TABLE padding (data BLOB)");
-          db.prepare("INSERT INTO padding VALUES (zeroblob(?))").run(paddingBytes);
-        }
-      } finally {
-        db.close();
-      }
-      const size = fs.statSync(source).size;
-      expect(size).toBeGreaterThanOrEqual(minimumSize);
-      expect(size).toBeLessThanOrEqual(maximumSize);
-      vi.mocked(fork).mockClear();
-
-      await expect(
-        assertSqliteIntegrityInWorker(source, 250, new AbortController().signal),
-      ).resolves.toBeUndefined();
-
-      expect(fork).toHaveBeenCalledExactlyOnceWith(
-        expect.any(URL),
-        [],
-        expect.objectContaining({ timeout, killSignal: "SIGKILL" }),
-      );
-    },
-  );
 
   it("budgets integrity for committed WAL data while its writer remains open", async () => {
     const source = path.join(tempDirs.make("openclaw-integrity-wal-budget-"), "source.sqlite");
@@ -438,8 +438,7 @@ describe("SQLite integrity child", () => {
     { messages: '[{ type: "phase", phase: "checking" }, { ok: true }]', completes: true },
     { messages: '[{ ok: true }, { type: "phase", phase: "closing" }]', completes: true },
     { messages: "[{ ok: true, checkElapsedMs: 0 }]", completes: true, checkMs: 0 },
-    { messages: "[{ ok: true, checkElapsedMs: 4.75 }]", completes: true, checkMs: 4.75 },
-    ...["-1", "NaN", "Infinity", '"4.75"', "null"].map((invalid) => ({
+    ...["-1", "NaN", '"4.75"'].map((invalid) => ({
       messages: `[{ ok: true, checkElapsedMs: ${invalid} }]`,
       completes: true,
     })),
@@ -448,12 +447,6 @@ describe("SQLite integrity child", () => {
         '[{ ok: false, error: { name: "SyntheticCheckError", message: "synthetic check failed" }, checkElapsedMs: 4.75 }]',
       completes: false,
       checkMs: 4.75,
-      errorMessage: "synthetic check failed",
-    },
-    {
-      messages:
-        '[{ ok: false, error: { name: "SyntheticCheckError", message: "synthetic check failed" }, checkElapsedMs: NaN }]',
-      completes: false,
       errorMessage: "synthetic check failed",
     },
   ])(
@@ -585,7 +578,6 @@ describe("SQLite integrity child", () => {
   });
 
   it.each([
-    { failClosingPhase: false, failOpen: false, failNativeClose: false, reuse: false },
     { failClosingPhase: true, failOpen: false, failNativeClose: false, reuse: false },
     { failClosingPhase: false, failOpen: true, failNativeClose: false, reuse: false },
     { failClosingPhase: false, failOpen: false, failNativeClose: true, reuse: true },

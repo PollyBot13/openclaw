@@ -1,14 +1,11 @@
-import {
-  closeOpenClawStateDatabaseForTest,
-  observeChannelIngressQueueWrite,
-} from "openclaw/plugin-sdk/channel-ingress-test-runtime";
+import { closeOpenClawStateDatabaseForTest } from "openclaw/plugin-sdk/channel-ingress-test-runtime";
 // Zalouser tests cover durable socket admission, recovery, and replay semantics.
 import type { ChannelIngressQueue } from "openclaw/plugin-sdk/channel-outbound";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createZalouserIngressMonitor, type ZalouserIngressLifecycle } from "./ingress.js";
 import {
   createRawZalouserMessage,
-  waitForZalouserIngressVerdict,
+  observeZalouserIngressVerdict,
   withZalouserIngressTestQueue,
   type ZalouserTestIngressPayload,
 } from "./ingress.test-support.js";
@@ -52,6 +49,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
+      const terminal = observeZalouserIngressVerdict(gatedQueue, "durable-first", "completed");
       const ingress = createIngress({
         queue: gatedQueue,
         dispatch,
@@ -65,7 +63,7 @@ describe("Zalouser durable ingress", () => {
 
       releaseAppend();
       await admission;
-      await waitForZalouserIngressVerdict(queue, "durable-first", "completed");
+      await terminal;
       expect(dispatch).toHaveBeenCalledOnce();
       await ingress.stop();
     });
@@ -87,12 +85,13 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
+      const terminal = observeZalouserIngressVerdict(queue, "restart", "completed");
       const recovered = createIngress({
         queue,
         dispatch,
       });
       try {
-        await waitForZalouserIngressVerdict(queue, "restart", "completed");
+        await terminal;
         expect(dispatch).toHaveBeenCalledOnce();
       } finally {
         await recovered.stop();
@@ -105,6 +104,7 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async (_message, lifecycle: ZalouserIngressLifecycle) => {
         await lifecycle.onAdopted();
       });
+      const terminal = observeZalouserIngressVerdict(queue, "duplicate", "completed");
       const ingress = createIngress({
         queue,
         dispatch,
@@ -113,7 +113,7 @@ describe("Zalouser durable ingress", () => {
         await ingress.receive(
           createRawZalouserMessage({ msgId: "duplicate", content: "original" }),
         );
-        await waitForZalouserIngressVerdict(queue, "duplicate", "completed");
+        await terminal;
         await ingress.receive(
           createRawZalouserMessage({ msgId: "duplicate", content: "changed redelivery" }),
         );
@@ -206,6 +206,7 @@ describe("Zalouser durable ingress", () => {
           await lifecycle.onAdopted();
         },
       );
+      const terminal = observeZalouserIngressVerdict(queue, "lane-independent", "completed");
       const ingress = createIngress({
         queue,
         dispatch,
@@ -218,8 +219,8 @@ describe("Zalouser durable ingress", () => {
       await ingress.receive(
         createRawZalouserMessage({ msgId: "lane-independent", senderId: "sender-2" }),
       );
-      await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
-      await waitForZalouserIngressVerdict(queue, "lane-independent", "completed");
+      await terminal;
+      expect(dispatch).toHaveBeenCalledTimes(2);
 
       releaseFirst();
       await firstLifecycle?.onAdopted();
@@ -288,12 +289,13 @@ describe("Zalouser durable ingress", () => {
         { receivedAt: 1, laneKey: "direct:sender-1" },
       );
       const dispatch = vi.fn();
+      const terminal = observeZalouserIngressVerdict(queue, "malformed", "failed");
       const ingress = createIngress({
         queue,
         dispatch,
       });
       try {
-        await waitForZalouserIngressVerdict(queue, "malformed", "failed");
+        await terminal;
         expect(dispatch).not.toHaveBeenCalled();
         const verdict = await queue.enqueue("malformed", {
           version: 1,
@@ -315,13 +317,14 @@ describe("Zalouser durable ingress", () => {
       const dispatch = vi.fn(async () => {
         throw Object.assign(new Error("expired session"), { code: 401 });
       });
+      const terminal = observeZalouserIngressVerdict(queue, "auth-failure", "failed");
       const ingress = createIngress({
         queue,
         dispatch,
       });
       try {
         await ingress.receive(createRawZalouserMessage({ msgId: "auth-failure" }));
-        await waitForZalouserIngressVerdict(queue, "auth-failure", "failed");
+        await terminal;
         expect(dispatch).toHaveBeenCalledOnce();
       } finally {
         await ingress.stop();

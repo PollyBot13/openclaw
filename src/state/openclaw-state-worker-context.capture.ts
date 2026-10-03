@@ -4,7 +4,6 @@ import { cloneEnvWithPlatformSemantics } from "../config/config-env-vars.js";
 import { resolveStateDir } from "../config/state-dir.js";
 import { isGatewayExternallySupervised } from "../infra/gateway-supervision.js";
 import { mergeProcessEnv } from "../infra/process-env.js";
-import { captureStateDatabaseCoordinatorRuntime } from "../infra/state-database-coordinator.js";
 import { getOpenClawDatabaseMaintenanceScope } from "./openclaw-state-db-async-lifecycle.js";
 import { captureOpenClawStateSchemaReadAdmission } from "./openclaw-state-db-schema-policy.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
@@ -17,9 +16,10 @@ export function captureOpenClawStateReadContextWithAdmission(
 ): Pick<
   OpenClawStateWorkerContext,
   "admission" | "maintenanceScope" | "existingSchemaPath" | "runInCapturedSchemaScope"
-> {
+> & { assertPublicationCurrent: () => void } {
   const schema = captureOpenClawStateSchemaReadAdmission(pathname);
   const capturedAdmission = captureAdmission(pathname);
+  const assertPublicationCurrent = capturedAdmission.assertCurrent;
   let admission = capturedAdmission;
   let runInCapturedSchemaScope: OpenClawStateWorkerContext["runInCapturedSchemaScope"];
   if (schema) {
@@ -44,6 +44,7 @@ export function captureOpenClawStateReadContextWithAdmission(
   return {
     maintenanceScope: getOpenClawDatabaseMaintenanceScope(),
     admission,
+    assertPublicationCurrent,
     existingSchemaPath: schema?.path,
     runInCapturedSchemaScope,
   };
@@ -66,7 +67,6 @@ export function captureOpenClawStateReadWorkerContextWithAdmission(
       captureAdmission,
     ),
     environment,
-    coordinatorRuntime: captureStateDatabaseCoordinatorRuntime(),
   };
 }
 

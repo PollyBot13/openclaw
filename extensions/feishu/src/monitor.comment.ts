@@ -14,6 +14,8 @@ import {
   encodeQuery,
   extractReplyText,
   parseCommentContentElements,
+  type FeishuDriveCommentCard,
+  type FeishuDriveCommentReply,
   type ParsedCommentContent,
   type ParsedCommentLinkedDocument,
 } from "./comment-shared.js";
@@ -63,36 +65,7 @@ type ResolveDriveCommentEventParams = {
   abortSignal?: AbortSignal;
 };
 
-type ResolvedDriveCommentEventTurn = {
-  eventId: string;
-  messageId: string;
-  commentId: string;
-  replyId?: string;
-  noticeType: "add_comment" | "add_reply";
-  fileToken: string;
-  fileType: CommentFileType;
-  isWholeComment?: boolean;
-  senderId: string;
-  senderUserId?: string;
-  timestamp?: string;
-  isMentioned?: boolean;
-  documentTitle?: string;
-  documentUrl?: string;
-  quoteText?: string;
-  rootCommentText?: string;
-  targetReplyText?: string;
-  prompt: string;
-  preview: string;
-};
-
-type FeishuRequestClient = ReturnType<typeof createFeishuClient> & {
-  request(params: {
-    method: "GET" | "POST";
-    url: string;
-    data: unknown;
-    timeout: number;
-  }): Promise<unknown>;
-};
+type FeishuRequestClient = ReturnType<typeof createFeishuClient>;
 
 type FeishuOpenApiResponse<T> = {
   code?: number;
@@ -108,30 +81,6 @@ type FeishuDriveMetaBatchQueryResponse = FeishuOpenApiResponse<{
     url?: string;
   }>;
 }>;
-
-type FeishuDriveCommentReply = {
-  reply_id?: string;
-  user_id?: string;
-  create_time?: number;
-  update_time?: number;
-  content?: {
-    elements?: unknown[];
-  };
-};
-
-type FeishuDriveCommentCard = {
-  comment_id?: string;
-  user_id?: string;
-  create_time?: number;
-  update_time?: number;
-  is_whole?: boolean;
-  has_more?: boolean;
-  page_token?: string;
-  quote?: string;
-  reply_list?: {
-    replies?: FeishuDriveCommentReply[];
-  };
-};
 
 type FeishuDriveCommentBatchQueryResponse = FeishuOpenApiResponse<{
   items?: FeishuDriveCommentCard[];
@@ -338,19 +287,6 @@ async function resolveParsedCommentContent(
   };
 }
 
-function buildDriveCommentTargetUrl(params: {
-  fileToken: string;
-  fileType: CommentFileType;
-}): string {
-  return (
-    `/open-apis/drive/v1/files/${encodeURIComponent(params.fileToken)}/comments/batch_query` +
-    encodeQuery({
-      file_type: params.fileType,
-      user_id_type: "open_id",
-    })
-  );
-}
-
 type DriveCommentPageRequest = {
   client: FeishuRequestClient;
   fileToken: string;
@@ -469,7 +405,7 @@ async function requestFeishuOpenApi<T>(params: {
   };
 
   const result = await raceWithTimeoutAndAbort(
-    params.client.request({
+    params.client.request<T>({
       method: params.method,
       url: params.url,
       data: params.data ?? {},
@@ -674,10 +610,9 @@ async function fetchDriveCommentContext(
     requestFeishuOpenApi<FeishuDriveCommentBatchQueryResponse>({
       client: params.client,
       method: "POST",
-      url: buildDriveCommentTargetUrl({
-        fileToken: params.fileToken,
-        fileType: params.fileType,
-      }),
+      url:
+        `/open-apis/drive/v1/files/${encodeURIComponent(params.fileToken)}/comments/batch_query` +
+        encodeQuery({ file_type: params.fileType, user_id_type: "open_id" }),
       data: {
         comment_ids: [params.commentId],
       },
@@ -1085,9 +1020,7 @@ function buildDriveCommentSurfacePrompt(
   return lines.join("\n");
 }
 
-export async function resolveDriveCommentEventTurn(
-  params: ResolveDriveCommentEventParams,
-): Promise<ResolvedDriveCommentEventTurn | null> {
+export async function resolveDriveCommentEventTurn(params: ResolveDriveCommentEventParams) {
   const {
     cfg,
     accountId,
@@ -1140,9 +1073,7 @@ export async function resolveDriveCommentEventTurn(
 
   const client = createClient
     ? createClient(account ?? ({ accountId } as ResolvedFeishuAccount))
-    : (createFeishuClient(
-        (await import("./accounts.js")).resolveFeishuAccount({ cfg, accountId }),
-      ) as FeishuRequestClient);
+    : createFeishuClient((await import("./accounts.js")).resolveFeishuAccount({ cfg, accountId }));
   const context = await fetchDriveCommentContext({
     client,
     fileToken,

@@ -46,6 +46,38 @@ describe("channel ingress drain watchdog", () => {
     closeOpenClawStateDatabaseForTest();
   });
 
+  it.each([false, true])(
+    "retires a stalled release on dispose with external signal=%s",
+    async (externalSignal) => {
+      await withTempState(async (stateDir) => {
+        const queue = createTestIngressQueue(stateDir);
+        await queue.enqueue("evt-retired", { text: "x" }, { laneKey: "l1" });
+        const dispatch = createDeferred();
+        const controller = new AbortController();
+        const release = vi.spyOn(queue, "release");
+        const drain = createChannelIngressDrain<Payload>({
+          queue,
+          abortSignal: externalSignal ? controller.signal : undefined,
+          adoptionStallTimeoutMs: 1_000,
+          dispatchClaimedEvent: async () => {
+            await dispatch.promise;
+          },
+        });
+        await drain.drainOnce();
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await queue.listClaims()).toHaveLength(1);
+        const settlement = drain.waitForStallSettlements?.();
+        drain.dispose();
+        dispatch.resolve();
+        await settlement;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(release).not.toHaveBeenCalled();
+        expect(await queue.listClaims()).toMatchObject([{ id: "evt-retired", attempts: 0 }]);
+        expect(controller.signal.aborted).toBe(false);
+      });
+    },
+  );
+
   it("retries pre-adoption stalls in lane order and fences late adoption", async () => {
     await withTempState(async (stateDir) => {
       let clock = 10_000;

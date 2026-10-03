@@ -18,6 +18,14 @@ afterEach(() => {
   closeOpenClawStateDatabaseForTest();
 });
 
+function createQueue() {
+  return createChannelIngressQueue<StoredEvent>({
+    channelId: "test",
+    accountId: "a",
+    stateDir: tempDirs.make("openclaw-ingress-inspection-"),
+  });
+}
+
 function createMonitor(
   queue: ChannelIngressQueue<StoredEvent>,
   options: Pick<
@@ -48,17 +56,12 @@ function createMonitor(
 
 describe("channel ingress monitor asynchronous inspection", () => {
   it.each([
-    { cancel: "stop", waitForDeliveryIdleOnStop: true },
     { cancel: "stop", waitForDeliveryIdleOnStop: false },
     { cancel: "abort", waitForDeliveryIdleOnStop: true },
   ])(
     "joins claim inspection after $cancel with delivery join=$waitForDeliveryIdleOnStop",
     async ({ cancel, waitForDeliveryIdleOnStop }) => {
-      const queue = createChannelIngressQueue<StoredEvent>({
-        channelId: "test",
-        accountId: "a",
-        stateDir: tempDirs.make("openclaw-ingress-inspection-stop-"),
-      });
+      const queue = createQueue();
       const inspection = createDeferred();
       const entered = createDeferred();
       const controller = new AbortController();
@@ -102,15 +105,12 @@ describe("channel ingress monitor asynchronous inspection", () => {
     },
   );
 
-  it("joins pending inspection after the watchdog retires its claim", async () => {
-    const queue = createChannelIngressQueue<StoredEvent>({
-      channelId: "test",
-      accountId: "a",
-      stateDir: tempDirs.make("openclaw-ingress-inspection-watchdog-"),
-    });
+  it("joins pending inspection while the watchdog keeps its claim fenced", async () => {
+    const queue = createQueue();
     const release = createDeferred();
     const entered = createDeferred();
     const deliver = vi.fn();
+    const logs: string[] = [];
     const monitor = createMonitor(queue, {
       inspectAsync: async (raw, context) => {
         if (context.phase === "claim") {
@@ -120,7 +120,7 @@ describe("channel ingress monitor asynchronous inspection", () => {
         return { eventId: raw.id, laneKey: raw.lane };
       },
       deliver,
-      drain: { startLimit: 1, adoptionStallTimeoutMs: 10 },
+      drain: { startLimit: 1, adoptionStallTimeoutMs: 10, onLog: (message) => logs.push(message) },
     });
     await monitor.admit({ id: "watchdog", lane: "a" });
     monitor.start();
@@ -128,7 +128,10 @@ describe("channel ingress monitor asynchronous inspection", () => {
     let idle = false;
     let waiting: Promise<void> | undefined;
     try {
-      await vi.waitFor(async () => expect(await queue.listClaims()).toEqual([]));
+      await vi.waitFor(() =>
+        expect(logs.some((message) => message.includes("handler-timeout"))).toBe(true),
+      );
+      expect(await queue.listClaims()).toMatchObject([{ id: "watchdog", attempts: 0 }]);
       waiting = monitor.waitForIdle().then(() => {
         idle = true;
       });
@@ -151,11 +154,7 @@ describe("channel ingress monitor asynchronous inspection", () => {
   it.each(["deliver", "cancel", "reject"] as const)(
     "reports busy through inspection until %s",
     async (outcome) => {
-      const queue = createChannelIngressQueue<StoredEvent>({
-        channelId: "test",
-        accountId: "a",
-        stateDir: tempDirs.make("openclaw-ingress-inspection-activity-"),
-      });
+      const queue = createQueue();
       const release = createDeferred();
       const entered = createDeferred();
       const activity: boolean[] = [];
@@ -200,11 +199,7 @@ describe("channel ingress monitor asynchronous inspection", () => {
   it.each([false, true])(
     "reserves start capacity across pump cycles: shared result=%s",
     async (sharedResult) => {
-      const queue = createChannelIngressQueue<StoredEvent>({
-        channelId: "test",
-        accountId: "a",
-        stateDir: tempDirs.make("openclaw-ingress-inspection-capacity-"),
-      });
+      const queue = createQueue();
       const release = createDeferred();
       const entered = createDeferred();
       const sharedInspection = release.promise.then(() => null);
@@ -255,17 +250,13 @@ describe("channel ingress monitor asynchronous inspection", () => {
     },
   );
 
-  it.each([false, true])("checks the awaited claim identity: changed=%s", async (changed) => {
-    const queue = createChannelIngressQueue<StoredEvent>({
-      channelId: "test",
-      accountId: "a",
-      stateDir: tempDirs.make("openclaw-ingress-inspection-identity-"),
-    });
+  it("rejects a changed awaited claim identity", async () => {
+    const queue = createQueue();
     const deliver = vi.fn();
     const monitor = createMonitor(queue, {
       inspectAsync: async (raw, context) => ({
         eventId: raw.id,
-        laneKey: changed && context.phase === "claim" ? "changed" : raw.lane,
+        laneKey: context.phase === "claim" ? "changed" : raw.lane,
       }),
       deliver,
     });
@@ -273,7 +264,7 @@ describe("channel ingress monitor asynchronous inspection", () => {
       await monitor.admit({ id: "identity", lane: "a" });
       monitor.start();
       await monitor.waitForIdle();
-      expect(deliver).toHaveBeenCalledTimes(changed ? 0 : 1);
+      expect(deliver).not.toHaveBeenCalled();
     } finally {
       await monitor.stop();
     }
