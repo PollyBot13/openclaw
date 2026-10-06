@@ -466,6 +466,7 @@ export async function loadMediaToolReferences<T>(params: {
   cwd?: string;
   fsPolicy?: ToolFsPolicy;
   maxBytes: number;
+  optimizeImages?: boolean;
   ssrfPolicy?: SsrFPolicy;
   signal?: AbortSignal;
   mapMedia: (media: LoadedToolReferenceMedia) => T;
@@ -527,6 +528,7 @@ export async function loadMediaToolReferences<T>(params: {
       try {
         media = await loadWebMedia(resolvedPath ?? resolvedInput, {
           maxBytes: params.maxBytes,
+          optimizeImages: params.optimizeImages,
           ...(params.sandbox
             ? {
                 sandboxValidated: true,
