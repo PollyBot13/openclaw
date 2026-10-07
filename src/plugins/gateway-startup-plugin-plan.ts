@@ -105,31 +105,36 @@ export function resolveGatewayStartupPluginPlanFromRegistry(params: {
   const explicitlyDisabledChannelIds = new Set(
     listExplicitlyDisabledChannelIdsForConfig(params.config),
   );
-  const requiredAgentHarnessRuntimes = new Set(
-    collectConfiguredAgentHarnessRuntimes(activationSourceConfig),
-  );
-  const configuredSpeechProviderIds = collectConfiguredSpeechProviderIds(activationSourceConfig);
-  const configuredWebSearchProviderIds =
-    collectConfiguredWebSearchProviderIds(activationSourceConfig);
-  const configuredModelProviderIds = collectConfiguredAgentModelProviderIds(
-    activationSourceConfig,
-    params.manifestRegistry,
-  );
-  const configuredGenerationProviderIds =
-    collectConfiguredGenerationProviderIds(activationSourceConfig);
-  const configuredVoiceProviderIds = collectConfiguredVoiceProviderIds(activationSourceConfig);
-  const configuredMemoryEmbeddingProviderIds =
-    collectConfiguredMemoryEmbeddingProviderIds(activationSourceConfig);
-  const configuredDecisionProviderIds = new Set(
-    getConfiguredDecisionProviderIds(activationSourceConfig),
-  );
-  const configuredWorkerProviderIds = new Set([
-    ...collectConfiguredWorkerProviderIds(activationSourceConfig),
-    ...normalizeWorkerProviderIds(params.workerProviderIds ?? []),
-  ]);
-  const configuredStorageProviderIds = new Set(
-    collectConfiguredStorageProviderIds(activationSourceConfig),
-  );
+  const startupParams = {
+    config: params.config,
+    pluginsConfig,
+    activationSource,
+    env: params.env,
+    requiredAgentHarnessRuntimes: new Set(
+      collectConfiguredAgentHarnessRuntimes(activationSourceConfig),
+    ),
+    configuredSpeechProviderIds: collectConfiguredSpeechProviderIds(activationSourceConfig),
+    configuredWebSearchProviderIds: collectConfiguredWebSearchProviderIds(activationSourceConfig),
+    configuredModelProviderIds: collectConfiguredAgentModelProviderIds(
+      activationSourceConfig,
+      params.manifestRegistry,
+    ),
+    configuredGenerationProviderIds: collectConfiguredGenerationProviderIds(activationSourceConfig),
+    configuredVoiceProviderIds: collectConfiguredVoiceProviderIds(activationSourceConfig),
+    configuredMemoryEmbeddingProviderIds:
+      collectConfiguredMemoryEmbeddingProviderIds(activationSourceConfig),
+    configuredDecisionProviderIds: new Set(
+      getConfiguredDecisionProviderIds(activationSourceConfig),
+    ),
+    configuredWorkerProviderIds: new Set([
+      ...collectConfiguredWorkerProviderIds(activationSourceConfig),
+      ...normalizeWorkerProviderIds(params.workerProviderIds ?? []),
+    ]),
+    configuredStorageProviderIds: new Set(
+      collectConfiguredStorageProviderIds(activationSourceConfig),
+    ),
+    platform: params.platform,
+  };
   const memorySlotStartupPluginId = resolveMemorySlotStartupPluginId({
     activationSourceConfig,
     activationSourcePlugins,
@@ -192,27 +197,7 @@ export function resolveGatewayStartupPluginPlanFromRegistry(params: {
       }
       continue;
     }
-    if (
-      canStartGatewayStartupPlugin({
-        plugin,
-        manifest,
-        config: params.config,
-        pluginsConfig,
-        activationSource,
-        env: params.env,
-        requiredAgentHarnessRuntimes,
-        configuredWorkerProviderIds,
-        configuredStorageProviderIds,
-        configuredSpeechProviderIds,
-        configuredWebSearchProviderIds,
-        configuredModelProviderIds,
-        configuredGenerationProviderIds,
-        configuredVoiceProviderIds,
-        configuredMemoryEmbeddingProviderIds,
-        configuredDecisionProviderIds,
-        platform: params.platform,
-      })
-    ) {
+    if (canStartGatewayStartupPlugin({ ...startupParams, plugin, manifest })) {
       pluginIds.push(plugin.pluginId);
       continue;
     }

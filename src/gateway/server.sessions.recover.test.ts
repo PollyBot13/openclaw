@@ -199,6 +199,7 @@ test("sessions.recover settles its active placement before archiving a real sess
     cancelSessionWork: vi.fn(async () => {}),
     placements: {
       get: () => placement,
+      getAsync: async () => placement,
       waitForTurnClaimRelease: vi.fn(async () => {}),
     },
     loadSessionRuntime: async () => ({
@@ -348,6 +349,7 @@ test.each(["before-interrupt", "before-drain"] as const)(
       cancelSessionWork: vi.fn(async () => {}),
       placements: {
         get: () => placement,
+        getAsync: async () => placement,
         waitForTurnClaimRelease: async () => {
           if (phase === "before-drain") {
             await wait();
@@ -511,6 +513,7 @@ test("sessions.recover rolls over one tombstone and returns its continuation out
         modelSelectionLocked: true,
         pinnedAt: 1,
         sandbox: "required",
+        communication: { send: "never", receive: "ask" },
         spawnedCwd: "/tmp/recovered-worktree",
         mainRestartRecovery: {
           cycleId: "cycle-tombstoned",
@@ -572,6 +575,7 @@ test("sessions.recover rolls over one tombstone and returns its continuation out
     previousSessionId: sourceSessionId,
     providerOverride: "openai",
     sandbox: "required",
+    communication: { send: "never", receive: "ask" },
     spawnedCwd: "/tmp/recovered-worktree",
   });
   const archivedSource = loadSessionEntry({ agentId: "main", sessionKey: sourceKey, storePath });
