@@ -9,7 +9,6 @@ import type {
 import {
   CODEX_PLUGINS_MARKETPLACE_NAME,
   CODEX_PLUGINS_WORKSPACE_MARKETPLACE_NAME,
-  resolveCodexPluginsPolicy,
   type CodexPluginMarketplaceName,
   type ResolvedCodexPluginPolicy,
   type ResolvedCodexPluginsPolicy,
@@ -38,7 +37,6 @@ export type CodexPluginMarketplaceRef = {
 };
 
 type CodexPluginInventoryDiagnosticCode =
-  | "disabled"
   | "marketplace_missing"
   | "plugin_missing"
   | "plugin_disabled"
@@ -57,8 +55,6 @@ export type CodexPluginOwnedApp = {
   id: string;
   name: string;
   accessible: boolean;
-  enabled: boolean;
-  needsAuth: boolean;
   /** Current non-read-only tool keys; absent when Codex omits tool metadata. */
   approvalOverrideToolConfigKeys?: readonly string[];
 };
@@ -68,7 +64,6 @@ type CodexPluginInventoryRecord = {
   summary: v2.PluginSummary;
   detail?: v2.PluginDetail;
   activationRequired: boolean;
-  authRequired: boolean;
   appOwnership: "proven" | "ambiguous" | "none";
   ownedAppIds: string[];
   apps: CodexPluginOwnedApp[];
@@ -82,8 +77,7 @@ export type CodexPluginInventory = {
 };
 
 type ReadCodexPluginInventoryParams = {
-  pluginConfig?: unknown;
-  policy?: ResolvedCodexPluginsPolicy;
+  policy: ResolvedCodexPluginsPolicy;
   request: CodexPluginRuntimeRequest;
   appCache?: CodexAppInventoryCache;
   appCacheKey?: string;
@@ -97,23 +91,10 @@ type ReadCodexPluginInventoryParams = {
 export async function readCodexPluginInventory(
   params: ReadCodexPluginInventoryParams,
 ): Promise<CodexPluginInventory> {
-  const policy = params.policy ?? resolveCodexPluginsPolicy(params.pluginConfig);
-  if (!policy.enabled) {
-    return {
-      policy,
-      records: [],
-      diagnostics: [
-        {
-          code: "disabled",
-          message: "Native Codex plugin support is disabled.",
-        },
-      ],
-    };
-  }
-
+  const { policy } = params;
   const appInventory = readCachedAppInventory(params);
-  const installedPlugins = await readInstalledCodexPluginMetadata({ ...params, policy });
-  const pluginCatalogs = new Map<string, Promise<v2.PluginListResponse>>();
+  const installedPlugins = await readInstalledCodexPluginMetadata(params);
+  const pluginCatalogs = new Map<string | undefined, v2.PluginListResponse>();
 
   const diagnostics: CodexPluginInventoryDiagnostic[] = [];
   const records: CodexPluginInventoryRecord[] = [];
@@ -143,17 +124,13 @@ export async function readCodexPluginInventory(
       // Installed snapshots exclude uninstalled plugins. Read only the
       // explicitly configured marketplace; non-curated packages still require
       // an owner-issued install command before they can be activated.
-      const requestParams = buildPluginCatalogRequestParams(params, pluginPolicy.marketplaceName);
-      const catalogKey = JSON.stringify([
-        requestParams,
-        pluginMetadataCatalogScope(pluginPolicy.marketplaceName),
-      ]);
+      const catalogKey = pluginMetadataCatalogScope(pluginPolicy.marketplaceName);
       let catalog = pluginCatalogs.get(catalogKey);
       if (!catalog) {
-        catalog = listCodexPluginMetadata(params, pluginPolicy.marketplaceName);
+        catalog = await listCodexPluginMetadata(params, pluginPolicy.marketplaceName);
         pluginCatalogs.set(catalogKey, catalog);
       }
-      listed = await catalog;
+      listed = catalog;
       resolvedPlugin = findConfiguredMarketplacePlugin(listed, pluginPolicy);
     }
     const hasMarketplace = listed.marketplaces.some((marketplace) =>
@@ -199,11 +176,7 @@ export async function readCodexPluginInventory(
       summary,
       diagnostics,
     );
-    const ownedAppIds =
-      detail?.apps
-        .map((app) => app.id)
-        .filter(Boolean)
-        .toSorted() ?? [];
+    const ownedAppIds = detail?.apps.map((app) => app.id).filter(Boolean) ?? [];
     const appOwnership = detail?.apps.length
       ? "proven"
       : appInventory?.snapshot?.apps.some((app) => app.pluginDisplayNames.includes(summary.name))
@@ -236,7 +209,6 @@ export async function readCodexPluginInventory(
       activationRequired:
         pluginPolicy.enabled &&
         (unavailableByMarketplacePolicy || !summary.installed || !summary.enabled),
-      authRequired: apps.some((app) => app.needsAuth || !app.accessible),
       appOwnership,
       ownedAppIds: Array.from(new Set([...ownedAppIds, ...apps.map((app) => app.id)])).toSorted(),
       apps,
@@ -302,13 +274,7 @@ export function resolveRecoverableCodexPluginConfigKeys(params: {
   return params.policy.pluginPolicies
     .filter(
       (pluginPolicy) =>
-        pluginPolicy.enabled &&
-        !isSettledMissingPluginPolicy({
-          pluginPolicy,
-          metadataCache: params.metadataCache,
-          appCacheKey: params.appCacheKey,
-          configCwd: params.configCwd,
-        }),
+        pluginPolicy.enabled && !isSettledMissingPluginPolicy({ ...params, pluginPolicy }),
     )
     .map((pluginPolicy) => pluginPolicy.configKey)
     .toSorted();
@@ -347,7 +313,7 @@ export async function listCodexPluginMetadata(
 }
 
 async function readInstalledCodexPluginMetadata(
-  params: ReadCodexPluginInventoryParams & { policy: ResolvedCodexPluginsPolicy },
+  params: ReadCodexPluginInventoryParams,
 ): Promise<v2.PluginInstalledResponse> {
   const requestParams = (
     params.configCwd ? { cwds: [params.configCwd] } : {}
@@ -498,7 +464,6 @@ function resolveOwnedApps(params: {
     return [];
   }
   const appInfos = params.appInventory?.snapshot?.apps ?? [];
-  const installedApps = params.appInventory?.snapshot?.installedApps ?? [];
   return detailApps
     .map((app) => {
       const info = findCodexAppById(appInfos, app.id);
@@ -507,30 +472,22 @@ function resolveOwnedApps(params: {
           id: app.id,
           name: app.name,
           accessible: false,
-          enabled: false,
-          needsAuth: true,
         };
       }
-      return Object.assign(
-        toCodexPluginOwnedAccountApp(info, findCodexAppById(installedApps, info.id)),
-        { name: app.name },
-      );
+      const ownedApp = toCodexPluginOwnedAccountApp(info);
+      ownedApp.name = app.name;
+      return ownedApp;
     })
     .toSorted((left, right) => left.id.localeCompare(right.id));
 }
 
 export function toCodexPluginOwnedAccountApp(
   app: CodexAppInventorySnapshot["apps"][number],
-  installedApp: v2.InstalledApp | undefined,
 ): CodexPluginOwnedApp {
   return {
     id: app.id,
     name: app.name,
     accessible: true,
-    enabled: installedApp?.enabled ?? false,
-    // Modern plugin summaries carry no auth bit; account-authorized
-    // app/read metadata is the canonical connector access proof.
-    needsAuth: false,
     ...resolveOwnedAppApprovalOverrideKeys(app),
   };
 }

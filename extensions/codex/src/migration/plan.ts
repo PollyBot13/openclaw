@@ -49,6 +49,17 @@ export type CodexPluginMigrationConfigEntry = {
   allowDestructiveActions?: "auto" | "ask";
 };
 
+function pluginConfigValue(entry: CodexPluginMigrationConfigEntry) {
+  return {
+    enabled: entry.enabled,
+    marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
+    pluginName: entry.pluginName,
+    ...(entry.allowDestructiveActions
+      ? { allow_destructive_actions: entry.allowDestructiveActions }
+      : {}),
+  };
+}
+
 async function lstatIfExists(filePath: string) {
   try {
     return await fs.lstat(filePath);
@@ -247,12 +258,12 @@ function buildPluginItems(
         existingPluginEntries[configKey],
         plugin.pluginName,
       );
-      const plannedEntry = {
+      const plannedEntry = pluginConfigValue({
+        configKey,
         enabled: true,
-        marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
         pluginName: plugin.pluginName,
-        ...(allowDestructiveActions ? { allow_destructive_actions: allowDestructiveActions } : {}),
-      };
+        allowDestructiveActions,
+      });
       const conflict =
         !ctx.overwrite &&
         hasExistingCodexPluginEntry(
@@ -354,16 +365,6 @@ export function readCodexPluginMigrationConfigEntry(
   };
 }
 
-function readExistingAllowDestructiveActions(
-  config: MigrationProviderContext["config"],
-): boolean | "auto" | "ask" | undefined {
-  const value = readMigrationConfigPath(config as Record<string, unknown>, [
-    ...CODEX_PLUGIN_NATIVE_CONFIG_PATH,
-    "allow_destructive_actions",
-  ]);
-  return normalizeExistingAllowDestructiveActions(value);
-}
-
 function normalizeExistingAllowDestructiveActions(
   value: unknown,
 ): boolean | "auto" | "ask" | undefined {
@@ -376,49 +377,32 @@ function normalizeExistingAllowDestructiveActions(
   return asBoolean(value);
 }
 
-function readExistingPluginPolicyRepairs(
-  config: MigrationProviderContext["config"],
-): Record<string, Record<string, unknown>> {
-  return Object.fromEntries(
-    Object.entries(readExistingCodexPluginEntries(config)).flatMap(([configKey, entry]) => {
-      const pluginEntry = isRecord(entry) ? entry : undefined;
-      if (pluginEntry?.allow_destructive_actions !== "on-request") {
-        return [];
-      }
-      return [[configKey, { ...pluginEntry, allow_destructive_actions: "auto" }]];
-    }),
-  );
-}
-
 export function buildCodexPluginsConfigValue(
   entries: readonly CodexPluginMigrationConfigEntry[],
   config: MigrationProviderContext["config"],
 ) {
-  const plugins: Record<string, Record<string, unknown>> = {
-    ...readExistingPluginPolicyRepairs(config),
-    ...Object.fromEntries(
-      entries
-        .toSorted((a, b) => a.configKey.localeCompare(b.configKey))
-        .map((entry) => [
-          entry.configKey,
-          {
-            enabled: entry.enabled,
-            marketplaceName: CODEX_PLUGINS_MARKETPLACE_NAME,
-            pluginName: entry.pluginName,
-            ...(entry.allowDestructiveActions
-              ? { allow_destructive_actions: entry.allowDestructiveActions }
-              : {}),
-          },
-        ]),
-    ),
-  };
+  const plugins = new Map<string, Record<string, unknown>>();
+  for (const [key, entry] of Object.entries(readExistingCodexPluginEntries(config))) {
+    if (isRecord(entry) && entry.allow_destructive_actions === "on-request") {
+      plugins.set(key, { ...entry, allow_destructive_actions: "auto" });
+    }
+  }
+  for (const entry of entries.toSorted((a, b) => a.configKey.localeCompare(b.configKey))) {
+    plugins.set(entry.configKey, pluginConfigValue(entry));
+  }
   return {
     enabled: true,
     config: {
       codexPlugins: {
         enabled: true,
-        allow_destructive_actions: readExistingAllowDestructiveActions(config) ?? true,
-        plugins,
+        allow_destructive_actions:
+          normalizeExistingAllowDestructiveActions(
+            readMigrationConfigPath(config as Record<string, unknown>, [
+              ...CODEX_PLUGIN_NATIVE_CONFIG_PATH,
+              "allow_destructive_actions",
+            ]),
+          ) ?? true,
+        plugins: Object.fromEntries(plugins),
       },
     },
   };

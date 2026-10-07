@@ -61,11 +61,6 @@ export type InstalledPluginIndexRecord = {
   contextEngineIds?: readonly string[];
   packageName?: string;
   packageVersion?: string;
-  /**
-   * Legacy embedded install record accepted when reading earlier index files.
-   * New index writes keep install records in InstalledPluginIndex.installRecords.
-   */
-  installRecord?: InstalledPluginInstallRecordInfo;
   /** Hash of the top-level installRecords entry; used to detect source-changed invalidation. */
   installRecordHash?: string;
   /** Native source admissions survive process restarts while the install owner is unchanged. */

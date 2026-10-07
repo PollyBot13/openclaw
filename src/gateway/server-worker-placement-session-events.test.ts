@@ -40,12 +40,12 @@ describe("worker placement session events", () => {
       cancelSessionWork: vi.fn(async () => {}),
       placements: {
         workspaceResultInstanceId: () => "gateway-test",
-        get: () => undefined,
-        list: () => [],
-        retireSessionPlacement: vi.fn(),
+        getAsync: async () => undefined,
+        listAsync: async () => [],
+        retireSessionPlacementAsync: vi.fn(async () => {}),
         pruneOrphanedWorkspaceReconciliations: async () => [],
         listWorkspaceReconciliationOwners: async () => [],
-        listPendingWorkspaceResults: () => [],
+        listPendingWorkspaceResultsAsync: async () => [],
       } as never,
       environments: {
         subscribeMachineShapeChanged: vi.fn(() => vi.fn()),

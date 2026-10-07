@@ -49,6 +49,8 @@ import {
   withEphemeralCodexAuthStore,
 } from "./auth-start-options.js";
 import type {
+  CodexAppServerAuthRequirement,
+  CodexAppServerAuthHandoff,
   CodexAppServerPreparedAuth,
   CodexAppServerPreparedAuthProfileSnapshot,
   CodexAppServerResolvedPreparedAuth,
@@ -80,12 +82,8 @@ import {
   isCodexResponsesOAuthCredential,
   resolveCodexResponsesOAuthProfileFingerprint,
 } from "./responses-oauth.js";
+import { codexPrewriteRejectionCause } from "./rpc-error.js";
 import { resolveCodexAppServerSpawnEnv } from "./transport-stdio.js";
-
-export type {
-  CodexAppServerPreparedAuth,
-  CodexAppServerResolvedPreparedAuth,
-} from "./auth-types.js";
 
 const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai:default";
 const CODEX_HOME_ENV_VAR = "CODEX_HOME";
@@ -98,18 +96,13 @@ const CODEX_APP_SERVER_PREPARED_AUTH_ENV_VARS = [
   OPENAI_API_KEY_ENV_VAR,
   CODEX_ACCESS_TOKEN_ENV_VAR,
 ];
-const CODEX_APP_SERVER_HOME_ENV_VARS = [CODEX_HOME_ENV_VAR, HOME_ENV_VAR];
+const CODEX_APP_SERVER_HOME_ENV_VARS = new Set([CODEX_HOME_ENV_VAR, HOME_ENV_VAR]);
 const MAX_COMPUTER_USE_ARTIFACT_OWNERS = 128;
 const activeComputerUseArtifactReconciliations = new Map<
   string,
   { latestEpoch?: number; appliedCacheBinding?: string; active: number; tail: Promise<void> }
 >();
 type AuthProfileOrderConfig = Parameters<typeof resolveCodexAppServerAuthProfileId>[0]["config"];
-export type CodexAppServerAuthRequirement = "api-key" | "subscription";
-export type CodexAppServerAuthHandoff = Readonly<{
-  accessFingerprint: string;
-  chatgptAccountId: string;
-}>;
 const scopedOAuthRefreshQueues = new WeakMap<
   AuthProfileStore,
   Map<string, Promise<OAuthCredential>>
@@ -158,11 +151,7 @@ export async function bridgeCodexAppServerStartOptions(params: {
   }
 
   const scopedStartOptions = await scopeStartOptions();
-  const shouldClearInheritedOpenAiApiKey = shouldClearOpenAiApiKeyForCodexAuthProfile({
-    store,
-    authProfileId,
-  });
-  return shouldClearInheritedOpenAiApiKey
+  return shouldClearOpenAiApiKeyForCodexAuthProfile({ store, authProfileId })
     ? withClearedEnvironmentVariables(scopedStartOptions, CODEX_APP_SERVER_API_KEY_ENV_VARS)
     : scopedStartOptions;
 }
@@ -430,9 +419,12 @@ async function withCodexHomeEnvironment(
       ...(nativeHome ? { [HOME_ENV_VAR]: nativeHome } : {}),
     },
   };
-  const clearEnv = withoutClearedCodexHomeEnv(startOptions.clearEnv);
-  if (clearEnv) {
-    nextStartOptions.clearEnv = clearEnv;
+  if (startOptions.clearEnv) {
+    const filtered = startOptions.clearEnv.filter(
+      (envVar) => !CODEX_APP_SERVER_HOME_ENV_VARS.has(envVar.trim().toUpperCase()),
+    );
+    nextStartOptions.clearEnv =
+      filtered.length === startOptions.clearEnv.length ? startOptions.clearEnv : filtered;
   } else {
     delete nextStartOptions.clearEnv;
   }
@@ -661,15 +653,6 @@ class CodexComputerUseCandidateArtifactsUnavailableError extends Error {
   }
 }
 
-function withoutClearedCodexHomeEnv(clearEnv: string[] | undefined): string[] | undefined {
-  if (!clearEnv) {
-    return undefined;
-  }
-  const reserved = new Set(CODEX_APP_SERVER_HOME_ENV_VARS);
-  const filtered = clearEnv.filter((envVar) => !reserved.has(envVar.trim().toUpperCase()));
-  return filtered.length === clearEnv.length ? clearEnv : filtered;
-}
-
 export async function applyCodexAppServerAuthProfile(params: {
   client: CodexAppServerClient;
   agentDir?: string;
@@ -726,9 +709,13 @@ export async function applyCodexAppServerAuthProfile(params: {
   }
   if (loginParams) {
     // Refresh and overload backoff can outlive the caller; check at the physical write.
-    await params.client.request("account/login/start", loginParams, {
-      assertCurrent: params.assertCurrent,
-    });
+    try {
+      await params.client.request("account/login/start", loginParams, {
+        assertCurrent: params.assertCurrent,
+      });
+    } catch (error) {
+      throw codexPrewriteRejectionCause(error);
+    }
     if (loginParams.type === "chatgptAuthTokens") {
       params.assertCurrent?.();
       return {
@@ -860,15 +847,45 @@ async function resolveCodexAppServerAuthProfileLoginParamsInternal(params: {
       `Codex app-server auth profile "${profileId}" must use the canonical OpenAI auth provider; run "openclaw doctor --fix" to migrate legacy provider IDs.`,
     );
   }
-  const loginParams = await resolveLoginParamsForCredential(profileId, credential, {
-    agentDir: params.agentDir,
-    store,
-    preferStoreCredential: Boolean(params.authProfileStore?.profiles[profileId]),
-    forceOAuthRefresh: params.forceOAuthRefresh === true,
-    authHandoff: params.authHandoff,
-    previousAccountId: params.previousAccountId,
-    config: params.config,
-  });
+  const preferStoreCredential = Boolean(params.authProfileStore?.profiles[profileId]);
+  let loginParams: CodexLoginAccountParams | undefined;
+  // Runtime honors the persisted type; credential-entry owners remediate legacy shapes.
+  if (credential.type === "api_key" || credential.type === "token") {
+    const resolved = await resolveApiKeyForProfile({
+      cfg: params.config,
+      store: preferStoreCredential
+        ? store
+        : ensureAuthProfileStore(params.agentDir, {
+            allowKeychainPrompt: false,
+            profileId,
+            config: params.config,
+          }),
+      profileId,
+      agentDir: params.agentDir,
+    });
+    const value = resolved?.apiKey?.trim();
+    if (value) {
+      loginParams =
+        credential.type === "api_key"
+          ? { type: "apiKey", apiKey: value }
+          : buildChatgptAuthTokensParams(profileId, credential, value);
+    }
+  } else {
+    const resolvedCredential = await resolveOAuthCredentialForCodexAppServer(
+      profileId,
+      credential,
+      {
+        ...params,
+        store,
+        preferStoreCredential,
+        forceRefresh: params.forceOAuthRefresh === true,
+      },
+    );
+    const accessToken = resolvedCredential.access?.trim();
+    if (accessToken) {
+      loginParams = buildChatgptAuthTokensParams(profileId, resolvedCredential, accessToken);
+    }
+  }
   if (!loginParams) {
     throw new CodexAppServerAuthProfileUnavailableError(
       `Codex app-server auth profile "${profileId}" does not contain usable credentials. Repair or replace the selected OpenAI credential, then retry.`,
@@ -900,58 +917,6 @@ async function resolveCodexAppServerFallbackApiKeyLoginParams(params: {
   return { type: "apiKey", apiKey };
 }
 
-async function resolveLoginParamsForCredential(
-  profileId: string,
-  credential: AuthProfileCredential,
-  params: {
-    agentDir: string;
-    store: AuthProfileStore;
-    preferStoreCredential: boolean;
-    forceOAuthRefresh: boolean;
-    authHandoff?: CodexAppServerAuthHandoff;
-    previousAccountId?: string | null;
-    config?: AuthProfileOrderConfig;
-  },
-): Promise<CodexLoginAccountParams | undefined> {
-  // Runtime honors the persisted auth profile type. Shape-based remediation
-  // belongs at credential entry time so request handling does not preemptively
-  // reject opaque provider credentials.
-  if (credential.type === "api_key" || credential.type === "token") {
-    const resolved = await resolveApiKeyForProfile({
-      cfg: params.config,
-      store: params.preferStoreCredential
-        ? params.store
-        : ensureAuthProfileStore(params.agentDir, {
-            allowKeychainPrompt: false,
-            profileId,
-            config: params.config,
-          }),
-      profileId,
-      agentDir: params.agentDir,
-    });
-    const value = resolved?.apiKey?.trim();
-    if (!value) {
-      return undefined;
-    }
-    return credential.type === "api_key"
-      ? { type: "apiKey", apiKey: value }
-      : buildChatgptAuthTokensParams(profileId, credential, value);
-  }
-  const resolvedCredential = await resolveOAuthCredentialForCodexAppServer(profileId, credential, {
-    agentDir: params.agentDir,
-    store: params.store,
-    preferStoreCredential: params.preferStoreCredential,
-    forceRefresh: params.forceOAuthRefresh,
-    authHandoff: params.authHandoff,
-    previousAccountId: params.previousAccountId,
-    config: params.config,
-  });
-  const accessToken = resolvedCredential.access?.trim();
-  return accessToken
-    ? buildChatgptAuthTokensParams(profileId, resolvedCredential, accessToken)
-    : undefined;
-}
-
 async function resolveOAuthCredentialForCodexAppServer(
   profileId: string,
   credential: OAuthCredential,
@@ -973,17 +938,17 @@ async function resolveOAuthCredentialForCodexAppServer(
     agentDir: ownerAgentDir,
     profileId,
   });
+  const persistedProfile = params.store.runtimePersistedProfileIds?.includes(profileId);
   const useScopedCredential =
     params.preferStoreCredential &&
-    shouldUseScopedOAuthCredential({
-      store: params.store,
-      profileId,
-      persistedCredential,
-      suppliedCredential: credential,
-    });
+    (!persistedProfile ||
+      (persistedCredential?.type === "oauth" &&
+        isCodexAppServerAuthProvider(persistedCredential.provider) &&
+        !isDeepStrictEqual(persistedCredential, credential) &&
+        !hasMatchingOAuthIdentity(persistedCredential, credential)));
   if (
     params.preferStoreCredential &&
-    params.store.runtimePersistedProfileIds?.includes(profileId) &&
+    persistedProfile &&
     (persistedCredential?.type !== "oauth" ||
       !isCodexAppServerAuthProvider(persistedCredential.provider))
   ) {
@@ -1113,25 +1078,6 @@ function shouldReuseCompletedCodexOAuthRotation(params: {
   return (
     accountId === handoff.chatgptAccountId &&
     (!previousAccountId || previousAccountId === handoff.chatgptAccountId)
-  );
-}
-
-function shouldUseScopedOAuthCredential(params: {
-  store: AuthProfileStore;
-  profileId: string;
-  persistedCredential: AuthProfileCredential | undefined;
-  suppliedCredential: OAuthCredential;
-}): boolean {
-  if (!params.store.runtimePersistedProfileIds?.includes(params.profileId)) {
-    return true;
-  }
-  const persisted = params.persistedCredential;
-  if (persisted?.type !== "oauth" || !isCodexAppServerAuthProvider(persisted.provider)) {
-    return false;
-  }
-  return (
-    !isDeepStrictEqual(persisted, params.suppliedCredential) &&
-    !hasMatchingOAuthIdentity(persisted, params.suppliedCredential)
   );
 }
 
@@ -1277,11 +1223,7 @@ function resolveStableChatgptAccountId(credential: AuthProfileCredential): strin
 }
 
 function resolveExplicitChatgptAccountId(credential: AuthProfileCredential): string | undefined {
-  if ("accountId" in credential && typeof credential.accountId === "string") {
-    const accountId = credential.accountId.trim();
-    if (accountId) {
-      return accountId;
-    }
-  }
-  return undefined;
+  return "accountId" in credential && typeof credential.accountId === "string"
+    ? credential.accountId.trim() || undefined
+    : undefined;
 }

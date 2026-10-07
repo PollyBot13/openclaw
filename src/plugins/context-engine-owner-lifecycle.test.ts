@@ -75,7 +75,7 @@ it("rebuilds declared factories when switching engines on the same owner", async
   const workspaceDir = makePluginLoaderTempDir();
   vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
   const plugins = [
-    writeEnginePlugin({ workspaceDir, id: "second", engineIds: ["second"] }),
+    writeEnginePlugin({ workspaceDir, id: "secondary-capability", engineIds: ["second"] }),
     writeEnginePlugin({
       workspaceDir,
       id: "vendor",
@@ -89,7 +89,7 @@ it("rebuilds declared factories when switching engines on the same owner", async
     plugins: {
       load: { paths: plugins.map((plugin) => plugin.file) },
       entries: {
-        second: { enabled: true },
+        "secondary-capability": { enabled: true },
         vendor: { enabled: true },
         ordinary: { enabled: true },
       },
@@ -105,10 +105,10 @@ it("rebuilds declared factories when switching engines on the same owner", async
   let replacement: ReturnType<typeof loadOpenClawPlugins> | undefined;
   try {
     expect(fs.readFileSync(path.join(workspaceDir, "registrations"), "utf8")).toBe(
-      "second\nvendor\nordinary\n",
+      "secondary-capability\nvendor\nordinary\n",
     );
     expect(initial.contextEngines.get("first")?.owner).toBe("plugin:vendor");
-    expect(initial.contextEngines.get("second")?.owner).toBe("plugin:second");
+    expect(initial.contextEngines.get("second")?.owner).toBe("plugin:secondary-capability");
     expect(getPluginRuntimeLoadContextState(initial)?.selectedContextEngine).toEqual({
       engineId: "first",
       owner: "plugin:vendor",
@@ -132,12 +132,12 @@ it("rebuilds declared factories when switching engines on the same owner", async
     expect(replacement.plugins.find((plugin) => plugin.id === "vendor")).not.toBe(
       initial.plugins.find((plugin) => plugin.id === "vendor"),
     );
-    expect(replacement.plugins.find((plugin) => plugin.id === "second")).not.toBe(
-      initial.plugins.find((plugin) => plugin.id === "second"),
+    expect(replacement.plugins.find((plugin) => plugin.id === "secondary-capability")).not.toBe(
+      initial.plugins.find((plugin) => plugin.id === "secondary-capability"),
     );
     expect(replacement.services.map((entry) => entry.service.id).toSorted()).toEqual([
       "ordinary-service",
-      "second-service",
+      "secondary-capability-service",
       "vendor-service",
     ]);
 

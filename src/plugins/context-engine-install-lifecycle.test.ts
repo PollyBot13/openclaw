@@ -61,7 +61,7 @@ it.each([false, true])(
       preferPersisted: false,
     });
     const selected = await applySlotSelectionForPlugin(config, "vendor-plugin", metadata);
-    expect(selected.config.plugins?.slots?.contextEngine).toBe(
+    expect(selected.plugins?.slots?.contextEngine).toBe(
       hasDeclaredOwner ? "vendor-plugin" : "canonical-engine",
     );
   },
@@ -306,11 +306,11 @@ module.exports = { id: "vendor-plugin", kind: "context-engine", register(api) {
     });
     expect(metadata.byPluginId.get(plugin.id)?.contextEngineIds).toEqual(["canonical-engine"]);
     const selected = await applySlotSelectionForPlugin(config, plugin.id, metadata);
-    expect(selected.config.plugins?.slots?.contextEngine).toBe("canonical-engine");
+    expect(selected.plugins?.slots?.contextEngine).toBe("canonical-engine");
     expect(fs.existsSync(imported)).toBe(false);
 
     const configPath = path.join(stateDir, "selected-config.json");
-    fs.writeFileSync(configPath, JSON.stringify(selected.config));
+    fs.writeFileSync(configPath, JSON.stringify(selected));
     const persisted: OpenClawConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
     clearPluginMetadataLifecycleCaches();
     const fresh = loadPluginMetadataSnapshot({

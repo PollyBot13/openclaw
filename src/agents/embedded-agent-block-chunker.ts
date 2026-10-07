@@ -1,7 +1,7 @@
-/**
- * Splits streamed embedded-agent replies into Markdown-safe message chunks.
- */
-
+import {
+  findGraphemeChunkEnd,
+  firstGraphemeClusterLength,
+} from "@openclaw/normalization-core/grapheme";
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { FenceSpan } from "../../packages/markdown-core/src/fences.js";
 import {
@@ -241,7 +241,6 @@ export class EmbeddedBlockChunker {
     return this.#buffer.length > 0;
   }
 
-  /** Emit safe chunks according to size and Markdown fence constraints. */
   drain(params: BlockChunkDrain) {
     const sourceBreaks = this.#sourceBreaks;
     while (this.#nextSourceBreak < sourceBreaks.length) {
@@ -446,6 +445,7 @@ export class EmbeddedBlockChunker {
               start,
               maxChars - reopenPrefix.length,
               openFence,
+              params.force,
             );
       if (breakResult.index <= 0) {
         if (force) {
@@ -571,31 +571,19 @@ export class EmbeddedBlockChunker {
     }
     const preference = chunking.breakPreference ?? "paragraph";
 
-    if (preference === "paragraph") {
-      const paragraphIdx = findSafeLineBreakIndex({
+    const separators: Array<"\n" | "\n\n"> =
+      preference === "paragraph" ? ["\n\n", "\n"] : preference === "newline" ? ["\n"] : [];
+    for (const separator of separators) {
+      const index = findSafeLineBreakIndex({
         text: buffer,
         unsafeSpans,
         minChars,
         reverse,
-        separator: "\n\n",
+        separator,
         offset,
       });
-      if (paragraphIdx !== -1) {
-        return { index: paragraphIdx };
-      }
-    }
-
-    if (preference === "paragraph" || preference === "newline") {
-      const newlineIdx = findSafeLineBreakIndex({
-        text: buffer,
-        unsafeSpans,
-        minChars,
-        reverse,
-        separator: "\n",
-        offset,
-      });
-      if (newlineIdx !== -1) {
-        return { index: newlineIdx };
+      if (index !== -1) {
+        return { index };
       }
     }
 
@@ -623,6 +611,7 @@ export class EmbeddedBlockChunker {
     offset = 0,
     maxCharsOverride?: number,
     openFence?: FenceSpan,
+    force = false,
   ): BreakResult {
     const minChars = Math.max(1, Math.floor(minCharsOverride ?? chunking.minChars));
     const maxChars = Math.max(1, Math.floor(maxCharsOverride ?? chunking.maxChars));
@@ -668,6 +657,10 @@ export class EmbeddedBlockChunker {
       ).length;
       // An unfinished span ends at the buffer boundary without a source closer.
       const absoluteBreakIndex = offset + forcedBreakIndex;
+      const endingFence = findFenceSpanAt(spans.fences, absoluteBreakIndex - 1);
+      if (endingFence?.end === absoluteBreakIndex && endingFence !== openFence) {
+        return { index: forcedBreakIndex };
+      }
       const fence =
         findFenceSpanAt(spans.fences, absoluteBreakIndex) ??
         (openFence?.end === absoluteBreakIndex ? openFence : undefined);
@@ -696,7 +689,26 @@ export class EmbeddedBlockChunker {
           fenceSplit: { closeFenceLine, reopenFenceLine, fence },
         };
       }
-      return { index: forcedBreakIndex };
+      // A streamed trailing cluster can still gain a combining mark or ZWJ
+      // continuation in the next delta. Keep it pending until a following
+      // cluster or final drain establishes the boundary.
+      const graphemeSource =
+        !force && /[\uD800-\uDBFF]$/u.test(buffer) ? buffer.slice(0, -1) : buffer;
+      const maxEnd = Math.min(
+        forcedBreakIndex,
+        force ? graphemeSource.length : graphemeSource.length - 1,
+      );
+      const wholeEnd = findGraphemeChunkEnd(graphemeSource, 0, maxEnd, maxEnd, false);
+      if (!force && wholeEnd > 0 && buffer.length === forcedBreakIndex) {
+        // Wait for lookahead instead of turning a full chunk into a shorter
+        // prefix and a trailing fragment solely to reserve its last cluster.
+        return { index: 0 };
+      }
+      return {
+        index:
+          wholeEnd ||
+          (firstGraphemeClusterLength(graphemeSource) >= forcedBreakIndex ? forcedBreakIndex : 0),
+      };
     }
 
     return { index: -1 };

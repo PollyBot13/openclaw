@@ -31,10 +31,7 @@ function normalizeKinds(kind?: PluginKind | PluginKind[]): PluginKind[] {
 
 /** Check whether a plugin's kind field includes a specific kind. */
 export function hasKind(kind: PluginKind | PluginKind[] | undefined, target: PluginKind): boolean {
-  if (!kind) {
-    return false;
-  }
-  return Array.isArray(kind) ? kind.includes(target) : kind === target;
+  return normalizeKinds(kind).includes(target);
 }
 
 /** Order-insensitive equality check for two kind values (string or array). */
@@ -128,12 +125,6 @@ export function resetPluginSlotsToDefaults(
   return changed ? (Object.keys(next).length === 0 ? undefined : next) : slots;
 }
 
-type SlotSelectionResult = {
-  config: OpenClawConfig;
-  warnings: string[];
-  changed: boolean;
-};
-
 /** Updates config so the selected plugin owns all slots implied by its kind. */
 export function applyExclusiveSlotSelection(params: {
   config: OpenClawConfig;
@@ -141,13 +132,13 @@ export function applyExclusiveSlotSelection(params: {
   selectedKind?: PluginKind | PluginKind[];
   contextEngineIds?: readonly string[];
   legacyContextEngineOwnerId?: string;
-}): SlotSelectionResult {
+  warn?: (message: string) => void;
+}): OpenClawConfig {
   const slotKeys = slotKeysForPluginKind(params.selectedKind);
   if (slotKeys.length === 0) {
-    return { config: params.config, warnings: [], changed: false };
+    return params.config;
   }
 
-  const warnings: string[] = [];
   const pluginsConfig = params.config.plugins ?? {};
   let anyChanged = false;
   const entries = { ...pluginsConfig.entries };
@@ -163,7 +154,7 @@ export function applyExclusiveSlotSelection(params: {
         continue;
       }
       if (engineIds.length !== 1 || !onlyEngineId) {
-        warnings.push(
+        params.warn?.(
           `Plugin "${params.selectedId}" declares multiple context engines. Set plugins.slots.contextEngine explicitly to one of: ${engineIds.join(", ")}. The current selection is unchanged.`,
         );
         continue;
@@ -173,7 +164,7 @@ export function applyExclusiveSlotSelection(params: {
         prevSlot !== defaultSlotIdForKey(slotKey) &&
         (prevSlot !== params.selectedId || params.legacyContextEngineOwnerId !== params.selectedId)
       ) {
-        warnings.push(
+        params.warn?.(
           `Preserved explicit context engine selection "${prevSlot}". To use "${params.selectedId}", set plugins.slots.contextEngine to "${engineIds[0]}".`,
         );
         continue;
@@ -193,21 +184,17 @@ export function applyExclusiveSlotSelection(params: {
   }
 
   if (!anyChanged) {
-    return { config: params.config, warnings, changed: false };
+    return params.config;
   }
 
   const { slots: _previousSlots, ...pluginsWithoutSlots } = pluginsConfig;
 
   return {
-    config: {
-      ...params.config,
-      plugins: {
-        ...pluginsWithoutSlots,
-        ...(Object.keys(slots).length > 0 ? { slots } : {}),
-        entries,
-      },
+    ...params.config,
+    plugins: {
+      ...pluginsWithoutSlots,
+      ...(Object.keys(slots).length > 0 ? { slots } : {}),
+      entries,
     },
-    warnings,
-    changed: true,
   };
 }

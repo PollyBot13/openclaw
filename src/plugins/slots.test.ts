@@ -1,5 +1,5 @@
 /** Tests plugin slot normalization and exclusive slot selection behavior. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   applyExclusiveSlotSelection,
@@ -28,14 +28,16 @@ describe("resetPluginSlotsToDefaults", () => {
 
 describe("applyExclusiveSlotSelection", () => {
   it("selects the declared engine rather than its plugin ID", () => {
+    const warn = vi.fn();
     const result = applyExclusiveSlotSelection({
       config: {},
       selectedId: "vendor-plugin",
       selectedKind: "context-engine",
       contextEngineIds: ["CanonicalEngine"],
+      warn,
     });
-    expect(result.config.plugins?.slots?.contextEngine).toBe("CanonicalEngine");
-    expect(result.warnings).toEqual([]);
+    expect(result.plugins?.slots?.contextEngine).toBe("CanonicalEngine");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each(["other-engine", "none", "second-engine"])("preserves explicit choice %s", (choice) => {
@@ -46,30 +48,34 @@ describe("applyExclusiveSlotSelection", () => {
       selectedKind: "context-engine",
       contextEngineIds: ["second-engine"],
     });
-    expect(result.config).toBe(config);
+    expect(result).toBe(config);
   });
 
   it("does not guess a multi-engine default while still selecting a memory slot", () => {
+    const warn = vi.fn();
     const result = applyExclusiveSlotSelection({
       config: {},
       selectedId: "vendor-plugin",
       selectedKind: ["memory", "context-engine"],
       contextEngineIds: ["first", "second"],
+      warn,
     });
-    expect(result.config.plugins?.slots).toEqual({ memory: "vendor-plugin" });
-    expect(result.warnings.join(" ")).toContain("explicitly");
+    expect(result.plugins?.slots).toEqual({ memory: "vendor-plugin" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("explicitly"));
   });
 
-  it("returns the multi-engine warning even when no config changes", () => {
+  it("reports the multi-engine warning even when no config changes", () => {
+    const warn = vi.fn();
     const config: OpenClawConfig = {};
     const result = applyExclusiveSlotSelection({
       config,
       selectedId: "vendor-plugin",
       selectedKind: "context-engine",
       contextEngineIds: ["first", "second"],
+      warn,
     });
-    expect(result.config).toBe(config);
-    expect(result.warnings).toHaveLength(1);
+    expect(result).toBe(config);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("explicitly"));
   });
 
   it.each([undefined, "owner-a"])(
@@ -83,7 +89,7 @@ describe("applyExclusiveSlotSelection", () => {
         contextEngineIds: ["canonical-engine"],
         legacyContextEngineOwnerId,
       });
-      expect(result.config).toBe(config);
+      expect(result).toBe(config);
     },
   );
 
@@ -95,7 +101,7 @@ describe("applyExclusiveSlotSelection", () => {
       selectedKind: "context-engine",
       contextEngineIds: ["canonical-engine"],
     });
-    expect(result.config.plugins?.slots?.contextEngine).toBe("canonical-engine");
+    expect(result.plugins?.slots?.contextEngine).toBe("canonical-engine");
   });
 
   const createMemoryConfig = (plugins?: OpenClawConfig["plugins"]): OpenClawConfig => ({
@@ -122,9 +128,7 @@ describe("applyExclusiveSlotSelection", () => {
       selectedKind: "memory",
     });
 
-    expect(result.changed).toBe(false);
-    expect(result.warnings).toHaveLength(0);
-    expect(result.config).toBe(config);
+    expect(result).toBe(config);
   });
 
   it("removes an explicit override when selecting the default memory plugin", () => {
@@ -141,9 +145,9 @@ describe("applyExclusiveSlotSelection", () => {
       selectedKind: "memory",
     });
 
-    expect(result.changed).toBe(true);
-    expect(result.config.plugins).not.toHaveProperty("slots");
-    expect(result.config.plugins?.entries?.memory?.enabled).toBe(true);
+    expect(result).not.toBe(config);
+    expect(result.plugins).not.toHaveProperty("slots");
+    expect(result.plugins?.entries?.memory?.enabled).toBe(true);
   });
 
   it.each([
@@ -176,10 +180,9 @@ describe("applyExclusiveSlotSelection", () => {
       selectedKind: "memory",
     });
 
-    expect(result.changed).toBe(true);
-    expect(result.config.plugins?.slots?.memory).toBe("memory");
-    expect(result.config.plugins?.entries?.["memory-core"]?.enabled).toBe(expectedCoreEnabled);
-    expect(result.warnings).toEqual([]);
+    expect(result).not.toBe(config);
+    expect(result.plugins?.slots?.memory).toBe("memory");
+    expect(result.plugins?.entries?.["memory-core"]?.enabled).toBe(expectedCoreEnabled);
   });
 
   it.each([
@@ -203,9 +206,7 @@ describe("applyExclusiveSlotSelection", () => {
       ...(selectedKind ? { selectedKind } : {}),
     });
 
-    expect(result.changed).toBe(false);
-    expect(result.warnings).toHaveLength(0);
-    expect(result.config).toBe(config);
+    expect(result).toBe(config);
   });
 
   it("applies slot selection for each kind in a multi-kind array", () => {
@@ -223,11 +224,11 @@ describe("applyExclusiveSlotSelection", () => {
       selectedId: "dual-plugin",
       selectedKind: ["memory", "context-engine"],
     });
-    expect(result.changed).toBe(true);
-    expect(result.config.plugins?.slots?.memory).toBe("dual-plugin");
-    expect(result.config.plugins?.slots?.contextEngine).toBe("dual-plugin");
-    expect(result.config.plugins?.entries?.["memory-core"]?.enabled).toBe(true);
-    expect(result.config.plugins?.entries?.legacy?.enabled).toBe(true);
+    expect(result).not.toBe(config);
+    expect(result.plugins?.slots?.memory).toBe("dual-plugin");
+    expect(result.plugins?.slots?.contextEngine).toBe("dual-plugin");
+    expect(result.plugins?.entries?.["memory-core"]?.enabled).toBe(true);
+    expect(result.plugins?.entries?.legacy?.enabled).toBe(true);
   });
 
   it("does not disable a dual-kind plugin that still owns another slot", () => {
@@ -244,9 +245,9 @@ describe("applyExclusiveSlotSelection", () => {
       selectedId: "new-memory",
       selectedKind: "memory",
     });
-    expect(result.changed).toBe(true);
-    expect(result.config.plugins?.slots?.memory).toBe("new-memory");
-    expect(result.config.plugins?.entries?.["dual-plugin"]?.enabled).toBe(true);
+    expect(result).not.toBe(config);
+    expect(result.plugins?.slots?.memory).toBe("new-memory");
+    expect(result.plugins?.entries?.["dual-plugin"]?.enabled).toBe(true);
   });
 
   it("does not disable a dual-kind plugin that owns another slot via default", () => {
@@ -263,9 +264,9 @@ describe("applyExclusiveSlotSelection", () => {
       selectedId: "new-memory",
       selectedKind: "memory",
     });
-    expect(result.changed).toBe(true);
-    expect(result.config.plugins?.slots?.memory).toBe("new-memory");
-    expect(result.config.plugins?.entries?.legacy?.enabled).toBe(true);
+    expect(result).not.toBe(config);
+    expect(result.plugins?.slots?.memory).toBe("new-memory");
+    expect(result.plugins?.entries?.legacy?.enabled).toBe(true);
   });
 });
 
