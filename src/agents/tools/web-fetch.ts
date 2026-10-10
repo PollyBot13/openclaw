@@ -522,6 +522,11 @@ export function createWebFetchTool(options?: {
         DEFAULT_FETCH_MAX_CHARS,
         { min: 100 },
       );
+      const fetchMaxChars = resolveIntegerOption(
+        maxChars ?? executionFetch?.maxChars,
+        DEFAULT_FETCH_MAX_CHARS,
+        { min: 100, max: maxCharsCap },
+      );
       const hostnameAllowlist = options?.hostnameAllowlistRef?.value;
       // Bind to the current runtime owner before the network wait. A later config
       // replacement must revoke Decision consent before any page is dispatched.

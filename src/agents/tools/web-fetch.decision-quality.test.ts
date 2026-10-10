@@ -152,6 +152,52 @@ describe("web_fetch Decision page quality", () => {
     expect(bounded.quality).toMatchObject({ suppressed: true });
   });
 
+  it.each([200, 300])(
+    "preserves the short-page withholding notice within maxChars %i",
+    async (maxChars) => {
+      mocks.fetch.mockImplementationOnce(async () => ({
+        response: new Response("Sign in.", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        }),
+        finalUrl: "https://example.com/quality",
+        release: async () => {},
+      }));
+      const details = await execute(config("apply"), "main", maxChars);
+      expect(details.truncated).toBe(false);
+      expect(details.quality).toMatchObject({ probabilityUnusable: 0.995, suppressed: true });
+      expect(details.text).toContain("Likely unusable; withheld.");
+      expect(details.text).toContain("Re-fetch with decisionQuality unset.");
+      expect(details.text).toContain("<<<EXTERNAL_UNTRUSTED_CONTENT");
+      expect(details.text).toContain("<<<END_EXTERNAL_UNTRUSTED_CONTENT");
+      expect((details.text as string).length).toBeLessThanOrEqual(maxChars);
+      expect(details.length).toBe((details.text as string).length);
+    },
+  );
+
+  it.each(["title", "warning"] as const)(
+    "keeps a complete withholding reason within the total budget when %s is retained",
+    async (field) => {
+      mocks.fetch.mockRejectedValueOnce(new Error("direct fetch unavailable"));
+      mocks.resolveFallback.mockReturnValue({
+        provider: { id: "fixture-fetch" },
+        definition: { execute: async () => ({ text: "Sign in.", [field]: "Login" }) },
+      });
+      const details = await execute(config("apply"), "main", 300);
+      expect(details.truncated).toBe(false);
+      expect(details.quality).toMatchObject({ probabilityUnusable: 0.995, suppressed: true });
+      expect(details[field]).toContain("Login");
+      expect(details.text).toContain("Likely unusable; withheld.");
+      expect(details.text).toContain("Re-fetch with decisionQuality unset.");
+      expect(details.text).not.toContain("Sign in.");
+      expect(
+        (details.text as string).length +
+          (typeof details.title === "string" ? details.title.length : 0) +
+          (typeof details.warning === "string" ? details.warning.length : 0),
+      ).toBeLessThanOrEqual(300);
+    },
+  );
+
   it("returns the original page when the provider is unavailable", async () => {
     mocks.evaluate.mockResolvedValue({ status: "unavailable", reason: "deadline" });
     const details = await execute(config("apply"));
