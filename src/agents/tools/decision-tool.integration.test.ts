@@ -15,7 +15,28 @@ import {
 } from "../../plugins/current-plugin-metadata-state.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
+import { parseDecisionEvaluateToolInput } from "./decision-tool-contract.js";
 import { createDecisionTool } from "./decision-tool.js";
+
+it("gives sanitized corrective guidance for malformed decision input", () => {
+  const evidence = "PRIVATE_EVIDENCE_MARKER";
+  expect(() =>
+    parseDecisionEvaluateToolInput({ ...batch, state: evidence, images: [" "] }),
+  ).toThrow(/one to four local image paths/);
+  expect(() => parseDecisionEvaluateToolInput({ state: evidence, questions: {} })).toThrow(
+    /nonempty questions map/,
+  );
+  for (const input of [
+    { ...batch, state: evidence, images: [" "] },
+    { state: evidence, questions: {} },
+  ]) {
+    try {
+      parseDecisionEvaluateToolInput(input);
+    } catch (error) {
+      expect(String(error)).not.toContain(evidence);
+    }
+  }
+});
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => {
