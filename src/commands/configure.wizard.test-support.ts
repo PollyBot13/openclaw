@@ -73,7 +73,8 @@ vi.mock("@clack/prompts", () => ({
   password: wizardTestMocks.clackPassword,
 }));
 
-vi.mock("../flows/memory-setup.js", () => ({
+vi.mock("../flows/memory-setup.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../flows/memory-setup.js")>()),
   runMemorySetupFlow: wizardTestMocks.runMemorySetupFlow,
 }));
 

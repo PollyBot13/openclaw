@@ -22,24 +22,34 @@ const mocks = vi.hoisted(() => ({
   resolveCommand: vi.fn(),
 }));
 
+// mock-isolation: Provider discovery uses a fixture manifest, not operator plugin metadata.
 vi.mock("../plugins/manifest-contract-eligibility.js", () => ({
   loadManifestContractSnapshot: mocks.snapshot,
   listAvailableManifestContractValues: mocks.manifestIds,
 }));
+// mock-isolation: The test controls registered providers without reading the active plugin registry.
 vi.mock("../plugins/embedding-providers.js", () => ({
   listRegisteredEmbeddingProviders: mocks.registered,
 }));
-vi.mock("../plugins/embedding-provider-config.js", () => ({
+vi.mock("../plugins/embedding-provider-config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/embedding-provider-config.js")>()),
   resolveConfiguredGenericEmbeddingProviderId: mocks.alias,
 }));
+// mock-isolation: Provider selection is fixture-owned and must not resolve the active plugin registry.
 vi.mock("../plugins/embedding-provider-runtime.js", () => ({ getEmbeddingProvider: mocks.get }));
-vi.mock("../plugins/provider-auth-ref.js", () => ({ promptSecretRefForSetup: mocks.promptRef }));
-vi.mock("../wizard/setup.secret-input.js", () => ({
+vi.mock("../plugins/provider-auth-ref.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/provider-auth-ref.js")>()),
+  promptSecretRefForSetup: mocks.promptRef,
+}));
+vi.mock("../wizard/setup.secret-input.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../wizard/setup.secret-input.js")>()),
   resolveSetupSecretInputString: mocks.resolveRef,
 }));
+// mock-isolation: Config resolution must not contact Gateway secret owners in this flow test.
 vi.mock("../cli/command-config-resolution.js", () => ({
   resolveCommandConfigWithSecrets: mocks.resolveCommand,
 }));
+// mock-isolation: Use fixed memory secret targets without loading other plugin/channel targets.
 vi.mock("../cli/command-secret-targets.js", () => ({
   getMemoryEmbeddingCommandSecretTargetIds: () => new Set(["models.providers.*.apiKey"]),
 }));

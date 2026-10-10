@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
-// Setup wizard tests cover end-to-end onboarding prompt flows.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
 import {
@@ -276,6 +275,7 @@ vi.mock("../flows/channel-setup.js", async (importOriginal) => ({
 }));
 
 vi.mock("../flows/search-setup.js", () => ({ runSearchSetupFlow }));
+// mock-isolation: Wizard orchestration must not probe real embedding providers or credentials.
 vi.mock("../flows/memory-setup.js", () => ({ runMemorySetupFlow }));
 
 vi.mock("../commands/onboard-remote.js", () => ({
