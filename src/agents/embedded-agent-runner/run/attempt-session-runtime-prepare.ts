@@ -113,6 +113,7 @@ export async function prepareEmbeddedAttemptSessionRuntime(input: {
   };
   const preparedSessionManager = await prepareEmbeddedAttemptSessionManager({
     ...sessionPreparation,
+    sessionTarget: sessionLock.ownedTranscriptWriteContext.sessionTarget,
     onSessionManagerCreated: (manager) => {
       resources.sessionManager = manager;
     },

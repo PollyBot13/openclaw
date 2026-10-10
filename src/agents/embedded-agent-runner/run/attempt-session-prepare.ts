@@ -491,6 +491,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
   resolveActiveContextEnginePluginId: () => string | undefined;
   runAbortSignal: AbortSignal;
   sessionAgentId: string;
+  sessionTarget: SessionTranscriptRuntimeTarget;
   withOwnedTranscriptWrite: WithOwnedTranscriptWrite;
 }) {
   const { attempt } = input;
@@ -545,7 +546,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
   let messagePresence: boolean | undefined;
   const openSessionManager = () =>
     input.withOwnedTranscriptWrite(async () => {
-      const target = attempt.sessionTarget as SessionTranscriptRuntimeTarget;
+      const target = input.sessionTarget;
       const limits = resolveEmbeddedSessionContextLimits(attempt.contextTokenBudget);
       const initial = prepareInitialPersistedUserTurnCohort({
         target,
@@ -578,7 +579,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
     !attempt.sessionManager && attempt.sessionTarget
       ? await openSessionAfterProjectionRecovery({
           open: openSessionManager,
-          target: attempt.sessionTarget,
+          target: input.sessionTarget,
           timeoutMs: attempt.timeoutMs,
           signal: openSignal,
           assertCurrent: input.assertCurrent,

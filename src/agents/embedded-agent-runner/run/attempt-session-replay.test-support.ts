@@ -304,6 +304,7 @@ export async function withInterruptedTurn(
             resolveActiveContextEnginePluginId: () => undefined,
             runAbortSignal: extra?.runAbortSignal ?? runAbortController.signal,
             sessionAgentId: target.agentId,
+            sessionTarget: target,
             withOwnedTranscriptWrite,
           }),
       });

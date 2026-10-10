@@ -27,7 +27,8 @@ const observer = useReconcileWorkerObserver();
 it("waits for the owning shared-store projection before retrying a fresh turn", async () => {
   await withInterruptedTurn(
     false,
-    async ({ target, prepare }) => {
+    async ({ attempt, target, prepare }) => {
+      attempt.sessionTarget = { sessionId: target.sessionId };
       const databaseOptions = toDatabaseOptions(resolveSqliteTranscriptScope(target));
       await waitForSessionTranscriptIndexReconcile(databaseOptions);
       const database = openOpenClawAgentDatabase(databaseOptions);
