@@ -109,7 +109,6 @@ export async function withInterruptedTurn(
     revoke: () => void;
   }) => Promise<void>,
   options: {
-    sharedStore?: boolean;
     interruptedTurn?: boolean;
     toolProgress?: boolean;
     settledPrefix?: boolean;

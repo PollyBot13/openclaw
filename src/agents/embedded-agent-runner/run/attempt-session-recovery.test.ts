@@ -14,6 +14,7 @@ import { isSessionFileEntry } from "../../sessions/session-file-parser.js";
 import { sessionManagerOpenTranscriptCohort } from "../../sessions/session-manager-core.js";
 import { SessionManager } from "../../sessions/session-manager.js";
 import { withInterruptedTurn } from "./attempt-session-replay.test-support.js";
+import { cleanupEmbeddedAttemptResources } from "./attempt-subscription-cleanup.js";
 
 vi.mock("node:worker_threads", async () =>
   (
@@ -56,7 +57,10 @@ it("waits for the owning shared-store projection before retrying a fresh turn", 
         };
       };
       const open = vi.spyOn(SessionManager, sessionManagerOpenTranscriptCohort);
-      const preparing = prepare();
+      let created: SessionManager | undefined;
+      const preparing = prepare((manager) => {
+        created = manager;
+      });
       const outcome = preparing.then(
         () => ({ kind: "resolved" as const }),
         (error: unknown) => ({ kind: "rejected" as const, error }),
@@ -84,9 +88,13 @@ it("waits for the owning shared-store projection before retrying a fresh turn", 
         open.mockRestore();
         releaseWorker?.();
         await Promise.all([outcome, waitForSessionTranscriptIndexReconcile(databaseOptions)]);
+        await cleanupEmbeddedAttemptResources({
+          sessionManager: created,
+          flushPendingToolResultsAfterIdle: async () => {},
+        });
       }
     },
-    { interruptedTurn: false, sharedStore: true },
+    { interruptedTurn: false, sharedStore: true, selectedOwner: true, admittedReceipt: true },
   );
 });
 
@@ -108,7 +116,40 @@ it("stops after one retry if the same projection remains unavailable", async () 
         open.mockRestore();
       }
     },
-    { interruptedTurn: false },
+    { interruptedTurn: false, selectedOwner: true, admittedReceipt: true },
+  );
+});
+
+it("publishes a cohort manager for cleanup when its writer is revoked during consumption", async () => {
+  await withInterruptedTurn(
+    false,
+    async ({ prepare, revoke }) => {
+      const original = SessionManager[sessionManagerOpenTranscriptCohort].bind(SessionManager);
+      const open = vi.spyOn(SessionManager, sessionManagerOpenTranscriptCohort);
+      open.mockImplementation(async (target, options, selection, consume) =>
+        original(target, options, selection, (manager, prepared, assertView) => {
+          revoke();
+          consume(manager, prepared, assertView);
+        }),
+      );
+      let created: SessionManager | undefined;
+      try {
+        await expect(
+          prepare((manager) => {
+            created = manager;
+          }),
+        ).rejects.toThrow("original writer closed");
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(created).toBeDefined();
+      } finally {
+        open.mockRestore();
+        await cleanupEmbeddedAttemptResources({
+          sessionManager: created,
+          flushPendingToolResultsAfterIdle: async () => {},
+        });
+      }
+    },
+    { interruptedTurn: false, selectedOwner: true, admittedReceipt: true },
   );
 });
 
@@ -189,7 +230,7 @@ it.each(["cancelled", "deadline"])(
           await Promise.all([outcome, waitForSessionTranscriptIndexReconcile(databaseOptions)]);
         }
       },
-      { interruptedTurn: false },
+      { interruptedTurn: false, selectedOwner: true, admittedReceipt: true },
     );
   },
 );
