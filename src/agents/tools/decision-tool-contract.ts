@@ -154,7 +154,7 @@ export function parseDecisionEvaluateToolInput(value: unknown): {
     };
   } catch {
     throw new Error(
-      "Invalid decision_evaluate input: provide state and a nonempty questions map with boolean, choice, or score questions; images, if present, must contain one to four local image paths. No evidence was sent.",
+      "Invalid decision_evaluate input: provide state and a nonempty questions map with boolean, choice, or score questions; images, if present, must contain one to four local image paths; no evidence was sent.",
     );
   }
 }
