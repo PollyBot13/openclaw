@@ -1,7 +1,7 @@
 import { createRuntimeConfigReader } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logWarn } from "../../logger.js";
-import { wrapWebContent } from "../../security/external-content.js";
+import { wrapExternalContent, wrapWebContent } from "../../security/external-content.js";
 import { isDecisionAssistanceEligible } from "../decision-assistance.js";
 import { resolveDecisionModelSetting } from "../decision-model-setting.js";
 import { truncateWebFetchText } from "./web-fetch-utils.js";
@@ -21,6 +21,12 @@ const WITHHELD_TEXT = wrapWebContent(
   "[Extracted page content withheld as likely unusable. Re-fetch with tools.web.fetch.decisionQuality unset to inspect it.]",
   "web_fetch",
 );
+const COMPACT_WITHHELD_MESSAGE = "Likely unusable; withheld. Re-fetch with decisionQuality unset.";
+// This is tool-authored text, not page content; retain the markers when the warning cannot fit.
+const COMPACT_WITHHELD_TEXT = wrapExternalContent(COMPACT_WITHHELD_MESSAGE, {
+  source: "web_fetch",
+  includeWarning: false,
+});
 
 /** Assess the finished fetch, never the shared cache entry. Optional inference fails open. */
 export async function assessWebFetchQuality(params: {
@@ -29,6 +35,7 @@ export async function assessWebFetchQuality(params: {
   signal?: AbortSignal;
   assertInvocationCurrent?: () => void;
   readConfig?: () => OpenClawConfig;
+  maxChars?: number;
   payload: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const { config, agentId, payload } = params;
@@ -145,8 +152,16 @@ export async function assessWebFetchQuality(params: {
     if (!suppressed) {
       return { ...payload, quality };
     }
-    const textBudget = typeof payload.length === "number" ? payload.length : WITHHELD_TEXT.length;
-    const withheld = truncateWebFetchText(WITHHELD_TEXT, textBudget).text;
+    const textBudget =
+      params.maxChars ??
+      (typeof payload.length === "number" ? payload.length : WITHHELD_TEXT.length);
+    const notice =
+      textBudget >= WITHHELD_TEXT.length
+        ? WITHHELD_TEXT
+        : textBudget >= COMPACT_WITHHELD_TEXT.length
+          ? COMPACT_WITHHELD_TEXT
+          : COMPACT_WITHHELD_MESSAGE;
+    const withheld = truncateWebFetchText(notice, textBudget).text;
     return { ...payload, text: withheld, length: withheld.length, quality };
   } catch {
     signal.throwIfAborted();

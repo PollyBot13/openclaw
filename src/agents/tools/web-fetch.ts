@@ -776,6 +776,11 @@ export function createWebFetchTool(options?: {
         DEFAULT_FETCH_MAX_CHARS,
         { min: 100 },
       );
+      const effectiveMaxChars = resolveIntegerOption(
+        maxChars ?? executionFetch?.maxChars,
+        DEFAULT_FETCH_MAX_CHARS,
+        { min: 100, max: maxCharsCap },
+      );
       const hostnameAllowlist = options?.hostnameAllowlistRef?.value;
       // Bind to the current runtime owner before the network wait. A later config
       // replacement must revoke Decision consent before any page is dispatched.
@@ -795,11 +800,7 @@ export function createWebFetchTool(options?: {
         const result = await runWebFetch({
           url,
           extractMode,
-          maxChars: resolveIntegerOption(
-            maxChars ?? executionFetch?.maxChars,
-            DEFAULT_FETCH_MAX_CHARS,
-            { min: 100, max: maxCharsCap },
-          ),
+          maxChars: effectiveMaxChars,
           maxResponseBytes,
           maxRedirects: resolveIntegerOption(
             executionFetch?.maxRedirects,
@@ -827,6 +828,11 @@ export function createWebFetchTool(options?: {
         if (!config?.tools?.web?.fetch?.decisionQuality || !options?.agentId) {
           return jsonResult(result);
         }
+        // Metadata already spends part of the shared model-visible allowance.
+        const bodyMaxChars =
+          effectiveMaxChars -
+          (typeof result.title === "string" ? result.title.length : 0) -
+          (typeof result.warning === "string" ? result.warning.length : 0);
         const { assessWebFetchQuality } = await import("./web-fetch-decision-quality.js");
         return jsonResult(
           await assessWebFetchQuality({
@@ -835,6 +841,7 @@ export function createWebFetchTool(options?: {
             agentId: options?.agentId,
             signal,
             assertInvocationCurrent: options?.assertInvocationCurrent,
+            maxChars: bodyMaxChars,
             payload: result,
           }),
         );
