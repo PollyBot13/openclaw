@@ -11,6 +11,7 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { runtimeForLogger } from "../logging/subsystem.js";
 import type { createPluginRegistryOwner } from "../plugins/runtime.js";
 import { isGatewayDraining } from "../process/command-queue.js";
+import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
 import { createDeferredCore } from "../shared/deferred.js";
@@ -187,29 +188,36 @@ export async function prepareGatewayKernelState(params: {
           workerPlacementModule.createGatewayWorkerPlacementRuntime({
             scheduler,
             placements: workerEnvironmentStartup.placementStore,
+            initialPlacements: await workerEnvironmentStartup.placementStore.listAsync(),
             getCommittedRuntimeConfig,
             environments: workerEnvironmentService,
             gatewayNamespace: nodeWorkerGatewayNamespace,
             nodeWorkerBundleRetention,
             getSessionChangeContext: () => pluginGatewayContext.current,
-            persistAbandonedPartial: async ({ sessionId, sessionKey, agentId, runId }) => {
-              // Placement runtime starts before chat state exists; moves invoke this only after startup.
-              const text = connectionState.chatRunState.resolveBuffer(runId, { final: true }).text;
-              if (!text.trim()) {
+            persistAbandonedPartial: async (request) => {
+              // Placement runtime starts before chat state exists; callers run only after startup.
+              const partial = connectionState.chatRunState.resolveBuffer(request.runId, {
+                final: true,
+              });
+              const text = partial.displayText ?? partial.text;
+              if (!text.trim() && !request.missingToolResultText) {
                 return;
               }
-              const { captureAbortedPartial, persistAbortedPartials } =
+              const transcript =
                 await import("./server-methods/chat-transcript-persistence.runtime.js");
-              await persistAbortedPartials({
+              await transcript.persistAbortedPartials({
                 context: { logGateway: log },
+                missingToolResultText: request.missingToolResultText,
                 snapshots: [
-                  captureAbortedPartial({
-                    sessionKey,
-                    sessionId,
-                    agentId,
-                    runId,
+                  transcript.captureAbortedPartial({
+                    ...request,
                     text,
                     abortOrigin: "placement-abandon",
+                    session: await transcript.prepareChatAbortSessionSnapshot({
+                      cfg: getCommittedRuntimeConfig(),
+                      key: request.sessionKey,
+                      agentId: request.agentId,
+                    }),
                   }),
                 ],
               });
@@ -399,7 +407,10 @@ export async function prepareGatewayKernelState(params: {
     loadGatewayTlsServerRuntime(cfgAtStart.gateway?.tls, log.child("tls")),
   );
   const serverStartedAt = Date.now();
-  const readinessEventLoopHealth = createGatewayEventLoopHealthMonitor({ scheduler });
+  const readinessEventLoopHealth = createGatewayEventLoopHealthMonitor({
+    scheduler,
+    isIdle: () => getActiveGatewayRootWorkCount({ excludeCurrent: true }) === 0,
+  });
   const startupState = {
     sidecarsReady: minimalTestGateway,
     pendingReason: "startup-sidecars",
@@ -437,7 +448,7 @@ export async function prepareGatewayKernelState(params: {
   channelManager.setAutostartSuppression(opts.channelAutostartSuppression ?? null);
   const sidecarStartup = opts.sidecarStartup ?? "start";
   const isGatewayStartupPending = () =>
-    !startupState.sidecarsReady && !lifecycle.closePreludeStarted;
+    (!startupState.dispatchReady || !startupState.sidecarsReady) && !lifecycle.closePreludeStarted;
   const startupCheckerDeps = {
     startedAt: serverStartedAt,
     getStartupPending: isGatewayStartupPending,
@@ -451,7 +462,6 @@ export async function prepareGatewayKernelState(params: {
     getEventLoopHealth: readinessEventLoopHealth.snapshot,
     getStateDatabaseFailure: () =>
       openClawStateDatabaseCache.getOpenClawStateDatabaseRecordedFailure(resolveDatabasePath()),
-    allowPendingAgentDatabases: !opts.updateCanary,
     getAgentDatabaseAdmissionRefusals: () => {
       const cfg = getRuntimeConfig();
       return listAgentDatabaseAdmissionRefusals().filter(
