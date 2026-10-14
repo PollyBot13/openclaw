@@ -15,10 +15,13 @@ extension GatewayConnection {
 
     func request(
         _ request: OpenClawChatGatewayRequest,
-        ifCurrentRoute route: Route,
+        ifCurrentRoute route: Route?,
         distinguishPreDispatchRouteChange: Bool = false) async throws -> Data
     {
-        try await self.request(
+        guard let route else {
+            return try await self.request(request)
+        }
+        return try await self.request(
             method: request.method,
             params: request.params,
             timeoutMs: request.timeoutMs,

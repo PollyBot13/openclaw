@@ -1,4 +1,5 @@
 import Foundation
+import OpenClawChatUI
 import Testing
 @testable import OpenClaw
 @testable import OpenClawKit
@@ -27,6 +28,9 @@ private actor TalkReplyWire {
         case truncatedHistory
         case wrongFullMessageRun
         case collectedInput(truncated: Bool)
+        case legacyHistory
+        case invalidHistory
+        case unauthorizedHistory
         case incompleteWork(TalkIncompleteReplyKind)
         case custody(TalkCustodyCase)
     }
@@ -78,6 +82,17 @@ private actor TalkReplyWire {
 
     func rejectCustodyProbe() -> Bool {
         !self.completed && self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
+    }
+
+    func historyRejection(inputRunIDsRequested: Bool) -> (code: String, message: String)? {
+        guard inputRunIDsRequested else { return nil }
+        let unsupported = "invalid chat.history params: at root: unexpected property 'inputRunIds'"
+        switch self.scenario {
+        case .legacyHistory: return ("INVALID_REQUEST", unsupported)
+        case .invalidHistory: return ("INVALID_REQUEST", "invalid chat.history params: synthetic other field")
+        case .unauthorizedHistory: return ("UNAUTHORIZED", unsupported)
+        default: return nil
+        }
     }
 
     func payload(method: String, params: [String: Any]) async throws -> String {
@@ -308,6 +323,13 @@ private func makeTalkReplyFixture(
             let params = frame["params"] as? [String: Any] ?? [:]
             let isCustodyProbe = method == "chat.history" && params["inputRunIds"] != nil
             let payload = try await wire.payload(method: method, params: params)
+            if method == "chat.history",
+               let rejection = await wire.historyRejection(inputRunIDsRequested: isCustodyProbe)
+            {
+                try socket.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.errorResponseData(
+                    id: id, code: rejection.code, message: rejection.message, details: [:])))
+                return
+            }
             if isCustodyProbe, await wire.rejectCustodyProbe() {
                 try socket.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.errorResponseData(
                     id: id, code: "UNAVAILABLE", message: "synthetic custody outage", details: [:])))
@@ -372,6 +394,37 @@ struct TalkModeRuntimeReplyTests {
             #expect(delivery.played == ["Matching reply"])
             #expect(await wire.snapshot().methods.contains("chat.history"))
         }
+    }
+
+    @Test func `older Gateway history rejection preserves the matching reply`() async throws {
+        let (_, gateway, _, _) = await makeTalkReplyFixture(.legacyHistory)
+        do {
+            let history = try await gateway.chatHistory(
+                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: [TalkReplyWire.runID])
+            let reply = OpenClawChatHistoryPresentation.completedReply(
+                from: history.messages ?? [],
+                runID: TalkReplyWire.runID,
+                inputConsumptions: history.inputConsumptions)
+            #expect(reply.map { ChatMessageVisibleText.visibleText(in: $0) } == "Matching reply")
+            await gateway.shutdown()
+        } catch {
+            await gateway.shutdown()
+            throw error
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `other history errors do not drop input ownership`(unauthorized: Bool) async throws {
+        let (_, gateway, wire, _) = await makeTalkReplyFixture(unauthorized ? .unauthorizedHistory : .invalidHistory)
+        do {
+            _ = try await gateway.chatHistory(
+                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: [TalkReplyWire.runID])
+            Issue.record("Expected the history rejection to propagate")
+        } catch is GatewayResponseError {} catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await wire.snapshot().methods.filter { $0 == "chat.history" }.count == 1)
+        await gateway.shutdown()
     }
 
     @Test func `terminal send failure never waits or reads history`() async throws {
