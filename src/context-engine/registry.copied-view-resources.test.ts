@@ -460,8 +460,8 @@ it.each(["adopt", "retain"] as const)("enforces prepared ownership during %s", (
     const target = createEmptyPluginRegistry();
     target.plugins.push(...root.plugins);
     bindPluginRuntimeLoadContextState(target, {
+      workspaceDir: undefined,
       activationInputFingerprint: "synthetic",
-      activationResultFingerprint: "synthetic",
       controlPlaneFingerprint: "synthetic",
       registrationConfigKey: "synthetic",
       declaredProviderOwners: new Map(),
