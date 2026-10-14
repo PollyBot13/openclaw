@@ -14,7 +14,6 @@ import {
   loadTranscriptEventsSync,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
-import type { DoctorHealthFlowContext } from "../flows/doctor-health-contribution-types.js";
 import { resolveInitialDoctorHealthContributions } from "../flows/doctor-health-contributions-initial.js";
 import {
   createDoctorHealthFlowContext,
@@ -30,6 +29,7 @@ vi.mock("../../packages/terminal-core/src/note.js", async (importOriginal) => ({
   note,
 }));
 
+import { beginDoctorMaintenance } from "./doctor-maintenance.js";
 import {
   detectArchivedNativeCommandSources,
   noteArchivedNativeCommandSources,
@@ -110,11 +110,13 @@ it("warns about archived native sources without changing manual archives or ordi
       );
       const contribution = nativeArchiveContribution();
       expect(contribution.updateWork).toEqual({ kind: "standalone" });
-      await contribution.run({
-        cfg,
-        env: state.env,
-        options: { yes: true },
-      } as DoctorHealthFlowContext);
+      await contribution.run(
+        createDoctorHealthFlowContext({
+          cfg,
+          env: state.env,
+          options: { yes: true },
+        }),
+      );
       for (const [sessionKey, fields] of entries) {
         expect(
           loadExactSessionEntryReadOnly({ agentId: "main", sessionKey, env: state.env })?.entry,
@@ -174,11 +176,13 @@ it("requires maintenance custody and restores only exact internal sources withou
       try {
         await expect(
           maintenance.run(() =>
-            nativeArchiveContribution().run({
-              cfg,
-              env: state.env,
-              options: { repair: true },
-            } as DoctorHealthFlowContext),
+            nativeArchiveContribution().run(
+              createDoctorHealthFlowContext({
+                cfg,
+                env: state.env,
+                options: { repair: true },
+              }),
+            ),
           ),
         ).resolves.toBeUndefined();
       } finally {
@@ -360,7 +364,7 @@ it("leaves a source archived when its lifecycle revision changes after the scan"
         sessionId: "stale-source",
         updatedAt: 7,
         archivedAt: 10,
-        lifecycleRevision: 1,
+        lifecycleRevision: "revision-1",
       });
       const restore = vi
         .spyOn(sessionWorktreeLifecycle, "restoreSessionWorktree")
@@ -369,7 +373,7 @@ it("leaves a source archived when its lifecycle revision changes after the scan"
             sessionId: "stale-source",
             updatedAt: 7,
             archivedAt: 10,
-            lifecycleRevision: 2,
+            lifecycleRevision: "revision-2",
           });
           return () => {};
         });
@@ -390,8 +394,63 @@ it("leaves a source archived when its lifecycle revision changes after the scan"
       expect(loadExactSessionEntryReadOnly(scope)?.entry).toMatchObject({
         sessionId: "stale-source",
         archivedAt: 10,
-        lifecycleRevision: 2,
+        lifecycleRevision: "revision-2",
       });
+    },
+  );
+});
+
+it("repairs an agent archive under real standalone Doctor maintenance", async () => {
+  await withOpenClawTestState(
+    { scenario: "external-service", label: "doctor-native-real-owner" },
+    async (state) => {
+      const cfg = { agents: { entries: { main: {} } } };
+      await state.writeConfig(cfg);
+      setRuntimeConfigSnapshot(cfg);
+      const sessionKey = "agent:main:discord:slash:real-owner";
+      const scope = { agentId: "main", sessionKey, env: state.env };
+      const maintenance = await beginDoctorMaintenance({
+        root: null,
+        options: { repair: true, nonInteractive: true },
+        runtime: {
+          log: () => {},
+          error: () => {},
+          exit: (code) => {
+            throw new Error(`Unexpected exit ${code}`);
+          },
+        },
+      });
+      expect(maintenance).toBeDefined();
+      try {
+        await maintenance!.run(() =>
+          replaceSessionEntry(scope, {
+            sessionId: "real-owner",
+            updatedAt: 7,
+            archivedAt: 10,
+            archiveReason: "manual",
+          }),
+        );
+        const before = maintenance!.run(() => loadExactSessionEntryReadOnly(scope)!.entry);
+        await expect(
+          maintenance!.run(() =>
+            repairArchivedNativeCommandSources({
+              cfg,
+              env: { ...state.env, OPENCLAW_STATE_DIR: state.path("foreign-state") },
+            }),
+          ),
+        ).rejects.toThrow("does not own this database");
+        await expect(
+          maintenance!.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env })),
+        ).resolves.toEqual({ found: 1, repaired: 1, skipped: 0 });
+        const expected = { ...before };
+        delete expected.archivedAt;
+        delete expected.archiveReason;
+        expect(maintenance!.run(() => loadExactSessionEntryReadOnly(scope)?.entry)).toEqual(
+          expected,
+        );
+      } finally {
+        await maintenance!.release();
+      }
     },
   );
 });
