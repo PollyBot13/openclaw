@@ -1,5 +1,4 @@
 import Foundation
-import OpenClawChatUI
 import Testing
 @testable import OpenClaw
 @testable import OpenClawKit
@@ -28,9 +27,9 @@ private actor TalkReplyWire {
         case truncatedHistory
         case wrongFullMessageRun
         case collectedInput(truncated: Bool)
-        case legacyHistory
-        case invalidHistory
-        case unauthorizedHistory
+        case unsupportedHistory(truncated: Bool)
+        case heldLegacyHistory
+        case historyError(code: String, message: String)
         case incompleteWork(TalkIncompleteReplyKind)
         case custody(TalkCustodyCase)
     }
@@ -43,6 +42,7 @@ private actor TalkReplyWire {
     private var sendKeys: [String] = []
     private var waitCount = 0
     private var historyCount = 0
+    private var historyInputRunIDs: [[String]?] = []
     private var completed = false
     private var custodyRunIDs: [[String]] = []
     private nonisolated let changed = AsyncTestSignal()
@@ -80,19 +80,22 @@ private actor TalkReplyWire {
         self.custodyRunIDs
     }
 
-    func rejectCustodyProbe() -> Bool {
-        !self.completed && self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
+    func requestedHistoryInputRunIDs() -> [[String]?] {
+        self.historyInputRunIDs
     }
 
-    func historyRejection(inputRunIDsRequested: Bool) -> (code: String, message: String)? {
-        guard inputRunIDsRequested else { return nil }
-        let unsupported = "invalid chat.history params: at root: unexpected property 'inputRunIds'"
+    func historyRejection(hasInputRunIDs: Bool) -> (code: String, message: String)? {
         switch self.scenario {
-        case .legacyHistory: return ("INVALID_REQUEST", unsupported)
-        case .invalidHistory: return ("INVALID_REQUEST", "invalid chat.history params: synthetic other field")
-        case .unauthorizedHistory: return ("UNAUTHORIZED", unsupported)
-        default: return nil
+        case .unsupportedHistory where hasInputRunIDs,
+             .heldLegacyHistory where hasInputRunIDs:
+            ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'inputRunIds'")
+        case let .historyError(code, message): (code, message)
+        default: nil
         }
+    }
+
+    func rejectCustodyProbe() -> Bool {
+        !self.completed && self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
     }
 
     func payload(method: String, params: [String: Any]) async throws -> String {
@@ -100,7 +103,10 @@ private actor TalkReplyWire {
         self.changed.notify()
         switch method {
         case "talk.config":
-            return #"{"config":{}}"#
+            return #"{"config":{"talk":{"resolved":{"provider":"fixture","config":{}},"interruptOnSpeech":false}}}"#
+        case "talk.speak":
+            // Capture the real TTS wire request without starting desktop audio.
+            return #"{"provider":"fixture","audiobase64":""}"#
         case "chat.send":
             self.sendKeys.append(params["idempotencyKey"] as? String ?? "")
             let status = switch self.scenario {
@@ -112,6 +118,10 @@ private actor TalkReplyWire {
         case "agent.wait":
             return try await self.waitPayload(params: params)
         case "chat.history":
+            if self.scenario == .heldLegacyHistory, params["inputRunIds"] == nil {
+                self.heldWaitEntered.open()
+                await self.heldWaitRelease.wait()
+            }
             return self.historyPayload(params: params)
         case "chat.message.get":
             let runID = switch self.scenario {
@@ -163,6 +173,7 @@ private actor TalkReplyWire {
 
     private func historyPayload(params: [String: Any]) -> String {
         self.historyCount += 1
+        self.historyInputRunIDs.append(params["inputRunIds"] as? [String])
         if let inputRunIDs = params["inputRunIds"] as? [String] {
             if !self.completed {
                 self.custodyRunIDs.append(inputRunIDs)
@@ -190,6 +201,9 @@ private actor TalkReplyWire {
         let messages: String = switch self.scenario {
         case .truncatedHistory:
             Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
+        case .unsupportedHistory(truncated: true):
+            Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
+                + "," + Self.message(id: "foreign", runID: "foreign-run", text: "Foreign reply")
         case .wrongFullMessageRun where self.historyCount == 1:
             Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
         case .wrongFullMessageRun:
@@ -287,19 +301,14 @@ private actor TalkReplyWire {
 }
 
 private actor TalkReplySink {
-    private var played: [String] = []
-    private var restartCount = 0
+    private var requestedTexts: [String] = []
 
-    func play(_ text: String) {
-        self.played.append(text)
+    func recordRequest(_ text: String) {
+        self.requestedTexts.append(text)
     }
 
-    func restart() {
-        self.restartCount += 1
-    }
-
-    func snapshot() -> (played: [String], restartCount: Int) {
-        (self.played, self.restartCount)
+    func snapshot() -> [String] {
+        self.requestedTexts
     }
 }
 
@@ -321,11 +330,12 @@ private func makeTalkReplyFixture(
                   let method = frame["method"] as? String
             else { throw URLError(.cannotParseResponse) }
             let params = frame["params"] as? [String: Any] ?? [:]
+            if method == "talk.speak", let text = params["text"] as? String {
+                await sink.recordRequest(text)
+            }
             let isCustodyProbe = method == "chat.history" && params["inputRunIds"] != nil
             let payload = try await wire.payload(method: method, params: params)
-            if method == "chat.history",
-               let rejection = await wire.historyRejection(inputRunIDsRequested: isCustodyProbe)
-            {
+            if method == "chat.history", let rejection = await wire.historyRejection(hasInputRunIDs: isCustodyProbe) {
                 try socket.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.errorResponseData(
                     id: id, code: rejection.code, message: rejection.message, details: [:])))
                 return
@@ -355,7 +365,6 @@ private func makeTalkReplyFixture(
         stopMLX: {})
     let runtime = TalkModeRuntime(state: { nil }, controller: { nil }, dependencies: dependencies, gateway: gateway)
     await runtime._test_enableForReply()
-    await runtime._test_installReplySinks(sink)
     return (runtime, gateway, wire, sink)
 }
 
@@ -375,56 +384,84 @@ private func withTalkReplyFixture(
 }
 
 extension TalkModeRuntime {
-    fileprivate func _test_enableForReply() {
+    fileprivate func _test_enableForReply() async {
         self.isEnabled = true
-    }
-
-    fileprivate func _test_installReplySinks(_ sink: TalkReplySink) {
-        self.assistantPlaybackOverride = { text in await sink.play(text) }
-        self.listeningRestartOverride = { await sink.restart() }
+        await self.commitTalkConfig(self.fetchTalkConfig(), locale: "en-US")
     }
 }
 
 @Suite(.testWaitLimit)
 struct TalkModeRuntimeReplyTests {
-    @Test func `terminal send ack never speaks the newer foreign reply`() async throws {
-        try await withTalkReplyFixture(.terminalAck) { runtime, wire, sink in
+    @Test(arguments: [false, true])
+    func `older Gateway history rejection retries without losing reply ownership`(truncated: Bool) async throws {
+        try await withTalkReplyFixture(.unsupportedHistory(truncated: truncated)) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
-            let delivery = await sink.snapshot()
-            #expect(delivery.played == ["Matching reply"])
-            #expect(await wire.snapshot().methods.contains("chat.history"))
+            #expect(await wire.requestedHistoryInputRunIDs() == [[TalkReplyWire.runID], nil])
+            #expect(await wire.snapshot().sendKeys.count == 1)
+            #expect(await sink.snapshot() == [truncated ? "Complete matching reply" : "Matching reply"])
+            #expect(await wire.snapshot().methods.contains("chat.message.get") == truncated)
         }
     }
 
-    @Test func `older Gateway history rejection preserves the matching reply`() async throws {
-        let (_, gateway, _, _) = await makeTalkReplyFixture(.legacyHistory)
+    @Test(arguments: [
+        ("UNAVAILABLE", "invalid chat.history params: at root: unexpected property 'inputRunIds'", true),
+        ("UNAUTHORIZED", "invalid chat.history params: at root: unexpected property 'inputRunIds'", true),
+        ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'other'", true),
+        ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'inputRunIds'", false),
+    ])
+    func `unrelated history errors do not downgrade`(
+        code: String,
+        message: String,
+        includeInputRunIDs: Bool) async throws
+    {
+        let (_, gateway, wire, _) = await makeTalkReplyFixture(.historyError(code: code, message: message))
         do {
-            let history = try await gateway.chatHistory(
-                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: [TalkReplyWire.runID])
-            let reply = OpenClawChatHistoryPresentation.completedReply(
-                from: history.messages ?? [],
-                runID: TalkReplyWire.runID,
-                inputConsumptions: history.inputConsumptions)
-            #expect(reply.map { ChatMessageVisibleText.visibleText(in: $0) } == "Matching reply")
-            await gateway.shutdown()
+            _ = try await gateway.chatHistory(
+                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: includeInputRunIDs ? [TalkReplyWire.runID] : nil)
+            Issue.record("Expected the history rejection")
+        } catch let error as GatewayResponseError {
+            #expect(error.code == code)
+            #expect(error.message == message)
         } catch {
             await gateway.shutdown()
             throw error
         }
+        #expect(await wire.requestedHistoryInputRunIDs() == [includeInputRunIDs ? [TalkReplyWire.runID] : nil])
+        await gateway.shutdown()
     }
 
     @Test(arguments: [false, true])
-    func `other history errors do not drop input ownership`(unauthorized: Bool) async throws {
-        let (_, gateway, wire, _) = await makeTalkReplyFixture(unauthorized ? .unauthorizedHistory : .invalidHistory)
-        do {
-            _ = try await gateway.chatHistory(
-                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: [TalkReplyWire.runID])
-            Issue.record("Expected the history rejection to propagate")
-        } catch is GatewayResponseError {} catch {
-            Issue.record("Unexpected error: \(error)")
+    func `Stop or route change invalidates a held legacy history reply`(stop: Bool) async throws {
+        try await withTalkReplyFixture(.heldLegacyHistory) { runtime, wire, sink in
+            let sending = Task { await runtime.sendAndSpeak("synthetic") }
+            do {
+                try await wire.waitUntilHeld()
+                if stop {
+                    await runtime.setEnabled(false)
+                } else {
+                    await wire.changeRoute()
+                }
+                await wire.releaseHeldWait()
+                try await TestWait.value(of: sending, "invalidated legacy history")
+            } catch {
+                sending.cancel()
+                await wire.releaseHeldWait()
+                _ = await sending.value
+                throw error
+            }
+            #expect(await wire.requestedHistoryInputRunIDs() == [[TalkReplyWire.runID], nil])
+            #expect(await sink.snapshot().isEmpty)
+            #expect(await runtime.recognitionGeneration == 1)
         }
-        #expect(await wire.snapshot().methods.filter { $0 == "chat.history" }.count == 1)
-        await gateway.shutdown()
+    }
+
+    @Test func `terminal send ack never speaks the newer foreign reply`() async throws {
+        try await withTalkReplyFixture(.terminalAck) { runtime, wire, sink in
+            await runtime.sendAndSpeak("synthetic")
+            let delivery = await sink.snapshot()
+            #expect(delivery == ["Matching reply"])
+            #expect(await wire.snapshot().methods.contains("chat.history"))
+        }
     }
 
     @Test func `terminal send failure never waits or reads history`() async throws {
@@ -434,7 +471,7 @@ struct TalkModeRuntimeReplyTests {
             #expect(requests.methods.contains("chat.send"))
             #expect(requests.methods.contains("agent.wait") == false)
             #expect(requests.methods.contains("chat.history") == false)
-            #expect(await sink.snapshot().played.isEmpty)
+            #expect(await sink.snapshot().isEmpty)
         }
     }
 
@@ -444,7 +481,7 @@ struct TalkModeRuntimeReplyTests {
             let requests = await wire.snapshot()
             #expect(requests.waitRunIDs == [TalkReplyWire.runID, TalkReplyWire.runID])
             #expect(requests.sendKeys.count == 1)
-            #expect(await sink.snapshot().played == ["Matching reply"])
+            #expect(await sink.snapshot() == ["Matching reply"])
         }
     }
 
@@ -463,15 +500,15 @@ struct TalkModeRuntimeReplyTests {
                 throw error
             }
             let delivery = await sink.snapshot()
-            #expect(delivery.played.isEmpty)
-            #expect(delivery.restartCount == 0)
+            #expect(delivery.isEmpty)
+            #expect(await runtime.recognitionGeneration == 1)
         }
     }
 
     @Test func `terminal run failure never plays a foreign history answer`() async throws {
         try await withTalkReplyFixture(.terminalFailure) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
-            #expect(await sink.snapshot().played.isEmpty)
+            #expect(await sink.snapshot().isEmpty)
             #expect(await wire.snapshot().waitRunIDs == [TalkReplyWire.runID])
         }
     }
@@ -482,7 +519,7 @@ struct TalkModeRuntimeReplyTests {
             let requests = await wire.snapshot()
             #expect(requests.waitRunIDs == [TalkReplyWire.runID])
             #expect(requests.methods.contains("chat.history") == false)
-            #expect(await sink.snapshot().played.isEmpty)
+            #expect(await sink.snapshot().isEmpty)
         }
     }
 
@@ -494,8 +531,8 @@ struct TalkModeRuntimeReplyTests {
             #expect(requests.sendKeys.count == 1)
             #expect(requests.waitRunIDs == [TalkReplyWire.runID])
             #expect(requests.methods.contains("chat.history") == false)
-            #expect(delivery.played.isEmpty)
-            #expect(delivery.restartCount == 1)
+            #expect(delivery.isEmpty)
+            #expect(await runtime.recognitionGeneration == 1)
         }
     }
 
@@ -516,8 +553,8 @@ struct TalkModeRuntimeReplyTests {
                 throw error
             }
             let delivery = await sink.snapshot()
-            #expect(delivery.played.isEmpty)
-            #expect(delivery.restartCount == (stop ? 0 : 1))
+            #expect(delivery.isEmpty)
+            #expect(await runtime.recognitionGeneration == 1)
             #expect(await wire.snapshot().sendKeys.count == 1)
         }
     }
@@ -528,8 +565,8 @@ struct TalkModeRuntimeReplyTests {
             #expect(await wire.snapshot().waitRunIDs == [TalkReplyWire.runID, TalkReplyWire.runID])
             #expect(await wire.requestedCustodyRunIDs() == [[TalkReplyWire.runID]])
             let delivery = await sink.snapshot()
-            #expect(delivery.played.isEmpty)
-            #expect(delivery.restartCount == 1)
+            #expect(delivery.isEmpty)
+            #expect(await runtime.recognitionGeneration == 1)
         }
     }
 
@@ -545,7 +582,7 @@ struct TalkModeRuntimeReplyTests {
             await runtime.sendAndSpeak("synthetic")
             #expect(await wire.requestedCustodyRunIDs().allSatisfy { $0 == [TalkReplyWire.runID] })
             #expect(await wire.requestedCustodyRunIDs().isEmpty == false)
-            #expect(await sink.snapshot().played == ["Matching reply"])
+            #expect(await sink.snapshot() == ["Matching reply"])
         }
     }
 
@@ -555,7 +592,7 @@ struct TalkModeRuntimeReplyTests {
             await runtime.sendAndSpeak("synthetic")
             #expect(await wire.snapshot().waitRunIDs.count == 4)
             #expect(await wire.requestedCustodyRunIDs() == [[TalkReplyWire.runID], [TalkReplyWire.runID]])
-            #expect(await sink.snapshot().played == ["Matching reply"])
+            #expect(await sink.snapshot() == ["Matching reply"])
         }
     }
 
@@ -568,7 +605,7 @@ struct TalkModeRuntimeReplyTests {
             #expect(requests.waitRunIDs.count == (kind == .cancelledUnknownReceipt ? 3 : 2))
             #expect(requests.waitRunIDs.allSatisfy { $0 == TalkReplyWire.runID })
             #expect(await wire.requestedCustodyRunIDs().count == (kind == .cancelledUnknownReceipt ? 2 : 1))
-            #expect(await sink.snapshot().played == ["Matching reply"])
+            #expect(await sink.snapshot() == ["Matching reply"])
         }
     }
 
@@ -578,7 +615,7 @@ struct TalkModeRuntimeReplyTests {
             let requests = await wire.snapshot()
             #expect(requests.waitRunIDs == [TalkReplyWire.runID, TalkReplyWire.runID])
             #expect(requests.sendKeys.count == 1)
-            #expect(await sink.snapshot().played == ["Matching reply"])
+            #expect(await sink.snapshot() == ["Matching reply"])
         }
     }
 
@@ -586,7 +623,7 @@ struct TalkModeRuntimeReplyTests {
         try await withTalkReplyFixture(.truncatedHistory) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
             #expect(await wire.snapshot().methods.contains("chat.message.get"))
-            #expect(await sink.snapshot().played == ["Complete matching reply"])
+            #expect(await sink.snapshot() == ["Complete matching reply"])
         }
     }
 
@@ -594,7 +631,7 @@ struct TalkModeRuntimeReplyTests {
     func `collected input speaks its receipt owned reply`(truncated: Bool) async throws {
         try await withTalkReplyFixture(.collectedInput(truncated: truncated)) { runtime, _, sink in
             await runtime.sendAndSpeak("synthetic")
-            #expect(await sink.snapshot().played == ["Complete matching reply"])
+            #expect(await sink.snapshot() == ["Complete matching reply"])
         }
     }
 
@@ -604,7 +641,7 @@ struct TalkModeRuntimeReplyTests {
             let methods = await wire.snapshot().methods
             #expect(methods.filter { $0 == "chat.history" }.count >= 2)
             #expect(methods.contains("chat.message.get"))
-            #expect(await sink.snapshot().played == ["Recovered matching reply"])
+            #expect(await sink.snapshot() == ["Recovered matching reply"])
         }
     }
 
@@ -613,7 +650,7 @@ struct TalkModeRuntimeReplyTests {
         try await withTalkReplyFixture(.incompleteWork(kind)) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
             let delivery = await sink.snapshot()
-            #expect(delivery.played == ["Final spoken answer"])
+            #expect(delivery == ["Final spoken answer"])
             #expect(await wire.snapshot().methods.filter { $0 == "chat.history" }.count >= 2)
         }
     }

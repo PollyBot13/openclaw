@@ -38,10 +38,6 @@ actor TalkModeRuntime {
     let controller: AppVoiceRuntime.Controller
     let dependencies: Dependencies
     let gateway: GatewayConnection
-    #if DEBUG
-    var assistantPlaybackOverride: (@Sendable (String) async -> Void)?
-    var listeningRestartOverride: (@Sendable () async -> Void)?
-    #endif
 
     enum PlaybackPlan: Equatable {
         case elevenLabsThenSystemVoice(apiKey: String, voiceId: String)
@@ -643,12 +639,6 @@ extension TalkModeRuntime {
     }
 
     private func resumeListeningIfNeeded() async {
-        #if DEBUG
-        if let listeningRestartOverride {
-            await listeningRestartOverride()
-            return
-        }
-        #endif
         if self.isPaused {
             self.lastTranscript = ""
             self.lastHeard = nil
@@ -827,12 +817,6 @@ extension TalkModeRuntime {
     }
 
     private func playAssistant(text: String) async {
-        #if DEBUG
-        if let assistantPlaybackOverride {
-            await assistantPlaybackOverride(text)
-            return
-        }
-        #endif
         guard let input = await preparePlaybackInput(text: text) else { return }
 
         switch Self.playbackPlan(provider: input.provider, apiKey: input.apiKey, voiceId: input.voiceId) {

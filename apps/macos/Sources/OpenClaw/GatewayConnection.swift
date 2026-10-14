@@ -1651,31 +1651,15 @@ extension GatewayConnection {
         inputRunIDs: [String]? = nil,
         ifCurrentRoute route: Route? = nil) async throws -> OpenClawChatHistoryPayload
     {
-        let sessionKey = self.canonicalizeSessionKey(sessionKey)
         let request = OpenClawChatGatewayRequests.history(
-            sessionKey: sessionKey,
+            sessionKey: self.canonicalizeSessionKey(sessionKey),
             agentID: agentID,
             limit: limit,
             maxChars: maxChars,
             inputRunIDs: inputRunIDs,
             timeoutMs: timeoutMs)
-        do {
-            let data = try await self.request(request, ifCurrentRoute: route)
-            return try self.decoder.decode(OpenClawChatHistoryPayload.self, from: data)
-        } catch let error as GatewayResponseError where request.params["inputRunIds"] != nil &&
-            error.method == "chat.history" && error.code == "INVALID_REQUEST" &&
-            error.message == "invalid chat.history params: at root: unexpected property 'inputRunIds'"
-        {
-            // Gateways through v2026.8.1 reject this optional field. Remove the downgrade
-            // when the minimum remote Gateway is v2026.8.2.
-            return try await self.chatHistory(
-                sessionKey: sessionKey,
-                agentID: agentID,
-                limit: limit,
-                maxChars: maxChars,
-                timeoutMs: timeoutMs,
-                ifCurrentRoute: route)
-        }
+        let data = try await self.requestHistory(request, ifCurrentRoute: route)
+        return try self.decoder.decode(OpenClawChatHistoryPayload.self, from: data)
     }
 
     func conversationOwnershipScope(sessionKey: String, agentID: String?) -> OpenClawChatSendOwnership.Scope {
