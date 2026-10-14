@@ -607,6 +607,32 @@ describe("harness runtime plugins", () => {
     expect(plan.config?.plugins?.entries?.["vendor-plugin"]).toEqual({ enabled: true });
   });
 
+  it("scopes a mixed-case context-engine owner by its exact runtime ID", () => {
+    const metadataSnapshot = createMemoryPlanMetadataSnapshot();
+    const template = metadataSnapshot.registryIndex.plugins[0];
+    if (!template) {
+      throw new Error("Missing installed-plugin fixture");
+    }
+    const plan = resolveAgentRuntimePluginLoadPlan({
+      metadataSnapshot: {
+        ...metadataSnapshot,
+        registryIndex: {
+          ...metadataSnapshot.registryIndex,
+          plugins: [
+            ...metadataSnapshot.registryIndex.plugins,
+            { ...template, pluginId: "MiXeD-demo", contextEngineIds: ["canonical-engine"] },
+          ],
+        },
+      },
+      config: { plugins: { allow: ["mixed-demo"], slots: { contextEngine: "canonical-engine" } } },
+      workspaceDir: "/tmp/workspace",
+      basePluginIds: [],
+      selections: [],
+    });
+    expect(plan.pluginIds).toEqual(["MiXeD-demo"]);
+    expect(plan.config?.plugins?.entries?.["MiXeD-demo"]).toEqual({ enabled: true });
+  });
+
   const memorySelectionCases: Array<{
     name: string;
     config: OpenClawConfig;

@@ -136,12 +136,16 @@ export function resolveEligibleContextEngineDeclaredOwners(
   const declared = records.filter(
     (record) => engineId && record.contextEngineIds?.includes(engineId),
   );
-  const normalizedEngineId = engineId ? normalizeId(engineId) : undefined;
+  const normalizedEngineId = engineId ? normalizePluginPolicyId(normalizeId(engineId)) : undefined;
   return {
     hasDeclarations: declared.length > 0,
     pluginIds: normalizedEngineId
-      ? [...new Set(declared.map((record) => normalizeId(record.id)))].filter((pluginId) =>
-          isContextEngineOwnerEligible(plugins, pluginId, normalizedEngineId),
+      ? [...new Set(declared.map((record) => record.id))].filter((pluginId) =>
+          isContextEngineOwnerEligible(
+            plugins,
+            normalizePluginPolicyId(normalizeId(pluginId)),
+            normalizedEngineId,
+          ),
         )
       : [],
   };
@@ -163,21 +167,27 @@ export function resolveEligibleContextEngineOwnerIds(
     records,
     normalizeId,
   );
-  const legacyId = normalizeId(engineId);
-  const legacy = records.find(
-    (record) => normalizeId(record.id) === legacyId && record.contextEngineIds === undefined,
-  );
+  const legacyId = normalizePluginPolicyId(normalizeId(engineId));
+  const legacy = records
+    .filter(
+      (record) =>
+        normalizePluginPolicyId(normalizeId(record.id)) === legacyId &&
+        record.contextEngineIds === undefined,
+    )
+    .map((record) => record.id);
   const legacyIndependentlyApproved =
     !declared.hasDeclarations ||
     plugins.entries[legacyId]?.enabled === true ||
     plugins.allow.includes(legacyId);
   return [
-    ...declared.pluginIds,
-    ...(legacy &&
-    legacyIndependentlyApproved &&
-    isContextEngineOwnerEligible(plugins, legacyId, legacyId)
-      ? [legacyId]
-      : []),
+    ...new Set([
+      ...declared.pluginIds,
+      ...(legacy.length > 0 &&
+      legacyIndependentlyApproved &&
+      isContextEngineOwnerEligible(plugins, legacyId, legacyId)
+        ? legacy
+        : []),
+    ]),
   ];
 }
 
@@ -200,15 +210,17 @@ export function withContextEngineOwner(
   records: readonly ContextEngineOwnerMetadata[],
   normalizeId: (id: string) => string = normalizePluginId,
 ): NormalizedPluginsConfig {
+  const selectedOwner = resolveSelectedContextEnginePluginIdFromConfig(
+    plugins,
+    plugins.slots.contextEngine,
+    records,
+    normalizeId,
+  );
   return {
     ...plugins,
-    contextEngineOwnerId:
-      resolveSelectedContextEnginePluginIdFromConfig(
-        plugins,
-        plugins.slots.contextEngine,
-        records,
-        normalizeId,
-      ) ?? null,
+    contextEngineOwnerId: selectedOwner
+      ? normalizePluginPolicyId(normalizeId(selectedOwner))
+      : null,
   };
 }
 

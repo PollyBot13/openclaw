@@ -67,6 +67,39 @@ it.each([false, true])(
   },
 );
 
+it("repairs a mixed-case legacy plugin-ID slot before runtime import", async () => {
+  useNoBundledPlugins();
+  vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+  const plugin = writePlugin({
+    id: "MiXeD-demo",
+    filename: "index.cjs",
+    body: 'throw new Error("slot selection must not import runtime");',
+  });
+  fs.writeFileSync(
+    path.join(plugin.dir, "openclaw.plugin.json"),
+    JSON.stringify({
+      id: plugin.id,
+      kind: "context-engine",
+      contextEngineIds: ["canonical-engine"],
+      configSchema: EMPTY_PLUGIN_SCHEMA,
+    }),
+  );
+  const config: OpenClawConfig = {
+    plugins: {
+      allow: ["mixed-demo"],
+      load: { paths: [plugin.file] },
+      slots: { memory: "none", contextEngine: "MiXeD-demo" },
+    },
+  };
+  const metadata = loadPluginMetadataSnapshot({
+    config,
+    allowCurrent: false,
+    preferPersisted: false,
+  });
+  const selected = await applySlotSelectionForPlugin(config, plugin.id, metadata);
+  expect(selected.plugins?.slots?.contextEngine).toBe("canonical-engine");
+});
+
 it.each(["unapproved", "reassigned", "enabled", "allowlisted", "denied", "disabled"] as const)(
   "checks %s workspace ownership before module execution",
   async (policy) => {

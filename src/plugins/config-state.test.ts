@@ -11,11 +11,13 @@ import {
   createPluginActivationSource,
   normalizePluginsConfig,
   normalizePluginTargetConfig,
+  resolveEligibleContextEngineOwnerIds,
   resolveEffectiveEnableState,
   resolveEnableState,
   resolveEffectivePluginActivationState,
   resolveMemorySlotDecision,
   resolveSelectedContextEnginePluginId,
+  resolveSelectedContextEnginePluginIdFromConfig,
   withContextEngineOwner,
 } from "./config-state.js";
 
@@ -697,6 +699,45 @@ describe("context engine ownership", () => {
       resolveEffectivePluginActivationState({ id: "MiXeD-demo", origin: "workspace", config }),
     ).toMatchObject({ enabled: true, source: "explicit", reason: "selected context engine slot" });
   });
+  it.each([
+    { name: "default", normalizeId: undefined },
+    { name: "exact supplied", normalizeId: (id: string) => id.trim() },
+  ])("keeps exact selected owner with $name normalizer", ({ normalizeId }) => {
+    const plugins = normalizePluginsConfig({
+      allow: ["mixed-demo"],
+      slots: { contextEngine: "canonical-engine" },
+    });
+    const records = [{ id: "MiXeD-demo", contextEngineIds: ["canonical-engine"] }];
+    expect(
+      resolveSelectedContextEnginePluginIdFromConfig(
+        plugins,
+        "canonical-engine",
+        records,
+        normalizeId,
+      ),
+    ).toBe("MiXeD-demo");
+    expect(withContextEngineOwner(plugins, records, normalizeId).contextEngineOwnerId).toBe(
+      "mixed-demo",
+    );
+  });
+  it.each([false, true])(
+    "retains both exact case-distinct eligible owners before import: declared=%s",
+    (declared) => {
+      const engineId = declared ? "canonical-engine" : "owner";
+      const plugins = normalizePluginsConfig({
+        allow: ["owner"],
+        slots: { contextEngine: engineId },
+      });
+      const records = ["Owner", "owner"].map((id) => ({
+        id,
+        ...(declared ? { contextEngineIds: [engineId] } : {}),
+      }));
+      expect(resolveEligibleContextEngineOwnerIds(plugins, engineId, records)).toEqual([
+        "Owner",
+        "owner",
+      ]);
+    },
+  );
   it("does not choose a first owner or a same-named plugin over declared ownership", () => {
     const config = {
       plugins: { allow: ["vendor-plugin"], slots: { contextEngine: "Canonical-Engine" } },
