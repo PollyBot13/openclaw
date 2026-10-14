@@ -148,18 +148,21 @@ export async function dispatchDiscordNativeAgentReply(params: {
         typeof blockStreamingEnabled === "boolean" ? !blockStreamingEnabled : undefined,
     },
   }).catch(async (error: unknown) => {
-    try {
-      // The response queue preserves accepted output, including partial follow-ups.
-      const archivedInternalSource = isArchivedInternalCommandSourceError(
+    if (
+      !isArchivedInternalCommandSourceError(
         error,
         params.ctxPayload.SessionKey,
         params.effectiveRoute.agentId,
-      );
+      )
+    ) {
+      throw error;
+    }
+    try {
+      // The response queue preserves accepted output, including partial follow-ups.
       await safeDiscordInteractionCall("interaction command failure", () =>
         params.interaction.editDeferredPlaceholderIfUnanswered({
-          content: archivedInternalSource
-            ? "This command’s internal session is archived. Ask your OpenClaw operator to run `openclaw doctor --fix`, then retry."
-            : "Command failed. Ask your OpenClaw operator to check the Gateway logs, then retry.",
+          content:
+            "This command’s internal session is archived. Ask your OpenClaw operator to run `openclaw doctor --fix`, then retry.",
           allowed_mentions: { parse: [] },
         }),
       );

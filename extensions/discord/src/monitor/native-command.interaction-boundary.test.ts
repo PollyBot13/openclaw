@@ -344,7 +344,7 @@ describe("Client.handleInteraction native command channel identity", () => {
       "archived conversation target",
       `Session "agent:main:discord:channel:${CHANNEL}" is archived. Restore it before starting new work.`,
     ],
-  ])("does not mislabel %s as an internal command archive", async (_case, message) => {
+  ])("leaves %s reporting to the transport dispatcher", async (_case, message) => {
     const harness = createHarness();
     harness.dispatch.mockRejectedValueOnce(new Error(message));
     await expect(
@@ -360,8 +360,7 @@ describe("Client.handleInteraction native command channel identity", () => {
       "/webhooks/app1/test-token/messages/%40original",
       {
         body: {
-          content:
-            "Command failed. Ask your OpenClaw operator to check the Gateway logs, then retry.",
+          content: "Command failed. Check the Gateway logs for details.",
           allowed_mentions: { parse: [] },
         },
       },
