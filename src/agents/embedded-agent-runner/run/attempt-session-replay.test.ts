@@ -7,8 +7,10 @@ import {
 } from "../../../config/sessions/session-accessor.js";
 import { SessionTranscriptProjectionUnavailableError } from "../../../config/sessions/session-transcript-projection-error.js";
 import { resolveSessionTranscriptReadFence } from "../../../config/sessions/session-transcript-read-fence.js";
-import { waitForSessionTranscriptProjection } from "../../../config/sessions/session-transcript-reconcile.js";
-import { waitForSessionTranscriptIndexReconcile } from "../../../config/sessions/session-transcript-reconcile.js";
+import {
+  waitForSessionTranscriptIndexReconcile,
+  waitForSessionTranscriptProjection,
+} from "../../../config/sessions/session-transcript-reconcile.js";
 import type { ContextEngine } from "../../../context-engine/types.js";
 import type { ImageContent } from "../../../llm/types.js";
 import { finalizeRuntimePromptImages } from "../../../media/runtime-prompt-image-provenance.js";
