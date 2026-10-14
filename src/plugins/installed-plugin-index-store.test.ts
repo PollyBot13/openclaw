@@ -245,7 +245,8 @@ describe("installed plugin index persistence", () => {
     const persisted = requirePersisted(await readPersistedInstalledPluginIndex({ stateDir }));
     expect(persisted.plugins[0]?.contextEngineIds).toEqual(["canonical-engine"]);
     expect(
-      readPersistedInstalledPluginIndexInstallRecords({ stateDir })?.demo?.contextEngineIdsByPlugin,
+      (await readPersistedInstalledPluginIndexInstallRecordsAsync({ stateDir }))?.demo
+        ?.contextEngineIdsByPlugin,
     ).toEqual(ownership);
   });
 

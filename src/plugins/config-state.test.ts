@@ -707,18 +707,18 @@ describe("context engine ownership", () => {
       allow: ["mixed-demo"],
       slots: { contextEngine: "canonical-engine" },
     });
-    const records = [{ id: "MiXeD-demo", contextEngineIds: ["canonical-engine"] }];
+    const mixedCaseRecords = [{ id: "MiXeD-demo", contextEngineIds: ["canonical-engine"] }];
     expect(
       resolveSelectedContextEnginePluginIdFromConfig(
         plugins,
         "canonical-engine",
-        records,
+        mixedCaseRecords,
         normalizeId,
       ),
     ).toBe("MiXeD-demo");
-    expect(withContextEngineOwner(plugins, records, normalizeId).contextEngineOwnerId).toBe(
-      "mixed-demo",
-    );
+    expect(
+      withContextEngineOwner(plugins, mixedCaseRecords, normalizeId).contextEngineOwnerId,
+    ).toBe("mixed-demo");
   });
   it.each([false, true])(
     "retains both exact case-distinct eligible owners before import: declared=%s",
@@ -728,11 +728,10 @@ describe("context engine ownership", () => {
         allow: ["owner"],
         slots: { contextEngine: engineId },
       });
-      const records = ["Owner", "owner"].map((id) => ({
-        id,
-        ...(declared ? { contextEngineIds: [engineId] } : {}),
-      }));
-      expect(resolveEligibleContextEngineOwnerIds(plugins, engineId, records)).toEqual([
+      const caseDistinctRecords = ["Owner", "owner"].map((id) =>
+        declared ? { id, contextEngineIds: [engineId] } : { id },
+      );
+      expect(resolveEligibleContextEngineOwnerIds(plugins, engineId, caseDistinctRecords)).toEqual([
         "Owner",
         "owner",
       ]);
