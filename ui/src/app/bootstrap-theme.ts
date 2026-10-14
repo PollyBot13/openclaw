@@ -6,6 +6,7 @@ import { registerListener } from "../../../src/shared/listeners.js";
 import type {
   ApplicationGateway,
   ApplicationTheme,
+  ApplicationThemePalette,
   ApplicationThemeServerSelection,
 } from "./context.ts";
 import { applyControlUiAccent, syncControlUiSystemChrome } from "./control-ui-presentation.ts";
@@ -84,7 +85,8 @@ function applyThemePresentation(settings: UiPreferences, catalogTheme?: CatalogT
   applyChatFontSmoothing(typefaces.chat);
   syncCustomThemeStyleTag(catalogTheme?.palette ?? settings.customTheme);
   applyControlUiAccent(settings.accent);
-  syncControlUiSystemChrome();
+  // Custom palette CSS can change while the theme ID and inline styles stay the same.
+  syncControlUiSystemChrome(true);
 }
 
 function livePreferencesKey(settings: UiPreferences): string {
@@ -106,6 +108,7 @@ export function createApplicationTheme(
   const { token: _token, ...initialPreferences } = initialSettings;
   let settings: UiPreferences = initialPreferences;
   let serverSelection: ApplicationThemeServerSelection | null = null;
+  let appliedPalette: ApplicationThemePalette | null = null;
   let systemThemeCleanup: (() => void) | undefined;
   const listeners = new Set<() => void>();
 
@@ -127,6 +130,12 @@ export function createApplicationTheme(
         return;
       }
       applyThemePresentation(settings, catalog?.theme(settings.theme));
+      const mode = catalog?.theme(settings.theme)?.mode ?? settings.themeMode;
+      appliedPalette = {
+        revision: generation,
+        theme: settings.theme,
+        resolvedMode: resolveTheme(settings.theme, mode).endsWith("light") ? "light" : "dark",
+      };
       // Computed-style consumers need the applied palette, not just the new
       // preference. Synchronous application shares the publication below.
       if (preferencesPublished) {
@@ -272,6 +281,9 @@ export function createApplicationTheme(
     },
     get serverSelection() {
       return serverSelection;
+    },
+    get appliedPalette() {
+      return appliedPalette;
     },
     recordServerSelection(theme, scope) {
       serverSelection = { revision: (serverSelection?.revision ?? 0) + 1, scope, theme };

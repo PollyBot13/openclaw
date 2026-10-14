@@ -11,6 +11,7 @@ import { awaitGateBeforeSettlement, createDeferred, withinTest } from "../helper
 import { runNodeScript } from "../helpers/run-node-script.js";
 import * as nodeScript from "../helpers/run-node-script.js";
 import { formatShimResult } from "./direct-run-entrypoints.test-support.js";
+import { copyOxlintConfigFixture } from "./test-helpers.js";
 
 const fixture = createFixtureLifetime();
 afterEach(() => fixture.cleanup());
@@ -98,7 +99,10 @@ export function waitForFile(file) {
   );
   write("node_modules/tsx/loader.mjs", "export {};\n");
   // Git inventory behavior is covered by the ratchet's own repository fixtures.
-  write("scripts/check-control-ui-lit-ratchet.mts", "export function main() { return 0; }\n");
+  write(
+    "scripts/check-control-ui-lit-ratchet.mts",
+    "export function main() { return Number(process.env.FIXTURE_RATCHET_EXIT || 0); }\n",
+  );
   preparedScripts ??= (async () => {
     const { bundles } = await build({
       config: false,
@@ -216,7 +220,11 @@ process.stderr.write = (chunk, ...args) => {
 };
 `,
   );
-  const env: NodeJS.ProcessEnv = { ...process.env, OPENCLAW_OXLINT_SHARDS_SERIAL: "1" };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    FIXTURE_RATCHET_EXIT: phase === "ratchet" && mode === "nonzero" ? "7" : "0",
+    OPENCLAW_OXLINT_SHARDS_SERIAL: "1",
+  };
   for (const key of [
     "NODE_OPTIONS",
     "NODE_PATH",
@@ -375,7 +383,7 @@ describe.skipIf(process.platform === "win32")("lint failure reporting boundary",
         fs.rmSync(bin, { force: true });
         fs.symlinkSync(path.resolve("node_modules/.bin", name), bin);
       }
-      fs.copyFileSync(".oxlintrc.json", path.join(root, ".oxlintrc.json"));
+      copyOxlintConfigFixture(root);
       fs.mkdirSync(path.join(root, "extensions/sample"), { recursive: true });
       fs.writeFileSync(
         path.join(root, "extensions/tsconfig.json"),
@@ -475,6 +483,22 @@ describe.skipIf(process.platform === "win32")("lint failure reporting boundary",
           expect(result.stderr.trim().split("\n").at(-1)).toBe(`[${tool}] FAILED (exit ${code})`);
           expect(result.stderr).not.toContain("[oxlint:extensions] finished");
         }
+      }),
+  );
+
+  it.for(["ratchet", "i18n", "oxlint"] as const)(
+    "runs all lint phases after %s fails and retains its verdict",
+    (phase, { signal }) =>
+      fixture.run(async () => {
+        const { result, details, steps } = await runLintFixture("run-lint.mts", "nonzero", signal, {
+          phase,
+        });
+        expect(result.status, details).toBe(7);
+        expect(
+          steps.map((step) => step.step),
+          details,
+        ).toEqual(["i18n", "prepare", "oxlint", "stylelint"]);
+        expect(result.stderr.trim().split("\n").at(-1)).toBe("[lint] FAILED (exit 7)");
       }),
   );
 

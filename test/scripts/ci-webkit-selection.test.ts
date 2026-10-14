@@ -6,11 +6,14 @@ import { evaluateWorkflowExpression, readCiWorkflow } from "./ci-workflow.test-s
 describe("Control UI WebKit selection", () => {
   it.each([
     ["ui/vitest.config.ts", true],
-    ["ui/test/webkit-expected-failures.ts", true],
     ["ui/src/components/modal-dialog.ts", true],
     ["ui/src/pages/chat/components/chat-composer.tsx", true],
+    ["ui/src/pages/chat/chat-pane-header.ts", true],
+    ["ui/src/pages/chat/components/chat-pane-header.ts", true],
+    ["ui/src/pages/chat/components/chat-pane-versions-menu.tsx", true],
+    ["ui/src/lit/presentation-binding.ts", true],
     ["ui/src/styles/chat/composer.css", true],
-    ["ui/src/pages/about/about-page.ts", false],
+    ["ui/src/pages/about/about-page.tsx", false],
   ])("selects %s: %s without adding UI rows", (file, selected) => {
     const result = runCiManifestFixture({
       bundledPlanner: true,
@@ -65,6 +68,12 @@ describe("Control UI WebKit selection", () => {
             repository: "openclaw/openclaw",
             runAttempt: 1,
             matrix: { shard },
+            failed: true,
+            steps: {
+              node_setup: { outputs: {}, outcome: "success" },
+              ui_webkit: { outputs: {}, outcome: "success" },
+              ui_bun: { outputs: {}, outcome: "skipped" },
+            },
             preflightOutputs: { run_ui_webkit: selected },
           }),
         ).toBe(expected);

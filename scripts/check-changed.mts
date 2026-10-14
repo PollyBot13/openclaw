@@ -152,7 +152,7 @@ const CORE_LINT_ARGV_BYTES = 24 * 1024;
 const LINTABLE_CORE_PATH_RE = /^(?:src|ui|packages)\/.+\.[cm]?[jt]sx?$/u;
 const LINTABLE_EXTENSION_PATH_RE = /^extensions\/[^/]+\/.+\.[cm]?[jt]sx?$/u;
 const LINTABLE_SCRIPT_PATH_RE = /^scripts\/.+\.[cm]?[jt]sx?$/u;
-const LINTABLE_UI_STYLE_PATH_RE = /^ui\/(?:src\/.+\.(?:css|ts)|public\/themes\/[^/]+\.css)$/u;
+const LINTABLE_UI_STYLE_PATH_RE = /^ui\/(?:src\/.+\.(?:css|tsx?)|public\/themes\/[^/]+\.css)$/u;
 // These baselines are checked by their ratchets, not consumed by Oxlint.
 const LINT_OPTIMIZATION_NEUTRAL_PATH_RE =
   /^(?:docs\/|README\.md$|.*\.mdx?$|config\/(?:assertion-safety-baseline|env-var-count-budget|max-lines-baseline|test-timeout-race-baseline|test-mock-exports-baseline)\.txt$)/u;
@@ -609,7 +609,7 @@ export function createChangedCheckPlan(
                     "tsx",
                     "scripts/run-stylelint.mts",
                     "ui/src/**/*.css",
-                    "ui/src/**/*.ts",
+                    "ui/src/**/*.{ts,tsx}",
                     "ui/public/themes/*.css",
                   ],
                 },
@@ -765,6 +765,12 @@ export function createChangedCheckPlan(
   if (result.paths.some((file) => /^(?:src|extensions|packages|scripts)\//u.test(file))) {
     add("SQLite worker ratchet", [
       "check:database-worker-ratchet",
+      ...(options.staged ? ["--staged"] : []),
+      "--base",
+      options.base ?? (options.staged ? "HEAD" : "origin/main"),
+    ]);
+    add("SQLite dialect ratchet", [
+      "check:database-dialect-ratchet",
       ...(options.staged ? ["--staged"] : []),
       "--base",
       options.base ?? (options.staged ? "HEAD" : "origin/main"),
@@ -1641,16 +1647,19 @@ export async function runChangedCheck(
       )
     : undefined;
   const timings: ChangedCheckTiming[] = [];
+  let failure = 0;
   for (const command of plan.commands) {
     const status = await runPlanCommand(command, timings, coreTestCheck);
-    if (status !== 0) {
-      printSummary(timings, options);
-      return status;
+    failure ||= status;
+    // Timeouts and cancellation deliberately stop admitting new work.
+    if (status === 124 || status >= 128) {
+      failure = status;
+      break;
     }
   }
 
   printSummary(timings, options);
-  return 0;
+  return failure;
 }
 
 function sameArgs(left: string[], right: string[]) {
@@ -1880,8 +1889,7 @@ function isDirectRun() {
   return isDirectRunUrl(process.argv[1], import.meta.url);
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
+export async function main(argv = process.argv.slice(2)) {
   let args: ReturnType<typeof parseArgs>;
   try {
     args = parseArgs(argv);
@@ -1956,19 +1964,11 @@ async function main() {
       ) {
         const delegated = await runChangedCheckViaCrabbox(argv, process.env);
         if (delegated.backendUnavailable) {
-          // Say this loudly: the proof below is local, so whoever reads the run
-          // knows which machine produced it and that Linux-only lanes are unproven.
           console.error(
-            "[check:changed] the remote backend never ran the checks (no run summary). Falling back to local execution; note this in the proof summary.",
+            "[check:changed] remote proof is unavailable. Use PR CI or explicitly select a qualified local scope; platform-specific requirements remain unproven. Local checks were not started.",
           );
         }
-        process.exitCode = delegated.backendUnavailable
-          ? await runChangedCheck(result, {
-              ...args,
-              typecheckResult,
-              explicitPaths: args.paths.length > 0,
-            })
-          : delegated.exitCode;
+        process.exitCode = delegated.exitCode;
       } else {
         process.exitCode = await runChangedCheck(result, {
           ...args,
