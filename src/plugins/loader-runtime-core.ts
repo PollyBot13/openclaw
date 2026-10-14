@@ -8,6 +8,7 @@ import {
   resolveEffectivePluginActivationState,
   resolveEligibleContextEngineDeclaredOwners,
   resolveEligibleContextEngineOwnerIds,
+  normalizePluginId,
 } from "./config-state.js";
 import { isPluginEnabledByDefaultForPlatform } from "./default-enablement.js";
 import { discoverOpenClawPlugins, type PluginDiscoveryResult } from "./discovery.js";
@@ -320,18 +321,31 @@ export function loadOpenClawPluginsCore(
       );
     }
     context.applyContextEngineOwnership(contextEngineOwners);
+    const selectedOwnerId = context.normalized.contextEngineOwnerId;
+    const selectedOwner = selectedOwnerId
+      ? (
+          contextEngineOwners.find(
+            (plugin) =>
+              normalizePluginId(plugin.id) === selectedOwnerId &&
+              plugin.contextEngineIds?.includes(engineId ?? ""),
+          ) ??
+          contextEngineOwners.find(
+            (plugin) =>
+              normalizePluginId(plugin.id) === selectedOwnerId &&
+              plugin.contextEngineIds === undefined,
+          )
+        )?.id
+      : undefined;
     // Preserve an unresolved declaration without hiding ordinary missing-engine diagnostics.
     const selectedContextEngine =
       engineId &&
-      (context.normalized.contextEngineOwnerId ||
+      (selectedOwnerId ||
         (context.metadataSnapshot?.registryIndex.plugins ?? manifestRegistry.plugins).some(
           (plugin) => plugin.contextEngineIds?.includes(engineId),
         ))
         ? Object.freeze({
             engineId,
-            owner: context.normalized.contextEngineOwnerId
-              ? `plugin:${context.normalized.contextEngineOwnerId}`
-              : null,
+            owner: selectedOwner ? `plugin:${selectedOwner}` : null,
           })
         : undefined;
     registry.diagnostics.push(...manifestRegistry.diagnostics);

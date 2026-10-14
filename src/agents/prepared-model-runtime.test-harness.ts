@@ -31,6 +31,9 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
     get registryIndex() {
       return this.index;
     },
+    set registryIndex(index) {
+      this.index = index;
+    },
     manifestRegistry: { plugins: [], diagnostics: [] },
     registryDiagnostics: [],
     declaredProviderOwners: new Map(),

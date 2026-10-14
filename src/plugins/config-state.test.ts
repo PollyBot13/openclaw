@@ -684,6 +684,19 @@ describe("context engine ownership", () => {
         .enabled,
     ).toBe(false);
   });
+  it("activates a mixed-case equal-ID owner from its canonical policy identity", () => {
+    const config = withContextEngineOwner(
+      normalizePluginsConfig({
+        allow: ["unrelated"],
+        slots: { contextEngine: "MiXeD-demo" },
+      }),
+      [{ id: "MiXeD-demo", contextEngineIds: ["MiXeD-demo"] }],
+    );
+    expect(config.contextEngineOwnerId).toBe("mixed-demo");
+    expect(
+      resolveEffectivePluginActivationState({ id: "MiXeD-demo", origin: "workspace", config }),
+    ).toMatchObject({ enabled: true, source: "explicit", reason: "selected context engine slot" });
+  });
   it("does not choose a first owner or a same-named plugin over declared ownership", () => {
     const config = {
       plugins: { allow: ["vendor-plugin"], slots: { contextEngine: "Canonical-Engine" } },

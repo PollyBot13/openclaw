@@ -68,6 +68,93 @@ module.exports = { id: ${JSON.stringify(params.id)}, register(api) {
   return plugin;
 }
 
+it.each([
+  { engineId: "canonical-engine", allow: ["mixed-demo"] },
+  { engineId: "MiXeD-demo", allow: ["unrelated"] },
+])("loads mixed-case owner of exact engine $engineId", async ({ engineId, allow }) => {
+  useNoBundledPlugins();
+  const workspaceDir = makePluginLoaderTempDir();
+  vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+  const plugin = writeEnginePlugin({
+    workspaceDir,
+    id: "MiXeD-demo",
+    engineIds: [engineId],
+    kind: "context-engine",
+    declaredEngineIds: [engineId],
+  });
+  const config: OpenClawConfig = {
+    plugins: {
+      load: { paths: [plugin.file] },
+      allow,
+      slots: { memory: "none", contextEngine: engineId },
+    },
+  };
+  const registry = loadOpenClawPlugins({
+    config,
+    workspaceDir,
+    cache: false,
+    runtimeSideEffects: true,
+  });
+  try {
+    expect(getPluginRuntimeLoadContextState(registry)?.selectedContextEngine).toEqual({
+      engineId,
+      owner: "plugin:MiXeD-demo",
+    });
+    const record = registry.plugins.find((entry) => entry.id === "MiXeD-demo");
+    expect(record?.error).toBeUndefined();
+    expect(record?.status).toBe("loaded");
+    expect(registry.contextEngines.get(engineId)?.owner).toBe("plugin:MiXeD-demo");
+    const { resolveContextEngine } = await import("../context-engine/registry.js");
+    await ensureContextEnginesInitialized();
+    const engine = await resolveContextEngine(config);
+    try {
+      expect(engine.info.id).toBe(engineId);
+      expect(await engine.assemble({ sessionId: "synthetic", messages: [] })).toMatchObject({
+        systemPromptAddition: "MiXeD-demo",
+      });
+    } finally {
+      await engine.dispose?.();
+    }
+  } finally {
+    await disposePluginRegistryInstances(registry);
+  }
+});
+
+it("keeps canonical denial ahead of mixed-case equal-ID selection", async () => {
+  useNoBundledPlugins();
+  const workspaceDir = makePluginLoaderTempDir();
+  vi.stubEnv("OPENCLAW_STATE_DIR", makePluginLoaderTempDir());
+  const plugin = writeEnginePlugin({
+    workspaceDir,
+    id: "MiXeD-demo",
+    engineIds: ["MiXeD-demo"],
+    kind: "context-engine",
+    declaredEngineIds: ["MiXeD-demo"],
+  });
+  const registry = loadOpenClawPlugins({
+    config: {
+      plugins: {
+        load: { paths: [plugin.file] },
+        deny: ["mixed-demo"],
+        slots: { memory: "none", contextEngine: "MiXeD-demo" },
+      },
+    },
+    workspaceDir,
+    cache: false,
+    runtimeSideEffects: true,
+  });
+  try {
+    expect(registry.plugins.find((record) => record.id === "MiXeD-demo")?.status).toBe("disabled");
+    expect(getPluginRuntimeLoadContextState(registry)?.selectedContextEngine).toEqual({
+      engineId: "MiXeD-demo",
+      owner: null,
+    });
+    expect(registry.contextEngines.has("MiXeD-demo")).toBe(false);
+  } finally {
+    await disposePluginRegistryInstances(registry);
+  }
+});
+
 it("rebuilds declared factories when switching engines on the same owner", async () => {
   const { resolveContextEngine, resolveLogicalTurnContextEngines } =
     await import("../context-engine/registry.js");
