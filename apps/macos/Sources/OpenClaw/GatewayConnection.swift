@@ -1648,6 +1648,7 @@ extension GatewayConnection {
         limit: Int? = nil,
         maxChars: Int? = nil,
         timeoutMs: Int? = nil,
+        inputRunIDs: [String]? = nil,
         ifCurrentRoute route: Route? = nil) async throws -> OpenClawChatHistoryPayload
     {
         let request = OpenClawChatGatewayRequests.history(
@@ -1655,6 +1656,7 @@ extension GatewayConnection {
             agentID: agentID,
             limit: limit,
             maxChars: maxChars,
+            inputRunIDs: inputRunIDs,
             timeoutMs: timeoutMs)
         let data = if let route {
             try await self.request(request, ifCurrentRoute: route)

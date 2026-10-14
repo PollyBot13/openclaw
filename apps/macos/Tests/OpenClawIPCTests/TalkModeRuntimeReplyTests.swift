@@ -26,6 +26,7 @@ private actor TalkReplyWire {
         case routeChangeWhileWaiting
         case truncatedHistory
         case wrongFullMessageRun
+        case collectedInput(truncated: Bool)
         case incompleteWork(TalkIncompleteReplyKind)
         case custody(TalkCustodyCase)
     }
@@ -38,6 +39,7 @@ private actor TalkReplyWire {
     private var sendKeys: [String] = []
     private var waitCount = 0
     private var historyCount = 0
+    private var completed = false
     private var custodyRunIDs: [[String]] = []
     private nonisolated let changed = AsyncTestSignal()
     private nonisolated let heldWaitEntered = AsyncTestGate()
@@ -75,7 +77,7 @@ private actor TalkReplyWire {
     }
 
     func rejectCustodyProbe() -> Bool {
-        self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
+        !self.completed && self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
     }
 
     func payload(method: String, params: [String: Any]) async throws -> String {
@@ -97,7 +99,11 @@ private actor TalkReplyWire {
         case "chat.history":
             return self.historyPayload(params: params)
         case "chat.message.get":
-            let runID = self.scenario == .wrongFullMessageRun ? "foreign-run" : Self.runID
+            let runID = switch self.scenario {
+            case .wrongFullMessageRun: "foreign-run"
+            case .collectedInput: "collected-execution"
+            default: Self.runID
+            }
             let full = Self.message(id: "msg-1", runID: runID, text: "Complete matching reply")
             return #"{"ok":true,"message":\#(full)}"#
         default:
@@ -136,14 +142,35 @@ private actor TalkReplyWire {
                 ([TalkCustodyCase.resetPending, .resetPendingError, .resetQueue].contains(kind) && self.waitCount <= 3)
             { return #"{"status":"timeout"}"# }
         }
+        self.completed = true
         return #"{"status":"completed","endedAt":1}"#
     }
 
     private func historyPayload(params: [String: Any]) -> String {
         self.historyCount += 1
         if let inputRunIDs = params["inputRunIds"] as? [String] {
-            self.custodyRunIDs.append(inputRunIDs)
-            if case let .custody(kind) = self.scenario { return self.custodyPayload(kind) }
+            if !self.completed {
+                self.custodyRunIDs.append(inputRunIDs)
+                if case let .custody(kind) = self.scenario { return self.custodyPayload(kind) }
+            }
+        }
+        if case let .collectedInput(truncated) = self.scenario, self.historyCount == 1 {
+            let receipt = params["inputRunIds"] as? [String] == [Self.runID]
+                ? #"[{"runId":"\#(Self.runID)","consumedByEventId":"collected-user"}]"# : "[]"
+            let answer = Self.message(
+                id: "msg-1",
+                runID: "collected-execution",
+                text: truncated ? "cut" : "Complete matching reply",
+                truncated: truncated)
+            let unrelated = Self.message(id: "foreign", runID: "foreign-run", text: "Foreign reply")
+            return #"""
+            {"sessionKey":"\#(Self.sessionKey)","inputConsumptions":\#(receipt),"messages":[
+              {"role":"user","__openclaw":{"id":"collected-user"},
+               "content":[{"type":"text","text":"Collected input"}]},
+              \#(answer),
+              {"role":"user","content":[{"type":"text","text":"Unrelated next input"}]},
+              \#(unrelated)]}
+            """#
         }
         let messages: String = switch self.scenario {
         case .truncatedHistory:
@@ -506,6 +533,14 @@ struct TalkModeRuntimeReplyTests {
         try await withTalkReplyFixture(.truncatedHistory) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
             #expect(await wire.snapshot().methods.contains("chat.message.get"))
+            #expect(await sink.snapshot().played == ["Complete matching reply"])
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `collected input speaks its receipt owned reply`(truncated: Bool) async throws {
+        try await withTalkReplyFixture(.collectedInput(truncated: truncated)) { runtime, _, sink in
+            await runtime.sendAndSpeak("synthetic")
             #expect(await sink.snapshot().played == ["Complete matching reply"])
         }
     }

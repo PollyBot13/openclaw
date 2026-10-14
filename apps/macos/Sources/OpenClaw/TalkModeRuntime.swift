@@ -797,11 +797,12 @@ extension TalkModeRuntime {
         route: GatewayConnection.Route) async -> String?
     {
         do {
-            let history = try await self.gateway.chatHistory(sessionKey: sessionKey, ifCurrentRoute: route)
-            let decoded = (history.messages ?? []).compactMap { item in
-                try? GatewayPayloadDecoding.decode(item, as: OpenClawChatMessage.self)
-            }
-            guard var assistant = Self.assistantMessage(from: decoded, runId: runId) else { return nil }
+            let history = try await self.gateway.chatHistory(
+                sessionKey: sessionKey, inputRunIDs: [runId], ifCurrentRoute: route)
+            guard var assistant = OpenClawChatHistoryPresentation.completedReply(
+                from: history.messages ?? [],
+                runID: runId,
+                inputConsumptions: history.inputConsumptions) else { return nil }
             if assistant.isTruncated {
                 guard let messageID = assistant.transcriptMessageID, !messageID.isEmpty else { return nil }
                 let request = try MacGatewayChatTransport.fullMessageRequest(
@@ -811,7 +812,9 @@ extension TalkModeRuntime {
                 guard result.ok, let encoded = result.message,
                       let full = try? GatewayPayloadDecoding.decode(encoded, as: OpenClawChatMessage.self),
                       !full.isTruncated, full.transcriptMessageID == messageID,
-                      Self.assistantMessage(from: [full], runId: runId) != nil else { return nil }
+                      full.transcriptRunID == assistant.transcriptRunID,
+                      full.idempotencyKey == assistant.idempotencyKey,
+                      full.isCompletedReply else { return nil }
                 assistant = full
             }
             let text = ChatMessageVisibleText.visibleText(in: assistant)
@@ -820,17 +823,6 @@ extension TalkModeRuntime {
         } catch {
             self.logger.error("talk history fetch failed: \(error.localizedDescription, privacy: .public)")
             return nil
-        }
-    }
-
-    private nonisolated static func assistantMessage(
-        from messages: [OpenClawChatMessage],
-        runId: String) -> OpenClawChatMessage?
-    {
-        messages.last { message in
-            message.isCompletedReply && [
-                message.transcriptRunID, message.idempotencyKey, message.streamFallback?.runId,
-            ].contains { $0?.trimmingCharacters(in: .whitespacesAndNewlines) == runId }
         }
     }
 
