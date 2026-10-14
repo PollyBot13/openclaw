@@ -1658,11 +1658,7 @@ extension GatewayConnection {
             maxChars: maxChars,
             inputRunIDs: inputRunIDs,
             timeoutMs: timeoutMs)
-        let data = if let route {
-            try await self.request(request, ifCurrentRoute: route)
-        } else {
-            try await self.request(request)
-        }
+        let data = try await self.requestHistory(request, ifCurrentRoute: route)
         return try self.decoder.decode(OpenClawChatHistoryPayload.self, from: data)
     }
 

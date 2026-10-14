@@ -27,6 +27,9 @@ private actor TalkReplyWire {
         case truncatedHistory
         case wrongFullMessageRun
         case collectedInput(truncated: Bool)
+        case unsupportedHistory(truncated: Bool)
+        case heldLegacyHistory
+        case historyError(code: String, message: String)
         case incompleteWork(TalkIncompleteReplyKind)
         case custody(TalkCustodyCase)
     }
@@ -39,6 +42,7 @@ private actor TalkReplyWire {
     private var sendKeys: [String] = []
     private var waitCount = 0
     private var historyCount = 0
+    private var historyInputRunIDs: [[String]?] = []
     private var completed = false
     private var custodyRunIDs: [[String]] = []
     private nonisolated let changed = AsyncTestSignal()
@@ -76,6 +80,20 @@ private actor TalkReplyWire {
         self.custodyRunIDs
     }
 
+    func requestedHistoryInputRunIDs() -> [[String]?] {
+        self.historyInputRunIDs
+    }
+
+    func historyRejection(hasInputRunIDs: Bool) -> (code: String, message: String)? {
+        switch self.scenario {
+        case .unsupportedHistory where hasInputRunIDs,
+             .heldLegacyHistory where hasInputRunIDs:
+            ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'inputRunIds'")
+        case let .historyError(code, message): (code, message)
+        default: nil
+        }
+    }
+
     func rejectCustodyProbe() -> Bool {
         !self.completed && self.scenario == .custody(.unavailableProbe) && self.custodyRunIDs.count == 1
     }
@@ -97,6 +115,10 @@ private actor TalkReplyWire {
         case "agent.wait":
             return try await self.waitPayload(params: params)
         case "chat.history":
+            if self.scenario == .heldLegacyHistory, params["inputRunIds"] == nil {
+                self.heldWaitEntered.open()
+                await self.heldWaitRelease.wait()
+            }
             return self.historyPayload(params: params)
         case "chat.message.get":
             let runID = switch self.scenario {
@@ -148,6 +170,7 @@ private actor TalkReplyWire {
 
     private func historyPayload(params: [String: Any]) -> String {
         self.historyCount += 1
+        self.historyInputRunIDs.append(params["inputRunIds"] as? [String])
         if let inputRunIDs = params["inputRunIds"] as? [String] {
             if !self.completed {
                 self.custodyRunIDs.append(inputRunIDs)
@@ -175,6 +198,9 @@ private actor TalkReplyWire {
         let messages: String = switch self.scenario {
         case .truncatedHistory:
             Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
+        case .unsupportedHistory(truncated: true):
+            Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
+                + "," + Self.message(id: "foreign", runID: "foreign-run", text: "Foreign reply")
         case .wrongFullMessageRun where self.historyCount == 1:
             Self.message(id: "msg-1", runID: Self.runID, text: "cut", truncated: true)
         case .wrongFullMessageRun:
@@ -308,6 +334,11 @@ private func makeTalkReplyFixture(
             let params = frame["params"] as? [String: Any] ?? [:]
             let isCustodyProbe = method == "chat.history" && params["inputRunIds"] != nil
             let payload = try await wire.payload(method: method, params: params)
+            if method == "chat.history", let rejection = await wire.historyRejection(hasInputRunIDs: isCustodyProbe) {
+                try socket.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.errorResponseData(
+                    id: id, code: rejection.code, message: rejection.message, details: [:])))
+                return
+            }
             if isCustodyProbe, await wire.rejectCustodyProbe() {
                 try socket.emitReceiveSuccess(.data(GatewayWebSocketTestSupport.errorResponseData(
                     id: id, code: "UNAVAILABLE", message: "synthetic custody outage", details: [:])))
@@ -365,6 +396,68 @@ extension TalkModeRuntime {
 
 @Suite(.testWaitLimit)
 struct TalkModeRuntimeReplyTests {
+    @Test(arguments: [false, true])
+    func `older Gateway history rejection retries without losing reply ownership`(truncated: Bool) async throws {
+        try await withTalkReplyFixture(.unsupportedHistory(truncated: truncated)) { runtime, wire, sink in
+            await runtime.sendAndSpeak("synthetic")
+            #expect(await wire.requestedHistoryInputRunIDs() == [[TalkReplyWire.runID], nil])
+            #expect(await wire.snapshot().sendKeys.count == 1)
+            #expect(await sink.snapshot().played == [truncated ? "Complete matching reply" : "Matching reply"])
+            #expect(await wire.snapshot().methods.contains("chat.message.get") == truncated)
+        }
+    }
+
+    @Test(arguments: [
+        ("UNAVAILABLE", "invalid chat.history params: at root: unexpected property 'inputRunIds'", true),
+        ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'other'", true),
+        ("INVALID_REQUEST", "invalid chat.history params: at root: unexpected property 'inputRunIds'", false),
+    ])
+    func `unrelated history errors do not downgrade`(
+        code: String,
+        message: String,
+        includeInputRunIDs: Bool) async throws
+    {
+        let (_, gateway, wire, _) = await makeTalkReplyFixture(.historyError(code: code, message: message))
+        do {
+            _ = try await gateway.chatHistory(
+                sessionKey: TalkReplyWire.sessionKey, inputRunIDs: includeInputRunIDs ? [TalkReplyWire.runID] : nil)
+            Issue.record("Expected the history rejection")
+        } catch let error as GatewayResponseError {
+            #expect(error.code == code)
+            #expect(error.message == message)
+        } catch {
+            await gateway.shutdown()
+            throw error
+        }
+        #expect(await wire.requestedHistoryInputRunIDs() == [includeInputRunIDs ? [TalkReplyWire.runID] : nil])
+        await gateway.shutdown()
+    }
+
+    @Test(arguments: [false, true])
+    func `Stop or route change invalidates a held legacy history reply`(stop: Bool) async throws {
+        try await withTalkReplyFixture(.heldLegacyHistory) { runtime, wire, sink in
+            let sending = Task { await runtime.sendAndSpeak("synthetic") }
+            do {
+                try await wire.waitUntilHeld()
+                if stop {
+                    await runtime.setEnabled(false)
+                } else {
+                    await wire.changeRoute()
+                }
+                await wire.releaseHeldWait()
+                try await TestWait.value(of: sending, "invalidated legacy history")
+            } catch {
+                sending.cancel()
+                await wire.releaseHeldWait()
+                _ = await sending.value
+                throw error
+            }
+            #expect(await wire.requestedHistoryInputRunIDs() == [[TalkReplyWire.runID], nil])
+            #expect(await sink.snapshot().played.isEmpty)
+            #expect(await sink.snapshot().restartCount == (stop ? 0 : 1))
+        }
+    }
+
     @Test func `terminal send ack never speaks the newer foreign reply`() async throws {
         try await withTalkReplyFixture(.terminalAck) { runtime, wire, sink in
             await runtime.sendAndSpeak("synthetic")
