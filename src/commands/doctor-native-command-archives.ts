@@ -11,6 +11,7 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listExistingAgentDatabaseTargets } from "../infra/session-sqlite-migration-readers.js";
 import { restoreSessionWorktree } from "../sessions/session-worktree-lifecycle.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-maintenance-context.js";
 import { runDoctorAgentDatabaseOperation } from "./doctor-agent-database-operation.js";
 
@@ -94,7 +95,11 @@ export async function repairArchivedNativeCommandSources(params: {
   if (!maintenance?.ownsSchemaMaintenance) {
     throw new Error("Native command archive repair requires Doctor maintenance ownership.");
   }
-  maintenance.assertAdmission();
+  const assertOwner = () => {
+    maintenance.assertAdmission();
+    maintenance.assertDatabaseAccess(resolveOpenClawStateSqlitePath(params.env));
+  };
+  assertOwner();
   const findings = detectArchivedNativeCommandSources(params);
   const targets = new Map(
     listExistingAgentDatabaseTargets(params.cfg, params.env).map((target) => [
@@ -111,10 +116,6 @@ export async function repairArchivedNativeCommandSources(params: {
       skipped++;
       continue;
     }
-    const assertOwner = () => {
-      maintenance.assertAdmission();
-      maintenance.assertDatabaseAccess(target.sqlitePath);
-    };
     const scope = {
       agentId,
       sessionKey: finding.key,
