@@ -81,7 +81,7 @@ it("warns about archived native sources without changing manual archives or ordi
       }
 
       const findings = detectArchivedNativeCommandSources({ cfg, env: state.env });
-      expect(findings).toEqual([
+      expect(findings.map(({ target: _target, ...finding }) => finding)).toEqual([
         {
           key: "agent:main:discord:slash:user-1",
           sessionId: "agent:main:discord:slash:user-1",
@@ -215,6 +215,81 @@ it("requires maintenance custody and restores only exact internal sources withou
     },
   );
 });
+
+it.each(["absent", "different identity", "same identity"])(
+  "repairs the scanned custom store when the default store has %s for the same key",
+  async (defaultSource) => {
+    await withOpenClawTestState(
+      { scenario: "minimal", label: "doctor-native-archives-two-stores" },
+      async (state) => {
+        const storePath = state.path("custom", "sessions.json");
+        const cfg = { agents: { entries: { main: {} } }, session: { store: storePath } };
+        setRuntimeConfigSnapshot(cfg);
+        const sessionKey = "agent:main:discord:slash:two-store-user";
+        const defaultScope = {
+          agentId: "main",
+          sessionKey,
+          storePath: state.statePath("agents", "main", "sessions", "sessions.json"),
+          env: state.env,
+        };
+        const customScope = { ...defaultScope, storePath };
+        const ordinaryScope = {
+          ...defaultScope,
+          sessionKey: "agent:main:discord:channel:retained-archive",
+        };
+        const ordinaryEntry = {
+          sessionId: "ordinary",
+          updatedAt: 5,
+          archivedAt: 9,
+          delivery: { kind: "none" as const },
+        };
+        await replaceSessionEntry(ordinaryScope, ordinaryEntry);
+        const customEntry = {
+          sessionId: "custom-source",
+          updatedAt: 7,
+          label: "Custom store",
+          delivery: { kind: "none" as const },
+        };
+        await replaceSessionEntry(customScope, {
+          ...customEntry,
+          archivedAt: 10,
+          archiveReason: "manual",
+        });
+        const defaultEntry = {
+          sessionId: defaultSource === "same identity" ? "custom-source" : "default-source",
+          updatedAt: 8,
+          label: "Default store",
+          delivery: { kind: "none" as const },
+        };
+        if (defaultSource !== "absent") {
+          await replaceSessionEntry(defaultScope, {
+            ...defaultEntry,
+            archivedAt: 11,
+            archiveReason: "age-retention",
+          });
+        }
+        const expectedCount = defaultSource === "absent" ? 1 : 2;
+        const maintenance = createOpenClawDatabaseMaintenanceScope({
+          schemaMaintenance: true,
+          assertOwnerCurrent: () => {},
+          assertDatabaseAccess: () => {},
+        });
+        try {
+          await expect(
+            maintenance.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env })),
+          ).resolves.toEqual({ found: expectedCount, repaired: expectedCount, skipped: 0 });
+        } finally {
+          await maintenance.close();
+        }
+        expect(loadExactSessionEntryReadOnly(customScope)?.entry).toEqual(customEntry);
+        expect(loadExactSessionEntryReadOnly(defaultScope)?.entry).toEqual(
+          defaultSource === "absent" ? undefined : defaultEntry,
+        );
+        expect(loadExactSessionEntryReadOnly(ordinaryScope)?.entry).toEqual(ordinaryEntry);
+      },
+    );
+  },
+);
 
 it("omits native archive repair during updater Doctor but restores it in standalone Doctor", async () => {
   await withOpenClawTestState(
