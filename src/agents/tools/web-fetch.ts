@@ -758,7 +758,6 @@ async function fetchWebPayload(params: WebFetchRuntimeParams): Promise<Record<st
 export function createWebFetchTool(options?: {
   config?: OpenClawConfig;
   agentId?: string;
-  assertInvocationCurrent?: () => void;
   sandboxed?: boolean;
   sandboxRoot?: string;
   sandboxFsBridge?: SandboxFsBridge;
@@ -913,17 +912,17 @@ export function createWebFetchTool(options?: {
           (typeof result.title === "string" ? result.title.length : 0) -
           (typeof result.warning === "string" ? result.warning.length : 0);
         const { assessWebFetchQuality } = await import("./web-fetch-decision-quality.js");
-        return jsonResult(
-          await assessWebFetchQuality({
-            config,
-            readConfig: readQualityConfig,
-            agentId: options?.agentId,
-            signal,
-            assertInvocationCurrent: options?.assertInvocationCurrent,
-            maxChars: bodyMaxChars,
-            payload: result,
-          }),
-        );
+        const assessed = await assessWebFetchQuality({
+          config,
+          readConfig: readQualityConfig,
+          agentId: options?.agentId,
+          signal,
+          assertInvocationCurrent: assertCurrent,
+          maxChars: bodyMaxChars,
+          payload: result,
+        });
+        assertCurrent();
+        return jsonResult(assessed);
       } finally {
         clearProgressTimer();
       }
