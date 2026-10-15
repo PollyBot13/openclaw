@@ -26,7 +26,7 @@ function capacityFixture() {
       await retirement.promise;
       reservations.delete(client);
     },
-    retireIdle: () => store.close(),
+    retireIdle: (): Promise<void> => store.close(),
   });
   reservations.add(client);
   const options = captureSqliteWorkerOpen({
@@ -127,7 +127,7 @@ it("joins host drainage during reclamation without cycling through open admissio
   let draining: Promise<void> | undefined;
   try {
     const first = await broker.open(options, undefined, undefined, {
-      retireIdle: () => {
+      retireIdle: (): Promise<void> => {
         assert(first);
         const closing = first.close();
         draining = broker.close();
