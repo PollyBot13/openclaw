@@ -34,6 +34,7 @@ import {
 import {
   collectRelevantDoctorPluginIds,
   collectRelevantDoctorPluginIdsForTouchedPaths,
+  hasScopedProviderAuthAlias,
 } from "./doctor-contract-relevance.js";
 import type { PluginDoctorMigrationResourceCollectionParams } from "./doctor-migration-resources.js";
 import type { DoctorSessionRouteStateOwner } from "./doctor-session-route-state-owner-types.js";
@@ -111,23 +112,6 @@ type PluginDoctorRegistryParams = {
   historicalWebhookListeners?: boolean;
   startup?: boolean;
 };
-
-function hasScopedProviderAuthAlias(
-  record: PluginManifestRegistryRecord,
-  scopedProviderIds: ReadonlySet<string>,
-): boolean {
-  return Object.entries(record.providerAuthAliases ?? {}).some(([rawAlias, rawTarget]) => {
-    if (typeof rawTarget !== "string") {
-      return false;
-    }
-    const target = normalizeProviderId(rawTarget);
-    return (
-      scopedProviderIds.has(normalizeProviderId(rawAlias)) &&
-      target !== "" &&
-      record.providers.some((providerId) => normalizeProviderId(providerId) === target)
-    );
-  });
-}
 
 /** Include manifest-owned legacy roots for config repair, never session ownership. */
 export function collectDoctorConfigRepairPluginIds(
