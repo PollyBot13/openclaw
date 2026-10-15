@@ -26,6 +26,7 @@ import {
   captureOpenClawStateDatabaseReadAdmission,
   openClawStateDatabaseCache,
   publishOpenClawStateDatabaseWorkerAdmission,
+  assertPublishedOpenClawStateDatabaseLifecycle,
   registerOpenClawStateDatabaseAsyncResource,
   registerOpenClawStateDatabaseLifecycleListener,
 } from "./openclaw-state-db-cache.js";
@@ -700,6 +701,9 @@ function createSharedStateWorkerOwner() {
 }
 
 export function getOpenClawStateWorkerOwner() {
+  // The owner registers with and publishes into the cache that created it. A
+  // retired generation must neither install its owner nor drive the current one.
+  assertPublishedOpenClawStateDatabaseLifecycle();
   return resolveGlobalSingleton(
     Symbol.for("openclaw.sharedStateWorkerOwner"),
     createSharedStateWorkerOwner,
