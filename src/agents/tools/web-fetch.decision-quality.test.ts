@@ -7,6 +7,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { DecisionOutcome } from "../../decisions/types.js";
 import { wrapWebContent } from "../../security/external-content.js";
+import { createAgentToolExecutionBudget } from "../agent-tool-source-execution-guard.js";
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
@@ -83,6 +84,38 @@ afterEach(() => {
 });
 
 describe("web_fetch Decision page quality", () => {
+  it.each(["success", "failure"])(
+    "rejects a closed source scope after Decision %s without relying on signal abortion",
+    async (outcome) => {
+      let current = true;
+      const controller = new AbortController();
+      const budget = createAgentToolExecutionBudget({
+        signal: controller.signal,
+        abort: vi.fn(),
+        isCurrent: () => current,
+      });
+      mocks.evaluate.mockImplementationOnce(async () => {
+        current = false;
+        if (outcome === "failure") {
+          throw new Error("provider failure");
+        }
+        return answer(1);
+      });
+      const tool = createWebFetchTool({ config: config("apply"), agentId: "main" });
+      await expect(
+        budget.run(() =>
+          tool!.execute(
+            "closed-source",
+            { url: "https://example.com/closed-source" },
+            controller.signal,
+          ),
+        ),
+      ).rejects.toThrow("Agent tool execution scope is no longer active");
+      expect(controller.signal.aborted).toBe(false);
+      expect(mocks.evaluate).toHaveBeenCalledOnce();
+    },
+  );
+
   it("does not invoke the model without the web mode, consent, or a trusted agent", async () => {
     for (const [current, agentId] of [
       [config(), "main"],

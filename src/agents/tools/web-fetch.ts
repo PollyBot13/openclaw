@@ -433,7 +433,6 @@ async function buildWebFetchPayload(params: {
 export function createWebFetchTool(options?: {
   config?: OpenClawConfig;
   agentId?: string;
-  assertInvocationCurrent?: () => void;
   sandboxed?: boolean;
   sandboxRoot?: string;
   sandboxFsBridge?: SandboxFsBridge;
