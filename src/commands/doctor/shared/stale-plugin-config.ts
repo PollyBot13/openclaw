@@ -61,7 +61,7 @@ function collectPluginRegistryState(
     workspaceDir: workspaceDir ?? undefined,
     env: environment,
   }).manifestRegistry;
-  const knownIds = new Set(registry.plugins.map((plugin) => plugin.id));
+  const knownIds = new Set(registry.plugins.map((plugin) => normalizePluginPolicyId(plugin.id)));
   const knownContextEngineIds = new Set(
     registry.plugins
       .filter((plugin) => hasKind(plugin.kind, "context-engine"))

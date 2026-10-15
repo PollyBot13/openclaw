@@ -280,6 +280,22 @@ describe("doctor stale plugin config helpers", () => {
     expect(result.config.plugins?.slots).toBeUndefined();
   });
 
+  it("retains canonical policy for an installed mixed-case manifest owner", () => {
+    vi.mocked(manifestRegistry.loadPluginManifestRegistryCore).mockReturnValue({
+      plugins: [manifest("MiXeD-owner")],
+      diagnostics: [],
+    });
+    const cfg: OpenClawConfig = {
+      plugins: {
+        allow: ["mixed-owner"],
+        deny: ["mixed-owner"],
+        entries: { "mixed-owner": { enabled: true, config: { retained: true } } },
+      },
+    };
+    expect(scanStalePluginConfig(cfg)).toEqual([]);
+    expect(maybeRepairStalePluginConfig(cfg).config).toEqual(cfg);
+  });
+
   it.each(["context-engine", ["memory", "context-engine"]] as const)(
     "preserves declared engine slots without treating engine IDs as plugin policy IDs (%s)",
     (kind) => {
