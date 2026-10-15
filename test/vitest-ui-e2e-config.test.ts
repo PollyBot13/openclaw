@@ -42,6 +42,7 @@ const realGatewayFiles = [
   "chat-composer-websearch-kill-switch.real-gateway",
   "chat-flow.catalog-bootstrap",
   "chat-loading-performance.real-gateway",
+  "chat-managed-media-order.real-gateway",
   "chat-project-media.real-gateway",
   "chat-session-diff-folding.real-gateway",
   "chat-stop-finished-run.real-gateway",
@@ -68,6 +69,7 @@ const realGatewayFiles = [
   "session-pr-reader-lifetime.real-gateway",
   "session-progress-hovercard.real-gateway",
   "session-roster-request-rate.real-gateway",
+  "sidebar-running-counts.real-gateway",
   "usage-sessions-owner-attribution",
   "worker-initial-setup.real-gateway",
 ]
@@ -447,6 +449,13 @@ describe("Control UI E2E resource ownership", () => {
           fileParallelism: false,
         },
         {
+          file: "ui/src/e2e/chat-managed-media-order.real-gateway.e2e.test.ts",
+          project: "ui-e2e-serial-standalone",
+          phase: 1,
+          workers: 1,
+          fileParallelism: false,
+        },
+        {
           file: "ui/src/e2e/chat-session-diff-folding.real-gateway.e2e.test.ts",
           project: "ui-e2e-serial-standalone",
           phase: 1,
@@ -519,6 +528,13 @@ describe("Control UI E2E resource ownership", () => {
         {
           file: "ui/src/e2e/session-roster-request-rate.real-gateway.e2e.test.ts",
           project: "ui-e2e-serial-standalone",
+          phase: 1,
+          workers: 1,
+          fileParallelism: false,
+        },
+        {
+          file: "ui/src/e2e/sidebar-running-counts.real-gateway.e2e.test.ts",
+          project: "ui-e2e-serial",
           phase: 1,
           workers: 1,
           fileParallelism: false,
