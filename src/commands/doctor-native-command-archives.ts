@@ -9,13 +9,17 @@ import {
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { listExistingAgentDatabaseTargets } from "../infra/session-sqlite-migration-readers.js";
+import {
+  listExistingAgentDatabaseTargets,
+  type ExistingAgentDatabaseTarget,
+} from "../infra/session-sqlite-migration-readers.js";
 import { restoreSessionWorktree } from "../sessions/session-worktree-lifecycle.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-maintenance-context.js";
 import { runDoctorAgentDatabaseOperation } from "./doctor-agent-database-operation.js";
 
 type ArchivedCommandSource = {
+  target: ExistingAgentDatabaseTarget;
   key: string;
   sessionId: string;
   reason: string;
@@ -57,6 +61,7 @@ export function detectArchivedNativeCommandSources(params: {
         continue;
       }
       findings.push({
+        target,
         key: sessionKey,
         sessionId: entry.sessionId,
         reason: entry.archiveReason ?? "unknown",
@@ -101,25 +106,13 @@ export async function repairArchivedNativeCommandSources(params: {
   };
   assertOwner();
   const findings = detectArchivedNativeCommandSources(params);
-  const targets = new Map(
-    listExistingAgentDatabaseTargets(params.cfg, params.env).map((target) => [
-      target.agentId,
-      target,
-    ]),
-  );
   let repaired = 0;
   let skipped = 0;
   for (const finding of findings) {
-    const agentId = finding.key.split(":")[1]!;
-    const target = targets.get(agentId);
-    if (!target) {
-      skipped++;
-      continue;
-    }
     const scope = {
-      agentId,
+      agentId: finding.target.agentId,
       sessionKey: finding.key,
-      storePath: target.storePath,
+      storePath: finding.target.storePath,
       env: params.env,
     };
     try {
