@@ -77,6 +77,7 @@ export async function reclaimSqliteWorkerClient(
   isClosing: () => boolean,
 ): Promise<void> {
   const assertCurrent = () => {
+    options.signal?.throwIfAborted();
     options.assertCurrent?.();
     if (isClosing()) {
       throw new SqliteWorkerError("SQLite worker host is closing", "closed");
@@ -105,7 +106,6 @@ export function captureSqliteWorkerOpen(
 ): PreparedSqliteWorkerOpen {
   const { createAdmission, preparation, retireIdle, ...native } = custody;
   const inCaller = AsyncLocalStorage.snapshot();
-  const inIdleOwner = retireIdle ? AsyncLocalStorage.snapshot() : undefined;
   const ownedAdmission = options.admission;
   const checkOpening = ownedAdmission
     ? () => {
@@ -127,7 +127,7 @@ export function captureSqliteWorkerOpen(
   const carrierUrl = options.runtimeGeneration?.resolve(carrier) ?? carrier;
   return {
     ...native,
-    retireIdle: retireIdle && inIdleOwner ? () => inIdleOwner(retireIdle) : undefined,
+    retireIdle: retireIdle ? () => inCaller(retireIdle) : undefined,
     maintenanceScope: custody.maintenanceScope ?? getOpenClawDatabaseMaintenanceScope(),
     ...(preparation !== undefined ? { preparation: serialize(preparation) } : {}),
     runtimeGeneration: options.runtimeGeneration,

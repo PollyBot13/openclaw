@@ -87,20 +87,11 @@ export function createSqliteWorkerClient<Operations extends SqliteWorkerOperatio
             return undefined;
           }
           reclaiming = true;
-          let retirement: Promise<void> | undefined;
           try {
-            retirement = owner.retireIdle?.();
-          } catch (error) {
+            return owner.retireIdle?.();
+          } finally {
             reclaiming = false;
-            throw error;
           }
-          if (!retirement) {
-            reclaiming = false;
-            return undefined;
-          }
-          return retirement.finally(() => {
-            reclaiming = false;
-          });
         }
       : undefined,
     sealed: owner.isDraining(),
@@ -161,10 +152,12 @@ export function createSqliteWorkerClient<Operations extends SqliteWorkerOperatio
     close: () => {
       if (!closed) {
         client.sealed = true;
+        // The idle owner seals synchronously; carry that close mode through settlement.
+        const reclaimingIdle = reclaiming;
         closed = (async () => {
           await Promise.allSettled(client.scopes);
           await Promise.allSettled(pending);
-          await owner.release(reclaiming);
+          await owner.release(reclaimingIdle);
         })().catch((error: unknown) => {
           closed = undefined;
           throw error;
