@@ -387,10 +387,10 @@ describe("doctor-contract-registry selection", () => {
       doctorContract: { configRepair: true },
     });
     const config = { plugins: { entries: { "mixed-upgrade-proof": { enabled: true } } } };
-    const result = applyPluginDoctorCompatibilityMigrations(config, {
+    const result = harness.registry.applyPluginDoctorCompatibilityMigrations(config, {
       config,
       env: {},
-      pluginIds: collectRelevantDoctorPluginIds(config),
+      pluginIds: harness.registry.collectRelevantDoctorPluginIds(config),
     });
     expect(result.changes).toEqual(["mixed-case owner repaired config"]);
     expect(result.config).toHaveProperty("repairedBy", "MiXeD-upgrade-proof");
