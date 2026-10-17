@@ -32,7 +32,6 @@ vi.mock("../../packages/terminal-core/src/note.js", async (importOriginal) => ({
 import { beginDoctorMaintenance } from "./doctor-maintenance.js";
 import {
   detectArchivedNativeCommandSources,
-  noteArchivedNativeCommandSources,
   repairArchivedNativeCommandSources,
 } from "./doctor-native-command-archives.js";
 
@@ -48,6 +47,19 @@ function nativeArchiveContribution() {
     runGatewayAuthHealth: noop,
     runLegacyStateHealth: noop,
   }).find((candidate) => candidate.id === "doctor:native-command-archives")!;
+}
+
+async function withSyntheticMaintenance<T>(run: () => Promise<T>): Promise<T> {
+  const maintenance = createOpenClawDatabaseMaintenanceScope({
+    schemaMaintenance: true,
+    assertOwnerCurrent: () => {},
+    assertDatabaseAccess: () => {},
+  });
+  try {
+    return await maintenance.run(run);
+  } finally {
+    await maintenance.close();
+  }
 }
 
 it("warns about archived native sources without changing manual archives or ordinary conversations", async () => {
@@ -103,19 +115,16 @@ it("warns about archived native sources without changing manual archives or ordi
           reason: "unknown",
         },
       ]);
-      noteArchivedNativeCommandSources({ cfg, env: state.env });
-      expect(note).toHaveBeenCalledWith(
-        expect.stringContaining("Control UI → Sessions → Archived"),
-        "Archived native commands",
-      );
-      const contribution = nativeArchiveContribution();
-      expect(contribution.updateWork).toEqual({ kind: "standalone" });
-      await contribution.run(
+      await nativeArchiveContribution().run(
         createDoctorHealthFlowContext({
           cfg,
           env: state.env,
           options: { yes: true },
         }),
+      );
+      expect(note).toHaveBeenCalledWith(
+        expect.stringContaining("Control UI → Sessions → Archived"),
+        "Archived native commands",
       );
       for (const [sessionKey, fields] of entries) {
         expect(
@@ -129,88 +138,101 @@ it("warns about archived native sources without changing manual archives or ordi
   );
 });
 
-it("requires maintenance custody and restores only exact internal sources without rotating identity", async () => {
+it("requires real Doctor custody and restores only exact internal sources without rotating identity", async () => {
   await withOpenClawTestState(
-    { scenario: "minimal", label: "doctor-native-archives-repair" },
+    { scenario: "external-service", label: "doctor-native-archives-repair" },
     async (state) => {
+      note.mockClear();
       const cfg = { agents: { entries: { main: {} } } };
+      await state.writeConfig(cfg);
       setRuntimeConfigSnapshot(cfg);
-      const entries = [
-        ["agent:main:discord:slash:user-1", { archivedAt: 10, archiveReason: "manual" }],
-        ["agent:main:slack:slash:user-2", { archivedAt: 11, archiveReason: "age-retention" }],
-        ["agent:main:discord:channel:room-1", { archivedAt: 12 }],
-        ["agent:main:discord:slash:user-3", { archivedAt: 13, pluginOwnerId: "owner" }],
-        ["agent:main:discord:slash:user-4", {}],
-        [
-          "agent:main:discord:slash:user-5",
-          {
-            archivedAt: 14,
-            worktree: { id: "missing", branch: "fixture", repoRoot: "/missing-repo" },
-          },
-        ],
-      ] as const;
-      for (const [sessionKey, fields] of entries) {
-        await replaceSessionEntry(
-          { agentId: "main", sessionKey, env: state.env },
-          { sessionId: `id:${sessionKey}`, updatedAt: 7, ...fields },
-        );
-      }
-      const before = new Map(
-        entries.map(
-          ([sessionKey]) =>
-            [
-              sessionKey,
-              loadExactSessionEntryReadOnly({ agentId: "main", sessionKey, env: state.env })?.entry,
-            ] as const,
-        ),
-      );
       const params = { cfg, env: state.env };
       await expect(repairArchivedNativeCommandSources(params)).rejects.toThrow(
         "requires Doctor maintenance ownership",
       );
-      const maintenance = createOpenClawDatabaseMaintenanceScope({
-        schemaMaintenance: true,
-        assertOwnerCurrent: () => {},
-        assertDatabaseAccess: () => {},
+      const maintenance = await beginDoctorMaintenance({
+        root: null,
+        options: { repair: true, nonInteractive: true },
+        runtime: {
+          log: () => {},
+          error: () => {},
+          exit: (code) => {
+            throw new Error(`Unexpected exit ${code}`);
+          },
+        },
       });
-      try {
-        await expect(
-          maintenance.run(() =>
-            nativeArchiveContribution().run(
-              createDoctorHealthFlowContext({
-                cfg,
-                env: state.env,
-                options: { repair: true },
-              }),
-            ),
-          ),
-        ).resolves.toBeUndefined();
-      } finally {
-        await maintenance.close();
+      if (!maintenance) {
+        throw new Error("Expected standalone Doctor maintenance");
       }
-      expect(note).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "Found 3 archived native-command source session(s); restored 2, skipped 1",
-        ),
-        "Archived native commands",
-      );
-      for (const [sessionKey, fields] of entries) {
-        const entry = loadExactSessionEntryReadOnly({
-          agentId: "main",
-          sessionKey,
-          env: state.env,
-        })?.entry;
-        const expected = { ...before.get(sessionKey) };
-        if (
-          sessionKey.includes(":slash:") &&
-          !("pluginOwnerId" in fields) &&
-          !("worktree" in fields)
-        ) {
-          delete expected.archivedAt;
-          delete expected.archivedBy;
-          delete expected.archiveReason;
-        }
-        expect(entry).toEqual(expected);
+      try {
+        await maintenance.run(async () => {
+          const entries = [
+            ["agent:main:discord:slash:user-1", { archivedAt: 10, archiveReason: "manual" }],
+            ["agent:main:slack:slash:user-2", { archivedAt: 11, archiveReason: "age-retention" }],
+            ["agent:main:discord:channel:room-1", { archivedAt: 12 }],
+            ["agent:main:discord:slash:user-3", { archivedAt: 13, pluginOwnerId: "owner" }],
+            ["agent:main:discord:slash:user-4", {}],
+            [
+              "agent:main:discord:slash:user-5",
+              {
+                archivedAt: 14,
+                worktree: { id: "missing", branch: "fixture", repoRoot: "/missing-repo" },
+              },
+            ],
+          ] as const;
+          for (const [sessionKey, fields] of entries) {
+            await replaceSessionEntry(
+              { agentId: "main", sessionKey, env: state.env },
+              { sessionId: `id:${sessionKey}`, updatedAt: 7, ...fields },
+            );
+          }
+          const before = new Map(
+            entries.map(
+              ([sessionKey]) =>
+                [
+                  sessionKey,
+                  loadExactSessionEntryReadOnly({ agentId: "main", sessionKey, env: state.env })
+                    ?.entry,
+                ] as const,
+            ),
+          );
+          await expect(
+            repairArchivedNativeCommandSources({
+              cfg,
+              env: { ...state.env, OPENCLAW_STATE_DIR: state.path("foreign-state") },
+            }),
+          ).rejects.toThrow("does not own this database");
+          await nativeArchiveContribution().run(
+            createDoctorHealthFlowContext({
+              cfg,
+              env: state.env,
+              options: { repair: true },
+            }),
+          );
+          expect(note).toHaveBeenCalledWith(
+            expect.stringContaining(
+              "Found 3 archived native-command source session(s); restored 2, skipped 1",
+            ),
+            "Archived native commands",
+          );
+          for (const [sessionKey, fields] of entries) {
+            const expected = { ...before.get(sessionKey) };
+            if (
+              sessionKey.includes(":slash:") &&
+              !("pluginOwnerId" in fields) &&
+              !("worktree" in fields)
+            ) {
+              delete expected.archivedAt;
+              delete expected.archivedBy;
+              delete expected.archiveReason;
+            }
+            expect(
+              loadExactSessionEntryReadOnly({ agentId: "main", sessionKey, env: state.env })?.entry,
+            ).toEqual(expected);
+          }
+        });
+      } finally {
+        await maintenance.release();
       }
     },
   );
@@ -269,18 +291,11 @@ it.each(["absent", "different identity", "same identity"])(
           });
         }
         const expectedCount = defaultSource === "absent" ? 1 : 2;
-        const maintenance = createOpenClawDatabaseMaintenanceScope({
-          schemaMaintenance: true,
-          assertOwnerCurrent: () => {},
-          assertDatabaseAccess: () => {},
-        });
-        try {
-          await expect(
-            maintenance.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env })),
-          ).resolves.toEqual({ found: expectedCount, repaired: expectedCount, skipped: 0 });
-        } finally {
-          await maintenance.close();
-        }
+        await expect(
+          withSyntheticMaintenance(() =>
+            repairArchivedNativeCommandSources({ cfg, env: state.env }),
+          ),
+        ).resolves.toEqual({ found: expectedCount, repaired: expectedCount, skipped: 0 });
         expect(loadExactSessionEntryReadOnly(customScope)?.entry).toEqual(customEntry);
         expect(loadExactSessionEntryReadOnly(defaultScope)?.entry).toEqual(
           defaultSource === "absent" ? undefined : defaultEntry,
@@ -306,42 +321,30 @@ it("omits native archive repair during updater Doctor but restores it in standal
         archivedAt: 10,
         archiveReason: "manual",
       });
-      const maintenance = createOpenClawDatabaseMaintenanceScope({
-        schemaMaintenance: true,
-        assertOwnerCurrent: () => {},
-        assertDatabaseAccess: () => {},
-      });
-      try {
-        await maintenance.run(() =>
-          runDoctorHealthContributionList(
-            createDoctorHealthFlowContext({
-              cfg,
-              env: { ...state.env, OPENCLAW_UPDATE_IN_PROGRESS: "1" },
-              options: { repair: true },
-            }),
-            [nativeArchiveContribution()],
-          ),
+      await withSyntheticMaintenance(async () => {
+        await runDoctorHealthContributionList(
+          createDoctorHealthFlowContext({
+            cfg,
+            env: { ...state.env, OPENCLAW_UPDATE_IN_PROGRESS: "1" },
+            options: { repair: true },
+          }),
+          [nativeArchiveContribution()],
         );
         expect(loadExactSessionEntryReadOnly(scope)?.entry.archivedAt).toBe(10);
         expect(note).toHaveBeenCalledWith(
           expect.stringContaining("Omitted during update: Native command archives"),
           "Update Doctor scope",
         );
-
-        await maintenance.run(() =>
-          runDoctorHealthContributionList(
-            createDoctorHealthFlowContext({ cfg, env: state.env, options: { repair: true } }),
-            [nativeArchiveContribution()],
-          ),
+        await runDoctorHealthContributionList(
+          createDoctorHealthFlowContext({ cfg, env: state.env, options: { repair: true } }),
+          [nativeArchiveContribution()],
         );
         expect(loadExactSessionEntryReadOnly(scope)?.entry).toMatchObject({
           sessionId: "updater-source",
           updatedAt: 7,
         });
         expect(loadExactSessionEntryReadOnly(scope)?.entry.archivedAt).toBeUndefined();
-      } finally {
-        await maintenance.close();
-      }
+      });
     },
   );
 });
@@ -396,28 +399,14 @@ it("restores a managed archived worktree while preserving the transcript and ses
         worktree: { id: record.id, branch: record.branch, repoRoot },
       });
       const before = loadExactSessionEntryReadOnly(scope)?.entry;
-      expect(before).toMatchObject({
-        sessionId,
-        updatedAt: 7,
-        archivedAt: 10,
-        worktree: { id: record.id, branch: record.branch, repoRoot },
-      });
-      const maintenance = createOpenClawDatabaseMaintenanceScope({
-        schemaMaintenance: true,
-        assertOwnerCurrent: () => {},
-        assertDatabaseAccess: () => {},
-      });
-      try {
-        await maintenance.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env }));
-      } finally {
-        await maintenance.close();
-      }
+      await withSyntheticMaintenance(() =>
+        repairArchivedNativeCommandSources({ cfg, env: state.env }),
+      );
       const after = loadExactSessionEntryReadOnly(scope)?.entry;
       const expected = { ...before };
       delete expected.archivedAt;
       delete expected.archiveReason;
       expect(after).toEqual(expected);
-      expect(after?.archivedAt).toBeUndefined();
       expect(loadTranscriptEventsSync(transcriptScope)).toEqual(transcriptBefore);
       expect(await fs.readFile(path.join(record.path, "draft.txt"), "utf8")).toBe(
         "retained worktree draft\n",
@@ -452,80 +441,21 @@ it("leaves a source archived when its lifecycle revision changes after the scan"
           });
           return () => {};
         });
-      const maintenance = createOpenClawDatabaseMaintenanceScope({
-        schemaMaintenance: true,
-        assertOwnerCurrent: () => {},
-        assertDatabaseAccess: () => {},
-      });
       try {
         await expect(
-          maintenance.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env })),
+          withSyntheticMaintenance(() =>
+            repairArchivedNativeCommandSources({ cfg, env: state.env }),
+          ),
         ).resolves.toEqual({ found: 1, repaired: 0, skipped: 1 });
         expect(restore).toHaveBeenCalledOnce();
       } finally {
         restore.mockRestore();
-        await maintenance.close();
       }
       expect(loadExactSessionEntryReadOnly(scope)?.entry).toMatchObject({
         sessionId: "stale-source",
         archivedAt: 10,
         lifecycleRevision: "revision-2",
       });
-    },
-  );
-});
-
-it("repairs an agent archive under real standalone Doctor maintenance", async () => {
-  await withOpenClawTestState(
-    { scenario: "external-service", label: "doctor-native-real-owner" },
-    async (state) => {
-      const cfg = { agents: { entries: { main: {} } } };
-      await state.writeConfig(cfg);
-      setRuntimeConfigSnapshot(cfg);
-      const sessionKey = "agent:main:discord:slash:real-owner";
-      const scope = { agentId: "main", sessionKey, env: state.env };
-      const maintenance = await beginDoctorMaintenance({
-        root: null,
-        options: { repair: true, nonInteractive: true },
-        runtime: {
-          log: () => {},
-          error: () => {},
-          exit: (code) => {
-            throw new Error(`Unexpected exit ${code}`);
-          },
-        },
-      });
-      expect(maintenance).toBeDefined();
-      try {
-        await maintenance!.run(() =>
-          replaceSessionEntry(scope, {
-            sessionId: "real-owner",
-            updatedAt: 7,
-            archivedAt: 10,
-            archiveReason: "manual",
-          }),
-        );
-        const before = maintenance!.run(() => loadExactSessionEntryReadOnly(scope)!.entry);
-        await expect(
-          maintenance!.run(() =>
-            repairArchivedNativeCommandSources({
-              cfg,
-              env: { ...state.env, OPENCLAW_STATE_DIR: state.path("foreign-state") },
-            }),
-          ),
-        ).rejects.toThrow("does not own this database");
-        await expect(
-          maintenance!.run(() => repairArchivedNativeCommandSources({ cfg, env: state.env })),
-        ).resolves.toEqual({ found: 1, repaired: 1, skipped: 0 });
-        const expected = { ...before };
-        delete expected.archivedAt;
-        delete expected.archiveReason;
-        expect(maintenance!.run(() => loadExactSessionEntryReadOnly(scope)?.entry)).toEqual(
-          expected,
-        );
-      } finally {
-        await maintenance!.release();
-      }
     },
   );
 });
