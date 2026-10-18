@@ -493,11 +493,9 @@ class LocalSqliteSnapshotProvider {
     }
     assertDirectory(repositoryStat, this.#repositoryPath, "SQLite snapshot repository");
 
-    const gitMetadataPath = path.join(this.#repositoryPath, ".git");
-    const gitMetadataStat = await lstatIfExists(gitMetadataPath);
-    if (gitMetadataStat?.isDirectory() && !gitMetadataStat.isSymbolicLink()) {
+    if ((await lstatIfExists(path.join(this.#repositoryPath, ".git")))?.isDirectory()) {
       throw new Error(
-        `Git backup repository is not a SQLite snapshot repository: ${this.#repositoryPath}. Use \`openclaw backup git log --repository <path>\` instead.`,
+        `Git backup repository is not a SQLite snapshot repository: ${this.#repositoryPath}. Use \`openclaw backup git log --repository ${this.#repositoryPath}\` instead.`,
       );
     }
 
