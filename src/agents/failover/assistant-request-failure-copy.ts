@@ -90,6 +90,13 @@ const ASSISTANT_REQUEST_FAILURE_COPY = {
   unknown: "",
 } satisfies Record<FailoverReason, string>;
 
+/** Plain storage copy for length-limited surfaces such as session rows. */
+export function renderStorageFailureSummary(
+  storageFailure: GatewayStorageFailure | undefined,
+): string | undefined {
+  return storageFailure ? STORAGE_FAILURE_COPY[storageFailure] : undefined;
+}
+
 /** Render classified facts without exposing raw provider response text. */
 export function renderAssistantRequestFailureCopy(
   facts: AssistantRequestFailureCopyFacts,
@@ -109,7 +116,7 @@ export function renderAssistantRequestFailureCopy(
     return `⚠️ ${copy}`;
   }
   const hasStatus =
-    typeof facts.status === "number" &&
+    facts.status !== undefined &&
     Number.isInteger(facts.status) &&
     facts.status >= 100 &&
     facts.status <= 599;
@@ -146,6 +153,11 @@ export function renderFormatErrorCopy(raw: string): string {
   }
   if (isSessionTranscriptValidationErrorMessage(candidate)) {
     return "OpenClaw couldn't read this conversation's history. Ask the Gateway operator to try `openclaw doctor --fix`. If it still fails, preserve the history and contact support with the Gateway logs.";
+  }
+  const embeddingModel = candidate.match(/^"([\w./:-]{1,200})" does not support chat$/u)?.[1];
+  if (embeddingModel) {
+    const model = escapeMarkdownText(redactSensitiveText(embeddingModel, { mode: "tools" }));
+    return `${model} is an embedding model and cannot chat; pick a chat model with /model (or remove it from models.providers.ollama.models).`;
   }
   if (PROVIDER_CACHE_CONTROL_LIMIT_RE.test(candidate)) {
     return "The AI service couldn't accept this conversation. Start a new conversation with /new, or choose another model in the Control UI.";

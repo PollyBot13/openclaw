@@ -280,6 +280,7 @@ export function dispatchClaudeCliStreamingToolEvent(params: {
     ) {
       const block = event.content_block;
       const previous = tracker.pendingByIndex.get(event.index);
+      tracker.pendingByIndex.delete(event.index);
       const nextToolCallId = typeof block.id === "string" ? block.id.trim() : "";
       if (previous && previous.toolCallId !== nextToolCallId) {
         tracker.inputProgressById.delete(previous.toolCallId);
@@ -376,7 +377,7 @@ export function dispatchClaudeCliStreamingToolEvent(params: {
   }
 }
 
-type ThinkingTracker = {
+export type ThinkingTracker = {
   currentMessageId?: string;
   // Thinking text already streamed via thinking_delta, keyed by the Anthropic
   // content-block index. Snapshot frames repeat streamed thinking, so each block
@@ -392,16 +393,6 @@ type ThinkingTracker = {
   nextSyntheticBlockIndex: number;
   progressTokens: number;
 };
-
-export function createThinkingTracker(): ThinkingTracker {
-  return {
-    streamedByIndex: new Map(),
-    highestStreamedIndex: Number.NEGATIVE_INFINITY,
-    emittedText: "",
-    nextSyntheticBlockIndex: 0,
-    progressTokens: 0,
-  };
-}
 
 function resetThinkingBlockState(tracker: ThinkingTracker): void {
   tracker.streamedByIndex.clear();

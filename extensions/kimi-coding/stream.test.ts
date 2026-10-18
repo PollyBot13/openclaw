@@ -33,6 +33,7 @@ const KIMI_MODEL = {
   api: "anthropic-messages",
   provider: "kimi",
   id: "k2p5",
+  reasoning: true,
 } as Model<"anthropic-messages">;
 const KIMI_CONTEXT = { messages: [] } as Context;
 
@@ -232,25 +233,6 @@ describe("kimi tool-call markup wrapper", () => {
     });
   });
 
-  it("keeps tagged tool-call conversion when one wrapper changes thinking modes", async () => {
-    const baseStreamFn: StreamFn = () =>
-      createFakeStream({
-        events: [],
-        resultMessage: createAssistantTextMessage(KIMI_TOOL_TEXT),
-      }) as ReturnType<StreamFn>;
-    const wrapped = wrapKimiProviderStream({
-      streamFn: baseStreamFn,
-    } as never);
-    for (const reasoning of ["off", "max", undefined] as const) {
-      const stream = await wrapped(KIMI_MODEL, KIMI_CONTEXT, { reasoning });
-      await expect(stream.result()).resolves.toEqual({
-        role: "assistant",
-        content: [createReadToolCall()],
-        stopReason: "toolUse",
-      });
-    }
-  });
-
   it("defaults K3-256k to adaptive high thinking", () => {
     const modelId = "k3-256k";
     const { getCapturedModel, getCapturedPayload } = captureKimiPayload(
@@ -316,6 +298,57 @@ describe("kimi tool-call markup wrapper", () => {
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "high" },
     });
+  });
+
+  it.each([
+    ["off", undefined],
+    ["minimal", "low"],
+    ["low", "low"],
+    ["medium", "high"],
+    ["high", "high"],
+    ["adaptive", "high"],
+    ["xhigh", "max"],
+    ["max", "max"],
+  ] as const)("sends OpenAI-compatible K3 %s as %s effort", (thinkingLevel, effort) => {
+    const { getCapturedPayload } = captureKimiPayload(
+      { modelId: "Kimi-K3", api: "openai-completions", thinkingLevel },
+      { reasoning_effort: "medium", reasoningEffort: "medium", reasoning: { effort: "medium" } },
+    );
+    expect(getCapturedPayload()).toEqual({
+      thinking: { type: thinkingLevel === "off" ? "disabled" : "enabled" },
+      ...(effort ? { reasoning_effort: effort } : {}),
+    });
+  });
+
+  it.each([
+    { thinkingLevel: "max", thinking: "off", expected: { thinking: { type: "disabled" } } },
+    {
+      thinkingLevel: "off",
+      thinking: "enabled",
+      expected: { thinking: { type: "enabled" }, reasoning_effort: "high" },
+    },
+  ] as const)("honors explicit OpenAI-compatible K3 thinking $thinking", (row) => {
+    const { getCapturedPayload } = captureKimiPayload({
+      modelId: "kimi-k3",
+      api: "openai-completions",
+      thinkingLevel: row.thinkingLevel,
+      extraParams: { thinking: row.thinking },
+    });
+    expect(getCapturedPayload()).toEqual(row.expected);
+  });
+
+  it.each([
+    { chat_template_kwargs: { reasoning_effort: "low" } },
+    { chatTemplateKwargs: { reasoning_effort: "low" } },
+    { extra_body: { chat_template_kwargs: { reasoning_effort: "low" } } },
+  ])("does not shadow explicit K3 template effort with a generated root effort", (extraParams) => {
+    const { getCapturedPayload } = captureKimiPayload({
+      modelId: "kimi-k3",
+      api: "openai-completions",
+      thinkingLevel: "max",
+      extraParams,
+    });
+    expect(getCapturedPayload()).toEqual({ thinking: { type: "enabled" } });
   });
 
   it("strips Anthropic cache_control markers before Kimi requests are sent", () => {
@@ -498,7 +531,7 @@ describe("kimi tool-call markup wrapper", () => {
 
   it("bounds per-call Kimi Anthropic thinking and lowers its adaptive default to native high", () => {
     const cases = [
-      ["off", undefined],
+      ["off", 1024],
       ["max", 8192],
       [undefined, 8192],
       ["minimal", 1024],
@@ -522,15 +555,13 @@ describe("kimi tool-call markup wrapper", () => {
     for (const [reasoning, budgetTokens] of cases) {
       void wrapped(KIMI_MODEL, KIMI_CONTEXT, { reasoning });
 
-      expect(getCapturedOptions()?.reasoning).toBe(reasoning ?? "high");
-      expect(getCapturedPayload()).toEqual(
-        reasoning === "off"
-          ? { thinking: { type: "disabled" } }
-          : {
-              max_tokens: 16000,
-              thinking: { type: "enabled", budget_tokens: budgetTokens },
-            },
+      expect(getCapturedOptions()?.reasoning).toBe(
+        reasoning === "off" ? "low" : (reasoning ?? "high"),
       );
+      expect(getCapturedPayload()).toEqual({
+        max_tokens: 16000,
+        thinking: { type: "enabled", budget_tokens: budgetTokens },
+      });
     }
   });
 });

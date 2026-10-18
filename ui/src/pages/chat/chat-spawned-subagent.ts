@@ -17,6 +17,8 @@ export type SubagentRoster = {
   subagentSessions?: readonly GatewaySessionRow[];
   /** True once the pane's own child query answered; seeded rows can be partial. */
   subagentSessionsHydrated?: boolean;
+  /** A newly named child is still awaiting a covering read before the wait can count it. */
+  subagentSessionsPending?: boolean;
   /**
    * True once the pane's own child query answered at least once. Seeded rows
    * take ancestry from the broad list, which outlives the child-link retention.
@@ -103,7 +105,7 @@ function finishedRuntimeMs(row: GatewaySessionRow): number | null {
     : null;
 }
 
-function endedWithoutFinishing(row: GatewaySessionRow): "failed" | "stopped" | undefined {
+export function endedWithoutFinishing(row: GatewaySessionRow): "failed" | "stopped" | undefined {
   if (row.status === "failed" || row.status === "timeout") {
     return "failed";
   }
