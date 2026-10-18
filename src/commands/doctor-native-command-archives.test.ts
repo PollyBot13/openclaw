@@ -369,11 +369,15 @@ it("restores a managed archived worktree while preserving the transcript and ses
         ownerId: sessionKey,
       });
       await fs.writeFile(path.join(record.path, "draft.txt"), "retained worktree draft\n");
-      await new ManagedWorktreeService({ env: state.env, now: () => 2 }).remove({
+      await new ManagedWorktreeService({ env: state.env }).remove({
         id: record.id,
         reason: "archive fixture",
       });
-      expect(getRegistryWorktree(state.env, record.id)?.removedAt).toBe(2);
+      expect(getRegistryWorktree(state.env, record.id)).toMatchObject({
+        removedAt: expect.any(Number),
+        snapshotRef: expect.any(String),
+      });
+      await expect(fs.stat(record.path)).rejects.toMatchObject({ code: "ENOENT" });
       await replaceSessionEntry(scope, {
         sessionId,
         updatedAt: 7,
