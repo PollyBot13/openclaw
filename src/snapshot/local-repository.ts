@@ -495,7 +495,7 @@ class LocalSqliteSnapshotProvider {
 
     if ((await lstatIfExists(path.join(this.#repositoryPath, ".git")))?.isDirectory()) {
       throw new Error(
-        `Git backup repository is not a SQLite snapshot repository: ${this.#repositoryPath}. Use \`openclaw backup git log --repository ${this.#repositoryPath}\` instead.`,
+        `Git backup repository is not a SQLite snapshot repository: ${this.#repositoryPath}. Use \`openclaw backup git log --repository <path>\` instead.`,
       );
     }
 
