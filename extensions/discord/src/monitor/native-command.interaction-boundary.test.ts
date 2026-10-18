@@ -284,7 +284,7 @@ it("provides recovery guidance for an archived slash source without changing its
   expect(archived).toMatchObject({ sessionId, archivedAt: 2 });
   const transcript = sessionStore.loadTranscriptEventsSync({ ...source, sessionId });
   expect(JSON.stringify(transcript)).toContain("Synthetic archived history");
-  const harness = createHarness(cfg);
+  harness = createHarness(cfg);
   harness.dispatch.mockRestore();
   harness.session.mockRestore();
   await withRegisteredChannelIngress(
@@ -339,7 +339,6 @@ it.each([
     `Session "agent:main:discord:channel:${CHANNEL}" is archived. Restore it before starting new work.`,
   ],
 ])("leaves %s reporting to the transport dispatcher", async (_case, message) => {
-  const harness = createHarness();
   harness.dispatch.mockRejectedValueOnce(new Error(message));
   await expect(
     harness.client.handleInteraction(
