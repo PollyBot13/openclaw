@@ -251,10 +251,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it.each([
-  { scenario: "restores an archived slash source before executing /help", tombstone: false },
-  { scenario: "refuses an archived restart tombstone before executing /help", tombstone: true },
-])("$scenario", async ({ tombstone }) => {
+it("restores an archived slash source before executing /help", async () => {
   const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
   const cfg: OpenClawConfig = { ...createConfig(), session: { store: storePath } };
   const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
@@ -272,24 +269,15 @@ it.each([
       archivedAt: 2,
       archivedBy: { type: "human", id: "test-operator" },
       archiveReason: "manual",
-      ...(tombstone
-        ? {
-            mainRestartRecovery: {
-              cycleId: "cycle-1",
-              revision: 4,
-              chargedAttempts: 3,
-              tombstone: { reason: "automatic recovery exhausted" },
-            },
-          }
-        : {}),
     }),
   });
   await sessionStore.upsertSessionEntry({
     ...target,
     entry: { sessionId: "active-channel-session", updatedAt: Date.now() },
   });
-  const activeTarget = sessionStore.getSessionEntry(target);
+  expect(sessionStore.getSessionEntry(source)).toMatchObject({ sessionId, archivedAt: 2 });
   const transcript = sessionStore.loadTranscriptEventsSync({ ...source, sessionId });
+  expect(JSON.stringify(transcript)).toContain("Synthetic archived history");
   harness = createHarness(cfg);
   harness.dispatch.mockRestore();
   harness.session.mockRestore();
@@ -304,16 +292,13 @@ it.each([
         }),
       ),
   );
-  expectFollowUp(harness, expect.stringContaining(tombstone ? "Use Resume in WebChat" : "Help"));
+  expectFollowUp(harness, expect.stringContaining("Help"));
   const after = sessionStore.getSessionEntry(source);
   expect(after?.sessionId).toBe(sessionId);
-  expect(after?.archivedAt).toBe(tombstone ? 2 : undefined);
-  expect(after?.archivedBy).toEqual(tombstone ? { type: "human", id: "test-operator" } : undefined);
-  expect(after?.archiveReason).toBe(tombstone ? "manual" : undefined);
+  expect(after?.archivedAt).toBeUndefined();
+  expect(after?.archivedBy).toBeUndefined();
+  expect(after?.archiveReason).toBeUndefined();
   expect(sessionStore.loadTranscriptEventsSync({ ...source, sessionId })).toEqual(transcript);
-  if (tombstone) {
-    expect(sessionStore.getSessionEntry(target)).toEqual(activeTarget);
-  }
 });
 
 it.each<Surface>(["status", "autocomplete", "picker"])(

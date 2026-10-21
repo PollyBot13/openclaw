@@ -99,9 +99,9 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
       expectedSessionId: archivedSource.sessionId,
     });
     if (error) {
-      const queuedFinal = dispatcher.sendFinalReply(
-        markCommandReplyForDelivery({ text: error, isError: true }),
-      );
+      const queuedFinal =
+        !state.sendPolicyDenied &&
+        dispatcher.sendFinalReply(markCommandReplyForDelivery({ text: error, isError: true }));
       recordProcessed("skipped", { reason: "session-directive-rejected" });
       markIdle("message_completed");
       commitInboundDedupeIfClaimed();
@@ -110,6 +110,7 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
         result: attachSourceReplyDeliveryMode({
           queuedFinal,
           counts: dispatcher.getQueuedCounts(),
+          ...(state.sendPolicyDenied ? { deliberateSilentTerminalReply: true as const } : {}),
         }),
       };
     }
