@@ -17,6 +17,7 @@ import {
 } from "../app-sidebar.ts";
 import "../../components/app-sidebar.tsx";
 import { domProbe } from "../dom-probe.ts";
+import { waitForSolid } from "../solid-settle.ts";
 import { agentList } from "./compact.test-support.ts";
 import { settleRoster } from "./roster.test-support.ts";
 
@@ -299,11 +300,12 @@ describe("AppSidebar agent chip", () => {
   it.each([
     { viewport: "normal", width: undefined, left: 12, right: 252, x: 12 },
     { viewport: "narrow", width: 280, left: 100, right: 340, x: 8 },
-  ])("positions the menu ($viewport viewport)", async ({ width, left, right, x }) => {
+  ])("positions the mobile menu ($viewport viewport)", async ({ width, left, right, x }) => {
     if (width !== undefined) {
       vi.stubGlobal("innerWidth", width);
     }
-    const { sidebar, dom } = await mountAgent();
+    const { sidebar, dom, provider } = await mountAgent();
+    provider.classList.add("shell--mobile-nav");
     sidebar.connected = true;
     await sidebar.updateComplete;
     const card = dom.query<HTMLButtonElement>(".sidebar-agent-card__main")!;
@@ -398,7 +400,7 @@ describe("AppSidebar agent chip", () => {
       avatar = researchRow?.querySelector(".agent-select__avatar");
       expect(avatar?.classList).toContain("is-pending");
       avatar?.querySelector("img")?.dispatchEvent(new Event("load"));
-      expect(avatar?.classList).not.toContain("is-pending");
+      await waitForSolid(() => expect(avatar?.classList).not.toContain("is-pending"));
       expect(createObjectURL).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
         `${globalThis.location.origin}/avatar/research?v=140879`,
