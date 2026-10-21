@@ -26,7 +26,7 @@ import {
   createInternalComponentInteractionPayload,
   createInternalTestClient,
 } from "../internal/test-builders.test-support.js";
-import { setDiscordRuntime } from "../runtime.js";
+import { getDiscordRuntime, setDiscordRuntime } from "../runtime.js";
 import { installDiscordIngressTestRuntime } from "../test-support/ingress-runtime.js";
 import { createDiscordLivePolicyReader } from "./live-policy.js";
 import { clearDiscordChannelInfoCacheForTest } from "./message-channel-info.test-support.js";
@@ -72,7 +72,12 @@ function createConfig(): OpenClawConfig {
   };
 }
 
-function createHarness(cfg = createConfig()) {
+function createHarness(
+  cfg = createConfig(),
+  dispatchReplyFromConfig?: Parameters<
+    typeof createDiscordNativeCommand
+  >[0]["dispatchReplyFromConfig"],
+) {
   let currentConfig = cfg;
   vi.spyOn(runtimeConfig, "getRuntimeConfigSnapshot").mockImplementation(() => currentConfig);
   const readPolicy = createDiscordLivePolicyReader({
@@ -86,12 +91,18 @@ function createHarness(cfg = createConfig()) {
     ...nativeCommandContext(cfg),
     readPolicy,
     postApplySettleMs: 0,
+    dispatchReplyFromConfig,
   };
   const client = createInternalTestClient([
     createDiscordNativeCommand({
       ...commandContext,
       ephemeralDefault: true,
       command: { name: "help", description: "Help", acceptsArgs: false },
+    }),
+    createDiscordNativeCommand({
+      ...commandContext,
+      ephemeralDefault: true,
+      command: { name: "new", description: "New session", acceptsArgs: false },
     }),
     createDiscordNativeCommand({
       ...commandContext,
@@ -151,6 +162,9 @@ function createHarness(cfg = createConfig()) {
     dispatch,
     session,
     patch,
+    replaceConfig: (next: OpenClawConfig) => {
+      currentConfig = next;
+    },
     replacePolicy: () => {
       currentConfig = {
         ...cfg,
@@ -251,59 +265,129 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it("restores an archived slash source before executing /help", async () => {
-  const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
-  const cfg: OpenClawConfig = {
-    ...createConfig(),
-    commands: { allowFrom: { discord: [USER] } },
-    session: { store: storePath },
-  };
-  const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
-  const target = { storePath, sessionKey: `agent:main:discord:channel:${CHANNEL}` };
-  const sessionId = "archived-command-session";
-  await sessionStore.upsertSessionEntry({ ...source, entry: { sessionId, updatedAt: 1 } });
-  await appendSessionTranscriptMessageByIdentity({
-    ...source,
-    sessionId,
-    message: { role: "user", content: "Synthetic archived history", timestamp: 1 },
-  });
-  await sessionStore.patchSessionEntry({
-    ...source,
-    update: () => ({
-      archivedAt: 2,
-      archivedBy: { type: "human", id: "test-operator" },
-      archiveReason: "manual",
-    }),
-  });
-  await sessionStore.upsertSessionEntry({
-    ...target,
-    entry: { sessionId: "active-channel-session", updatedAt: Date.now() },
-  });
-  expect(sessionStore.getSessionEntry(source)).toMatchObject({ sessionId, archivedAt: 2 });
-  const transcript = sessionStore.loadTranscriptEventsSync({ ...source, sessionId });
-  expect(JSON.stringify(transcript)).toContain("Synthetic archived history");
-  harness = createHarness(cfg);
-  harness.dispatch.mockRestore();
-  harness.session.mockRestore();
-  await withRegisteredChannelIngress(
-    { plugin: discordPlugin, config: cfg, setRuntime: setDiscordRuntime },
-    () =>
-      harness.client.handleInteraction(
-        createInternalInteractionPayload({
-          ...interactionFor("status", CHANNEL),
-          type: InteractionType.ApplicationCommand,
-          data: { id: "help-command", name: "help", type: 1 },
-        }),
-      ),
-  );
-  const after = sessionStore.getSessionEntry(source);
-  expect(after?.sessionId).toBe(sessionId);
-  expect(after?.archivedAt).toBeUndefined();
-  expect(after?.archivedBy).toBeUndefined();
-  expect(after?.archiveReason).toBeUndefined();
-  expect(sessionStore.loadTranscriptEventsSync({ ...source, sessionId })).toEqual(transcript);
-  expectFollowUp(harness, expect.stringContaining("Help"));
-});
+it.for(["allowed", "denied", "revoked-command", "revoked-channel"] as const)(
+  "handles an archived native command source (%s)",
+  async (access) => {
+    const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
+    const cfg: OpenClawConfig = {
+      ...createConfig(),
+      commands: { allowFrom: { discord: [USER] } },
+      session: { store: storePath },
+    };
+    const denyCommands = (config: OpenClawConfig): OpenClawConfig => ({
+      ...config,
+      commands: { allowFrom: { discord: ["100000000000000005"] } },
+    });
+    const initialConfig = access === "denied" ? denyCommands(cfg) : cfg;
+    const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
+    const target = { storePath, sessionKey: `agent:main:discord:channel:${CHANNEL}` };
+    const sessionId = "archived-command-session";
+    await sessionStore.upsertSessionEntry({ ...source, entry: { sessionId, updatedAt: 1 } });
+    await appendSessionTranscriptMessageByIdentity({
+      ...source,
+      sessionId,
+      message: { role: "user", content: "Synthetic archived history", timestamp: 1 },
+    });
+    await sessionStore.patchSessionEntry({
+      ...source,
+      update: () => ({
+        archivedAt: 2,
+        archivedBy: { type: "human", id: "test-operator" },
+        archiveReason: "manual",
+      }),
+    });
+    await sessionStore.upsertSessionEntry({
+      ...target,
+      entry: { sessionId: "active-channel-session", updatedAt: Date.now() },
+    });
+    const originalTarget = sessionStore.getSessionEntry(target);
+    expect(sessionStore.getSessionEntry(source)).toMatchObject({ sessionId, archivedAt: 2 });
+    const transcript = sessionStore.loadTranscriptEventsSync({ ...source, sessionId });
+    expect(JSON.stringify(transcript)).toContain("Synthetic archived history");
+    const restoreEntered = createDeferred<void>();
+    const releaseRestore = createDeferred<void>();
+    const revoking = access.startsWith("revoked-");
+    const commandName = access === "allowed" ? "help" : "new";
+    harness = createHarness(initialConfig, (params) =>
+      getDiscordRuntime().channel.reply.dispatchReplyFromConfig({
+        ...params,
+        sessionWorkerPlacementContext: {
+          workerSessionPlacementService: {
+            getMany: () => new Map(),
+            getManyAsync: async () => {
+              if (revoking) {
+                restoreEntered.resolve();
+                await releaseRestore.promise;
+              }
+              return new Map();
+            },
+          },
+        },
+      }),
+    );
+    harness.dispatch.mockRestore();
+    harness.session.mockRestore();
+    await withRegisteredChannelIngress(
+      { plugin: discordPlugin, config: initialConfig, setRuntime: setDiscordRuntime },
+      async () => {
+        const pending = harness.client.handleInteraction(
+          createInternalInteractionPayload({
+            ...interactionFor("status", CHANNEL),
+            id: `archive-${access}`,
+            type: InteractionType.ApplicationCommand,
+            data: { id: "archive-command", name: commandName, type: 1 },
+          }),
+        );
+        const completion = revoking
+          ? expect(pending).rejects.toThrow("Discord command authority changed")
+          : pending;
+        if (revoking) {
+          try {
+            await Promise.race([
+              restoreEntered.promise,
+              pending.then(() => {
+                throw new Error("Command finished without entering archive restoration");
+              }),
+            ]);
+            expect(sessionStore.getSessionEntry(source)?.archivedAt).toBe(2);
+            if (access === "revoked-command") {
+              harness.replaceConfig(denyCommands(cfg));
+            } else {
+              harness.replacePolicy();
+            }
+          } finally {
+            releaseRestore.resolve();
+          }
+        }
+        await completion;
+      },
+    );
+    const after = sessionStore.getSessionEntry(source);
+    expect(after?.sessionId).toBe(sessionId);
+    if (access === "allowed") {
+      expectFollowUp(harness, expect.stringContaining("Help"));
+      expect(after?.archivedAt).toBeUndefined();
+      expect(after?.archivedBy).toBeUndefined();
+      expect(after?.archiveReason).toBeUndefined();
+    } else {
+      if (access === "denied") {
+        expectFollowUp(harness, expect.stringContaining("not authorized"));
+      }
+      expect(after).toMatchObject({
+        archivedAt: 2,
+        archivedBy: { type: "human", id: "test-operator" },
+        archiveReason: "manual",
+      });
+      expect(harness.post).not.toHaveBeenCalledWith(
+        "/webhooks/app1/test-token",
+        { body: { content: expect.stringContaining("Help"), flags: 64 } },
+        undefined,
+      );
+      expect(sessionStore.getSessionEntry(target)).toEqual(originalTarget);
+    }
+    expect(sessionStore.loadTranscriptEventsSync({ ...source, sessionId })).toEqual(transcript);
+  },
+);
 
 it.each<Surface>(["status", "autocomplete", "picker"])(
   "routes raw thread %s without hydration",

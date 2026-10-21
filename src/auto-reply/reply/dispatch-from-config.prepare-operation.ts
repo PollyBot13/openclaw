@@ -66,6 +66,7 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
   } = state;
   const input = readReplySourceInput(params.replyOptions);
   const assertRequestCurrent = () => {
+    params.replyOptions?.assertChannelAuthority?.();
     const sourceAuthority = input?.sourceAdapter?.authority;
     sourceAuthority?.assertCurrent();
     if (params.replyOptions?.operatorAuthority !== sourceAuthority) {
