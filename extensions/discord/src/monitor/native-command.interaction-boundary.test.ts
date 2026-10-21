@@ -12,6 +12,12 @@ import "openclaw/plugin-sdk/compiled-subprocess-testing";
 import * as commandStatus from "openclaw/plugin-sdk/command-status-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import {
+  clearActivePluginRegistry,
+  createTestRegistry,
+  getActivePluginRegistry,
+  setActivePluginRegistry,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
 import * as runtimeConfig from "openclaw/plugin-sdk/runtime-config-snapshot";
 import * as sessionStore from "openclaw/plugin-sdk/session-store-runtime";
 import type * as SessionTranscriptRuntime from "openclaw/plugin-sdk/session-transcript-runtime";
@@ -251,7 +257,18 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it("restores an archived slash source before executing /help", async () => {
+it("restores an archived slash source before executing /help", async ({ onTestFinished }) => {
+  const previousRegistry = getActivePluginRegistry();
+  onTestFinished(async () => {
+    if (previousRegistry) {
+      setActivePluginRegistry(previousRegistry);
+    } else {
+      await clearActivePluginRegistry();
+    }
+  });
+  setActivePluginRegistry(
+    createTestRegistry([{ pluginId: "discord", plugin: discordPlugin, source: "test" }]),
+  );
   const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
   const cfg: OpenClawConfig = { ...createConfig(), session: { store: storePath } };
   const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
