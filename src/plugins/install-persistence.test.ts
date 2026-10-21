@@ -208,7 +208,6 @@ describe("persistPluginInstall", () => {
   ])(
     "persists manifest engine selection and ownership: $name",
     async ({ enabled, previousIds, declaredIds }) => {
-      const { persistPluginInstall } = await import("./install-persistence.js");
       enablePluginInConfigMock.mockImplementation((...args: unknown[]) => {
         const [cfg, pluginId] = args as [OpenClawConfig, string];
         return {
@@ -311,7 +310,6 @@ describe("persistPluginInstall", () => {
   ])(
     "preserves current engine ownership during real install: $name",
     async ({ competing, denied, selected }) => {
-      const { persistPluginInstall } = await import("./install-persistence.js");
       enablePluginInConfigMock.mockImplementation((...args: unknown[]) => {
         const [cfg, pluginId] = args as [OpenClawConfig, string];
         return {

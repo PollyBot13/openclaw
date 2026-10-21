@@ -294,7 +294,7 @@ describe("doctor stale plugin config helpers", () => {
           slots: { memory: "canonical-engine", contextEngine: "canonical-engine" },
         },
       };
-      expect(scanStalePluginConfig(cfg).map((hit) => hit.pathLabel)).toEqual([
+      expect(scanStalePluginConfig(cfg).map((entry) => entry.pathLabel)).toEqual([
         "plugins.allow",
         "plugins.deny",
         "plugins.entries.canonical-engine",

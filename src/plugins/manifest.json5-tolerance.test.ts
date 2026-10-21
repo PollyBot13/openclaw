@@ -46,12 +46,12 @@ describe("loadPluginManifest JSON5 tolerance", () => {
     { ids: "canonical-engine", kind: "context-engine" },
     { ids: ["canonical-engine"], kind: "memory" },
   ])("validates manifest engine ownership: $ids / $kind", ({ ids, kind, expected }) => {
-    const dir = writeManifest({
-      id: "vendor-plugin",
-      kind,
-      contextEngineIds: ids,
-      configSchema: {},
-    });
+    const dir = makeTrackedTempDir("openclaw-manifest-json5", tempDirs);
+    fs.writeFileSync(
+      path.join(dir, "openclaw.plugin.json"),
+      JSON.stringify({ id: "vendor-plugin", kind, contextEngineIds: ids, configSchema: {} }),
+      "utf-8",
+    );
     const result = loadPluginManifest(dir, false);
     expect(result.ok).toBe(Boolean(expected));
     if (result.ok) {
