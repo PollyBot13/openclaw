@@ -10,6 +10,8 @@ import {
   applyTestPluginDefaults,
   createPluginActivationSource,
   normalizePluginsConfig,
+  resolveEligibleContextEngineDeclaredOwners,
+  resolveEligibleContextEngineOwnerIds,
   withContextEngineOwner,
   type ContextEngineOwnerMetadata,
   type NormalizedPluginsConfig,
@@ -27,6 +29,7 @@ import { normalizePluginIdScope } from "./plugin-scope.js";
 import { getPluginLoaderCacheState } from "./registry-lifecycle.js";
 import { getPluginRegistryRuntime } from "./registry-runtime-binding.js";
 import { getActivePluginRegistry, getPluginRegistryForContext } from "./runtime.js";
+import type { PluginRuntimeLoadContextState } from "./runtime/load-context-state.js";
 import { activationConfigFingerprint } from "./runtime/load-context.js";
 
 const runtimeBindingCacheIds = new WeakMap<object, number>();
@@ -411,13 +414,45 @@ export function resolvePluginLoadCacheContext(options: PluginLoadOptions = {}) {
     get activationSource() {
       return capture().activationSource;
     },
-    applyContextEngineOwnership(records: readonly ContextEngineOwnerMetadata[]) {
+    /** Admits the selected engine's unique eligible owner before any plugin module imports. */
+    selectContextEngineOwner(
+      manifestPlugins: readonly ContextEngineOwnerMetadata[],
+    ): PluginRuntimeLoadContextState["selectedContextEngine"] {
+      const records =
+        currentMetadataSnapshot?.registryIndex.plugins.map((plugin) => ({
+          id: plugin.pluginId,
+          contextEngineIds: plugin.contextEngineIds,
+        })) ?? manifestPlugins;
       const current = capture();
+      const engineId = current.normalized.slots.contextEngine;
+      const eligibleOwners = resolveEligibleContextEngineOwnerIds(
+        current.normalized,
+        engineId,
+        records,
+      );
+      if (eligibleOwners.length > 1) {
+        const declaredOwners = resolveEligibleContextEngineDeclaredOwners(
+          current.normalized,
+          engineId,
+          records,
+        ).pluginIds;
+        const ownerKind = declaredOwners.length === eligibleOwners.length ? "declared" : "approved";
+        throw new Error(
+          `Context engine "${engineId}" has ambiguous ${ownerKind} owners: ${eligibleOwners.toSorted().join(", ")}. Select an engine with a unique plugin owner.`,
+        );
+      }
       current.normalized = withContextEngineOwner(current.normalized, records);
       current.activationSource = {
         ...current.activationSource,
         plugins: withContextEngineOwner(current.activationSource.plugins, records),
       };
+      const selectedOwner = eligibleOwners[0];
+      // Preserve an unresolved declaration without hiding ordinary missing-engine diagnostics.
+      return engineId &&
+        (current.normalized.contextEngineOwnerId ||
+          records.some((plugin) => plugin.contextEngineIds?.includes(engineId)))
+        ? Object.freeze({ engineId, owner: selectedOwner ? `plugin:${selectedOwner}` : null })
+        : undefined;
     },
     autoEnabledReasons: options.autoEnabledReasons ?? {},
     onlyPluginIds,
