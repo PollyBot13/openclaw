@@ -91,7 +91,7 @@ function createHarness(cfg = createConfig()) {
     createDiscordNativeCommand({
       ...commandContext,
       ephemeralDefault: true,
-      command: { name: "compact", description: "Compact", acceptsArgs: false },
+      command: { name: "help", description: "Help", acceptsArgs: false },
     }),
     createDiscordNativeCommand({
       ...commandContext,
@@ -251,16 +251,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it("provides recovery guidance for an archived slash source without changing its history", async () => {
+it.each([
+  { scenario: "restores an archived slash source before executing /help", tombstone: false },
+  { scenario: "refuses an archived restart tombstone before executing /help", tombstone: true },
+])("$scenario", async ({ tombstone }) => {
   const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
   const cfg: OpenClawConfig = { ...createConfig(), session: { store: storePath } };
   const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
   const target = { storePath, sessionKey: `agent:main:discord:channel:${CHANNEL}` };
   const sessionId = "archived-command-session";
-  await sessionStore.upsertSessionEntry({
-    ...source,
-    entry: { sessionId, updatedAt: 1 },
-  });
+  await sessionStore.upsertSessionEntry({ ...source, entry: { sessionId, updatedAt: 1 } });
   await appendSessionTranscriptMessageByIdentity({
     ...source,
     sessionId,
@@ -268,96 +268,52 @@ it("provides recovery guidance for an archived slash source without changing its
   });
   await sessionStore.patchSessionEntry({
     ...source,
-    update: () => ({ archivedAt: 2, archivedBy: { type: "human", id: "test-operator" } }),
+    update: () => ({
+      archivedAt: 2,
+      archivedBy: { type: "human", id: "test-operator" },
+      archiveReason: "manual",
+      ...(tombstone
+        ? {
+            mainRestartRecovery: {
+              cycleId: "cycle-1",
+              revision: 4,
+              chargedAttempts: 3,
+              tombstone: { reason: "automatic recovery exhausted" },
+            },
+          }
+        : {}),
+    }),
   });
   await sessionStore.upsertSessionEntry({
     ...target,
     entry: { sessionId: "active-channel-session", updatedAt: Date.now() },
   });
   const activeTarget = sessionStore.getSessionEntry(target);
-  expect(activeTarget).toMatchObject({ sessionId: "active-channel-session" });
-  expect(activeTarget?.archivedAt).toBeUndefined();
-  const archived = sessionStore.getSessionEntry(source);
-  if (!archived) {
-    throw new Error("Expected the archived command session fixture to exist");
-  }
-  expect(archived).toMatchObject({ sessionId, archivedAt: 2 });
   const transcript = sessionStore.loadTranscriptEventsSync({ ...source, sessionId });
-  expect(JSON.stringify(transcript)).toContain("Synthetic archived history");
   harness = createHarness(cfg);
   harness.dispatch.mockRestore();
   harness.session.mockRestore();
   await withRegisteredChannelIngress(
     { plugin: discordPlugin, config: cfg, setRuntime: setDiscordRuntime },
-    async () => {
-      await expect(
-        harness.client.handleInteraction(
-          createInternalInteractionPayload({
-            ...interactionFor("status", CHANNEL),
-            type: InteractionType.ApplicationCommand,
-            data: { id: "compact-command", name: "compact", type: 1 },
-          }),
-        ),
-      ).rejects.toThrow(/is archived/);
-    },
+    () =>
+      harness.client.handleInteraction(
+        createInternalInteractionPayload({
+          ...interactionFor("status", CHANNEL),
+          type: InteractionType.ApplicationCommand,
+          data: { id: "help-command", name: "help", type: 1 },
+        }),
+      ),
   );
-  expect(harness.post).toHaveBeenCalledExactlyOnceWith(
-    "/interactions/interaction1/test-token/callback",
-    {
-      body: {
-        type: InteractionResponseType.DeferredChannelMessageWithSource,
-        data: { flags: 64 },
-      },
-    },
-  );
-  expect(harness.patch).toHaveBeenCalledExactlyOnceWith(
-    "/webhooks/app1/test-token/messages/%40original",
-    {
-      body: {
-        content:
-          "This command’s internal session is archived. Ask your OpenClaw operator to run `openclaw doctor --fix`, then retry.",
-        allowed_mentions: { parse: [] },
-      },
-    },
-  );
-  // Inbound routing can enrich delivery facts before admission rejects the command.
+  expectFollowUp(harness, expect.stringContaining(tombstone ? "Use Resume in WebChat" : "Help"));
   const after = sessionStore.getSessionEntry(source);
-  expect(after).toMatchObject({
-    sessionId: archived.sessionId,
-    archivedAt: archived.archivedAt,
-    archivedBy: archived.archivedBy,
-  });
-  expect(after?.archiveReason).toBe(archived.archiveReason);
+  expect(after?.sessionId).toBe(sessionId);
+  expect(after?.archivedAt).toBe(tombstone ? 2 : undefined);
+  expect(after?.archivedBy).toEqual(tombstone ? { type: "human", id: "test-operator" } : undefined);
+  expect(after?.archiveReason).toBe(tombstone ? "manual" : undefined);
   expect(sessionStore.loadTranscriptEventsSync({ ...source, sessionId })).toEqual(transcript);
-  expect(sessionStore.getSessionEntry(target)).toEqual(activeTarget);
-});
-
-it.each([
-  ["unrelated dispatch error", "Model unavailable"],
-  [
-    "archived conversation target",
-    `Session "agent:main:discord:channel:${CHANNEL}" is archived. Restore it before starting new work.`,
-  ],
-])("leaves %s reporting to the transport dispatcher", async (_case, message) => {
-  harness.dispatch.mockRejectedValueOnce(new Error(message));
-  await expect(
-    harness.client.handleInteraction(
-      createInternalInteractionPayload({
-        ...interactionFor("status", CHANNEL),
-        type: InteractionType.ApplicationCommand,
-        data: { id: "compact-command", name: "compact", type: 1 },
-      }),
-    ),
-  ).rejects.toThrow(message);
-  expect(harness.patch).toHaveBeenCalledExactlyOnceWith(
-    "/webhooks/app1/test-token/messages/%40original",
-    {
-      body: {
-        content: "Command failed. Check the Gateway logs for details.",
-        allowed_mentions: { parse: [] },
-      },
-    },
-  );
+  if (tombstone) {
+    expect(sessionStore.getSessionEntry(target)).toEqual(activeTarget);
+  }
 });
 
 it.each<Surface>(["status", "autocomplete", "picker"])(

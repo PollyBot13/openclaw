@@ -12,7 +12,6 @@ import {
 } from "../../sessions/session-key-utils.js";
 import { sessionDeliveryOrigin } from "../../utils/delivery-context.read.js";
 import type { SessionMaintenanceConfig, SessionMaintenanceMode } from "../types.base.js";
-import { isNativeCommandSourceSessionKey } from "./native-command-source-session-key.js";
 import { hasMainSessionRecoveryClaim } from "./restart-recovery-state.js";
 import { isPinnableSessionEntry } from "./session-pin-policy.js";
 import {
@@ -224,6 +223,7 @@ export function pruneStaleEntries(
   overrideMaxAgeMs?: number,
   opts: {
     log?: boolean;
+    nowMs?: number;
     onPruned?: (params: { key: string; entry: SessionEntry }) => void;
     onArchived?: (params: { key: string; entry: SessionEntry }) => void;
     preserveKeys?: ReadonlySet<string>;
@@ -234,7 +234,7 @@ export function pruneStaleEntries(
   if (maxAgeMs <= 0) {
     return 0;
   }
-  const now = Date.now();
+  const now = opts.nowMs ?? Date.now();
   const cutoffMs = now - maxAgeMs;
   let pruned = 0;
   for (const [key, entry] of Object.entries(store)) {
@@ -270,6 +270,7 @@ export function pruneStaleModelRunEntries(
   overrideMaxAgeMs?: number | null,
   opts: {
     log?: boolean;
+    nowMs?: number;
     onPruned?: (params: { key: string; entry: SessionEntry }) => void;
     preserveKeys?: ReadonlySet<string>;
     preserveRecentMs?: number | null;
@@ -278,7 +279,7 @@ export function pruneStaleModelRunEntries(
   if (overrideMaxAgeMs == null || overrideMaxAgeMs <= 0) {
     return 0;
   }
-  const cutoffMs = Date.now() - overrideMaxAgeMs;
+  const cutoffMs = (opts.nowMs ?? Date.now()) - overrideMaxAgeMs;
   let pruned = 0;
   for (const [key, entry] of Object.entries(store)) {
     if (shouldPreserveMaintenanceEntry({ key, entry, ...opts })) {
@@ -414,9 +415,6 @@ function isProtectedSessionMaintenanceEntry(
   if (isPrimarySessionMaintenanceKey(sessionKey)) {
     return true;
   }
-  if (isNativeCommandSourceSessionKey(sessionKey)) {
-    return true;
-  }
   if (parseThreadSessionSuffix(sessionKey).threadId) {
     return true;
   }
@@ -437,6 +435,7 @@ type SessionMaintenanceEntryParams = {
   entry: SessionEntry | undefined;
   preserveKeys?: ReadonlySet<string>;
   preserveRecentMs?: number | null;
+  nowMs?: number;
 };
 
 function shouldPreserveNonArchivedMaintenanceEntry(params: SessionMaintenanceEntryParams): boolean {
@@ -479,6 +478,7 @@ function selectSessionEntryCapVictims(
   maxEntries: number,
   preserveKeys?: ReadonlySet<string>,
   preserveRecentMs?: number | null,
+  nowMs?: number,
 ): string[] {
   const keys = Object.keys(store).filter((key) => store[key]?.archivedAt === undefined);
   const overflow = keys.length - Math.max(0, maxEntries);
@@ -496,6 +496,7 @@ function selectSessionEntryCapVictims(
         entry: store[key],
         preserveKeys,
         preserveRecentMs,
+        nowMs,
       }),
   );
   // Rank the whole eligible roster by its latest activity signal so the sessions untouched for
@@ -534,6 +535,7 @@ export function capEntryCount(
     maxEntries,
     opts.preserveKeys,
     opts.preserveRecentMs,
+    opts.nowMs,
   );
   if (victims.length === 0) {
     return 0;

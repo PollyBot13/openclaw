@@ -3,6 +3,7 @@ import {
   dispatchChannelInboundTurn,
   hasVisibleInboundReplyDispatch,
   isChannelPartialDeliveryError,
+  type BuiltChannelInboundEventContext,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveChannelStreamingBlockEnabled } from "openclaw/plugin-sdk/channel-outbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
@@ -16,7 +17,6 @@ import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
 import { logVerbose, type createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import type { BaseComponentInteraction, CommandInteraction } from "../internal/discord.js";
 import type { DiscordChannelConfigResolved } from "./allow-list.js";
-import type { buildDiscordNativeCommandContext } from "./native-command-context.js";
 import {
   DISCORD_EMPTY_VISIBLE_REPLY_WARNING,
   deliverDiscordInteractionReply,
@@ -26,28 +26,12 @@ import {
 } from "./native-command-reply.js";
 import type { DiscordConfig, DiscordDispatchReplyFromConfig } from "./native-command.types.js";
 
-function isArchivedInternalCommandSourceError(
-  error: unknown,
-  sessionKey: string | undefined,
-  agentId: string,
-): boolean {
-  // Admission exposes a plain Error here; fail closed unless both its source key and text match.
-  const prefix = `agent:${agentId}:discord:slash:`;
-  return (
-    error instanceof Error &&
-    sessionKey?.startsWith(prefix) === true &&
-    sessionKey.length > prefix.length &&
-    !sessionKey.slice(prefix.length).includes(":") &&
-    error.message === `Session "${sessionKey}" is archived. Restore it before starting new work.`
-  );
-}
-
 export async function dispatchDiscordNativeAgentReply(params: {
   cfg: OpenClawConfig;
   discordConfig: DiscordConfig;
   accountId: string;
   interaction: CommandInteraction | BaseComponentInteraction;
-  ctxPayload: Awaited<ReturnType<typeof buildDiscordNativeCommandContext>>;
+  ctxPayload: BuiltChannelInboundEventContext;
   effectiveRoute: Pick<ResolvedAgentRoute, "accountId" | "agentId" | "sessionKey">;
   channelConfig: DiscordChannelConfigResolved | null;
   mediaLocalRoots: ReturnType<typeof getAgentScopedMediaLocalRoots>;
@@ -147,29 +131,6 @@ export async function dispatchDiscordNativeAgentReply(params: {
       disableBlockStreaming:
         typeof blockStreamingEnabled === "boolean" ? !blockStreamingEnabled : undefined,
     },
-  }).catch(async (error: unknown) => {
-    if (
-      !isArchivedInternalCommandSourceError(
-        error,
-        params.ctxPayload.SessionKey,
-        params.effectiveRoute.agentId,
-      )
-    ) {
-      throw error;
-    }
-    try {
-      // The response queue preserves accepted output, including partial follow-ups.
-      await safeDiscordInteractionCall("interaction command failure", () =>
-        params.interaction.editDeferredPlaceholderIfUnanswered({
-          content:
-            "This command’s internal session is archived. Ask your OpenClaw operator to run `openclaw doctor --fix`, then retry.",
-          allowed_mentions: { parse: [] },
-        }),
-      );
-    } catch {
-      // Keep the original dispatch failure for logging and the transport fallback.
-    }
-    throw error;
   });
   const shouldSettleWithoutVisibleReply =
     params.suppressReplies ||

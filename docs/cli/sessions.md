@@ -185,11 +185,7 @@ placement, the Gateway first stops the worker, reconciles its workspace, and
 reclaims the environment. If the placement is still transitioning or failed
 without proof that its environment is gone, the session remains unarchived;
 wait for the placement to settle, then retry. Agent main sessions remain
-protected, as are internal Discord and default Slack slash-command sessions.
-These internal sessions are needed to handle commands; archive conversation
-histories instead. For an already archived command session, run `openclaw doctor`
-and follow its [explicit restoration guidance](/cli/doctor/checks#archived-command-sessions).
-Already archived sessions are successful no-ops. Use `--dry-run` to
+protected. Already archived sessions are successful no-ops. Use `--dry-run` to
 validate every key and preview the result without changing session state.
 
 Archive reasons are assigned automatically and displayed as human-readable text
@@ -213,6 +209,9 @@ openclaw sessions delete "agent:main:scratch-1" --yes --json
 
 Repeated keys are processed once, in first-occurrence order, after surrounding
 whitespace is removed. This also applies to `sessions archive`.
+
+Human-readable archive/delete reports escape terminal control characters in
+session keys, paths, and diagnostics. JSON output preserves the original values.
 
 <Warning>
   Delete is destructive. In an interactive terminal it asks once before
@@ -551,6 +550,9 @@ openclaw sessions compact "agent:work:main" --agent work --json
 - `--url` / `--token` / `--password`: Gateway connection overrides.
 - `--timeout <ms>`: optional client-side RPC timeout in milliseconds.
 - `--json`: print the raw RPC payload.
+
+Human-readable compaction reports escape terminal control characters in session
+keys and error details. JSON output preserves the original values.
 
 The command exits non-zero when the Gateway reports a failed compaction or is
 unreachable, so crons and scripts never mistake a silent no-op for success.

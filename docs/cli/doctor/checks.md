@@ -52,34 +52,6 @@ After its checks finish, `doctor --fix` settles its own inspection workers while
 
 ## Session state and cron
 
-### Archived command sessions
-
-Doctor warns when an internal Discord or default Slack command session is
-archived. These sessions are separate from conversation history; archiving one
-can prevent native commands such as `/new`, `/reset`, or `/compact` from running.
-Doctor reports the affected key and session ID. Plain `doctor` and `doctor --yes`
-do not restore it. A standalone `openclaw doctor --fix` restores only matching
-internal source sessions under Doctor's exclusive Gateway maintenance ownership;
-the updater's Doctor pass does not run this repair.
-
-If a user encounters this warning or a failed slash command:
-
-1. Ask the Gateway operator to run `openclaw doctor` and check the Gateway logs.
-2. Run `openclaw doctor --fix` from outside the Gateway process tree. Alternatively,
-   in the Control UI open **Sessions** → **Archived**, search for the exact key,
-   review its session ID, and choose **Restore** for that session only.
-3. Retry the original command. Failed commands are not replayed automatically.
-
-Do not delete or reset the hidden session to repair its archive state, and do not
-restore unrelated conversation archives. If Doctor reports no matching session,
-investigate the logged failure instead of assuming archiving caused it. Custom
-Slack command prefixes are not diagnosed by this check.
-
-Internal Discord and default Slack command sessions are protected from new
-archive requests and automatic maintenance. Existing archives remain unchanged
-until an operator explicitly runs standalone `doctor --fix` or restores them in
-the Control UI.
-
 - State integrity checks detect orphan transcript files in the sessions directory. Archiving them as `.deleted.<timestamp>` requires interactive confirmation; `--fix`, `--yes`, and headless runs leave them in place.
 - Doctor scans historical `~/.openclaw/cron/jobs.json` stores and previously configured legacy store locations for old cron job shapes, imports jobs and quarantine records into SQLite, and archives the migrated JSON files.
 - Doctor reports cron jobs with an explicit `payload.model` override, including provider-namespace counts and mismatches against `agents.defaults.model`, so scheduled jobs that do not inherit the default model are visible during auth or billing investigations.
@@ -107,7 +79,7 @@ Doctor prepares valid runtime config before inspecting context-engine plugins, s
 
 ## Plugins and skills
 
-- `doctor --fix` reclaims abandoned legacy plugin captures and retained updater runtimes during maintenance. Unfamiliar launcher syntax alone does not block cleanup when readable working-directory and package evidence establish that a process is unrelated. Absolute entrypoint paths still require readable foreign package identity. OpenClaw identities, entrypoint and module references, capture/runtime paths, and native capture custody preserve live artifacts. The standard Linux `systemd --user` manager and its same-account PAM helper do not block reclamation when their protected working directories are unreadable. The manager changes to `/` before serving; its PAM helper only settles that login session. Readable working-directory and runtime references still protect live artifacts. Unreadable same-user arguments or other unresolved working-directory, script, package, or service-marker evidence leave cleanup skipped with a warning; failed evidence inspection is never treated as proof that a process is unrelated.
+- `doctor --fix` reclaims abandoned legacy plugin captures and retained updater runtimes during maintenance. Standalone scripts without any ancestor `package.json`, inline Node commands (`-e`/`-p`), REPLs, and stdin processes do not block cleanup merely because they lack package metadata. Unrelated non-runtime commands, such as `gpg-agent` and `fusermount3`, do not block cleanup solely because their cwd is unreadable. OpenClaw package identities, launchers, service markers, and capture/runtime paths in executable, arguments, or working-directory evidence still preserve artifacts. An unavailable cwd for a runtime process, denied package metadata, or an inspection timeout retains any runtime the process could hold, with one warning naming its PID and reason. A holder with known runtime paths preserves only those candidates; unscoped uncertainty preserves all candidates. An unparseable native process environment leaves that PID unknown with a warning instead of aborting the census. The census continues, so independently proven-unused runtimes can still be reclaimed. Incomplete process enumeration or ancestry leaves cleanup skipped with a warning. Update-repair handoff verification keeps its separate process-identity and ancestry requirements.
 - First-write native session catalog privacy preferences do not enable plugins or expand `plugins.allow`. Doctor warns when an enabled Codex entry contains only the catalog opt-out and matches the possible accidental enablement from OpenClaw 2026.9.3/9.4. This signature cannot distinguish the old automatic write from an intentional choice, so `--fix` preserves it. If you did not enable Codex, set `plugins.entries.codex.enabled` to `false` and remove `codex` from `plugins.allow` if present, preserving the other entries.
 - Doctor preserves legacy shared plugin-runtime caches that another installation or profile may still use and removes only genuinely dangling plugin-runtime symlinks. It relinks the host `openclaw` package for managed npm plugins that declare it as a peer dependency. It also repairs missing downloadable plugins referenced by config (`plugins.entries`, configured channels, configured provider/search settings, configured agent runtimes). During package updates, doctor skips package-manager plugin repair until the package swap completes; rerun `openclaw doctor --fix` afterward if a configured plugin still needs recovery. If a download fails, doctor reports the install error and preserves the configured plugin entry for the next repair attempt.
 - `doctor --fix` also updates drifted active official npm plugins from the OpenClaw catalog to the installed OpenClaw release, using the same plugin updater as `openclaw update`. Recorded non-default tags and pins newer than the release's plugin cohort keep their selected targets. It reports each outcome and rechecks restart readiness. A plugin that cannot be fetched remains a warning with the failure reason; other plugins can still be repaired and Doctor can finish. This repair leaves third-party plugins unchanged. The normal [Gateway maintenance and restart policy](/cli/doctor/running#postures) applies; follow the printed restart command when Doctor does not restart the Gateway for you.
