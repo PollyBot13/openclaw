@@ -72,7 +72,12 @@ it("retains the authored canonical config key for a mixed-case migration owner",
       pluginId: "MiXeD-upgrade-proof",
     }),
   };
-  expect(pending.configPaths).toContainEqual(["plugins", "entries", "mixed-upgrade-proof", "config"]);
+  expect(pending.configPaths).toContainEqual([
+    "plugins",
+    "entries",
+    "mixed-upgrade-proof",
+    "config",
+  ]);
   expect(hasDeferredPluginMigrationConfig(sourceConfig, pending)).toBe(true);
   expect(
     preserveDeferredPluginMigrationConfig({

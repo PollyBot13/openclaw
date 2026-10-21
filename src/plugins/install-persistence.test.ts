@@ -277,10 +277,9 @@ describe("persistPluginInstall", () => {
           install: { source: "path", sourcePath: rootDir },
           enable: enabled,
         });
-        const records = requireMockCallArg(
-          writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock,
-          "install record writer",
-        );
+        expect(writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock).toHaveBeenCalled();
+        const records =
+          writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock.mock.calls[0]?.[0] ?? {};
         expect(records["vendor-plugin"]).toMatchObject({ source: "path", sourcePath: rootDir });
         expect(
           (records["vendor-plugin"] as Record<string, unknown>).contextEngineIdsByPlugin,

@@ -89,6 +89,8 @@ describe("resolveEffectivePluginIds", () => {
       createPluginMetadataSnapshotFixture({ plugins: [{ id: "lossless-claw" }] }),
     );
     expect(resolve({ plugins: { slots: { contextEngine: "lossless-claw" } } })).toEqual([
+      "lossless-claw",
+    ]);
   });
 
   it("keeps the selected slot but rechecks bundled owner policy after channel callbacks", async () => {
