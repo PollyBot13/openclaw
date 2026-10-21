@@ -253,7 +253,11 @@ afterEach(() => vi.restoreAllMocks());
 
 it("restores an archived slash source before executing /help", async () => {
   const storePath = join(tempDirs.make("openclaw-discord-archived-"), "sessions.json");
-  const cfg: OpenClawConfig = { ...createConfig(), session: { store: storePath } };
+  const cfg: OpenClawConfig = {
+    ...createConfig(),
+    commands: { allowFrom: { discord: [USER] } },
+    session: { store: storePath },
+  };
   const source = { storePath, sessionKey: `agent:main:discord:slash:${USER}` };
   const target = { storePath, sessionKey: `agent:main:discord:channel:${CHANNEL}` };
   const sessionId = "archived-command-session";
@@ -292,13 +296,13 @@ it("restores an archived slash source before executing /help", async () => {
         }),
       ),
   );
-  expectFollowUp(harness, expect.stringContaining("Help"));
   const after = sessionStore.getSessionEntry(source);
   expect(after?.sessionId).toBe(sessionId);
   expect(after?.archivedAt).toBeUndefined();
   expect(after?.archivedBy).toBeUndefined();
   expect(after?.archiveReason).toBeUndefined();
   expect(sessionStore.loadTranscriptEventsSync({ ...source, sessionId })).toEqual(transcript);
+  expectFollowUp(harness, expect.stringContaining("Help"));
 });
 
 it.each<Surface>(["status", "autocomplete", "picker"])(

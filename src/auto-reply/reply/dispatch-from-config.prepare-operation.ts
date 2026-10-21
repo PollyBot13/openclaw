@@ -99,9 +99,9 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
       expectedSessionId: archivedSource.sessionId,
     });
     if (error) {
-      const queuedFinal =
-        !state.sendPolicyDenied &&
-        dispatcher.sendFinalReply(markCommandReplyForDelivery({ text: error, isError: true }));
+      const payload: ReplyPayload = { text: error, isError: true };
+      markCommandReplyForDelivery(payload);
+      const queuedFinal = !state.sendPolicyDenied && dispatcher.sendFinalReply(payload);
       recordProcessed("skipped", { reason: "session-directive-rejected" });
       markIdle("message_completed");
       commitInboundDedupeIfClaimed();
