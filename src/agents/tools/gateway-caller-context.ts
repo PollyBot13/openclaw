@@ -91,6 +91,8 @@ type GatewayToolCallerIdentity = {
   workerTurnClaim?: WorkerSessionTurnClaim;
   /** Prepared caller sandbox for the explicit current-workspace base refresh; never RPC data. */
   workspaceBaseRefreshSandbox?: import("../sandbox/types.js").SandboxContext;
+  /** Host handoff selects the exact settled conversation; never accepted from RPC input. */
+  workspacePrAdoptionSessionId?: string;
   /** Current tool's filesystem owner for inspected PR evidence; never serialized in RPC data. */
   workspaceEvidenceSandbox?: import("../sandbox/types.js").SandboxContext;
   /** Closure-bound Gateway capability; revalidates both owners at child admission. */
@@ -379,7 +381,6 @@ export function resolveGatewayPersonalToolParticipant(
   runtimeIdentity?: AgentRuntimeIdentity,
   options?: {
     requireSingleParticipant?: boolean;
-    allowTurnOwner?: () => boolean;
     allowMissingRegistry?: boolean;
   },
 ) {
@@ -387,7 +388,6 @@ export function resolveGatewayPersonalToolParticipant(
   if (caller?.personalToolParticipants) {
     return caller.personalToolParticipants.resolve(
       options?.requireSingleParticipant ? undefined : caller.personalToolUser,
-      options,
     );
   }
   if (caller?.personalToolUser !== undefined) {
@@ -398,7 +398,7 @@ export function resolveGatewayPersonalToolParticipant(
     if (!registered) {
       return undefined;
     }
-    const participant = registered.participants?.resolve(undefined, options);
+    const participant = registered.participants?.resolve();
     return (
       participant && {
         ...participant,
@@ -598,6 +598,7 @@ export async function withGatewayToolCallerIdentity<T>(
             )
           : (identity.sessionEventToolsAllow ?? inheritedOwner?.sessionEventToolsAllow),
       workspaceBaseRefreshSandbox: inheritedValue("workspaceBaseRefreshSandbox"),
+      workspacePrAdoptionSessionId: inheritedValue("workspacePrAdoptionSessionId"),
       workspaceEvidenceSandbox: inheritedValue("workspaceEvidenceSandbox"),
       personalToolParticipants: inheritedValue("personalToolParticipants"),
       personalToolUser: inheritedValue("personalToolUser"),

@@ -326,7 +326,7 @@ export function loadPluginManifest(
       raw.modelIdNormalization,
       { ownedProviders: new Set(providers) },
     ),
-    providerEndpoints: modelProviderNormalizers.normalizeManifestProviderEndpoints(
+    providerEndpoints: capabilityNormalizers.normalizeManifestProviderEndpoints(
       raw.providerEndpoints,
     ),
     providerRequest: modelProviderNormalizers.normalizeManifestProviderRequest(
