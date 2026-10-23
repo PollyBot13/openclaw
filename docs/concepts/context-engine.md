@@ -529,6 +529,13 @@ does not select a default. Existing plugins that omit `contextEngineIds` retain
 the equal-plugin-ID/engine-ID convention. Declare IDs before relying on divergent
 IDs for automatic activation.
 
+Earlier releases stored the plugin ID as the selector when installing such a
+plugin, so its engine never loaded and every turn used `legacy`. Run
+`openclaw doctor --fix` (updates run it for you) to replace that selector with
+the plugin's single declared engine. Doctor changes it only when that owner is
+independently enabled and no other eligible plugin declares the same engine;
+otherwise it keeps the selector and tells you which engine ID to set.
+
 The install record retains declared ownership, allowing uninstall to reset the
 selected engine even if the plugin files are missing or cannot load. Updating a
 plugin refreshes these declarations. If an update removes your explicitly selected
