@@ -212,6 +212,12 @@ export async function runDoctorRepairSequence(params: {
       cfg: state.candidate,
       env,
     });
+  // Host compatibility must inspect the engine the selector repair resolves, not a stale plugin ID.
+  applyMutation(
+    runWithCurrentPluginMetadata(() =>
+      maybeRepairContextEnginePluginIdSelector(state.candidate, env),
+    ),
+  );
   applyMutation(
     await runWithCurrentPluginMetadata(() =>
       maybeRepairContextEngineHostCompatibility({
@@ -311,11 +317,6 @@ export async function runDoctorRepairSequence(params: {
   const pluginInstallRepairConverged =
     !packageSwapInProgress && failedPluginIds.length === 0 && !hasUnscopedInstallRepairWarnings;
   if (!packageSwapInProgress && !hasUnscopedInstallRepairWarnings) {
-    applyMutation(
-      runWithCurrentPluginMetadata(() =>
-        maybeRepairContextEnginePluginIdSelector(state.candidate, env),
-      ),
-    );
     applyMutation(
       runWithCurrentPluginMetadata(() =>
         maybeRepairStalePluginConfig(state.candidate, env, {
