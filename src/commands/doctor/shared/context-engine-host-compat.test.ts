@@ -8,6 +8,8 @@ import {
 } from "../../../context-engine/registry.js";
 import type { ContextEngineHostCapability } from "../../../context-engine/types.js";
 import { acquirePluginRegistryForInspection } from "../../../plugins/loader.js";
+import { loadManifestMetadataSnapshot } from "../../../plugins/manifest-contract-eligibility.js";
+import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
 import { PluginInstance } from "../../../plugins/plugin-instance.js";
 import { createEmptyPluginRegistry } from "../../../plugins/registry-empty.js";
 import { PluginRegistryInspectionResources } from "../../../plugins/registry-inspection-resources.js";
@@ -41,6 +43,13 @@ vi.mock("../../../context-engine/init.js", () => ({ ensureContextEnginesInitiali
 
 // mock-isolation: Control inspection leases without loading installed plugins.
 vi.mock("../../../plugins/loader.js", () => ({ acquirePluginRegistryForInspection: vi.fn() }));
+
+// mock-isolation: Fixture manifests declare engine owners without scanning installed plugins.
+vi.mock("../../../plugins/manifest-contract-eligibility.js", async () => {
+  const { createPluginMetadataSnapshotFixture } =
+    await import("../../../plugins/plugin-metadata.test-support.js");
+  return { loadManifestMetadataSnapshot: vi.fn(() => createPluginMetadataSnapshotFixture()) };
+});
 
 let engineCounter = 0;
 
@@ -185,6 +194,28 @@ describe("doctor context-engine host compatibility", () => {
       expect(factory).not.toHaveBeenCalled();
     },
   );
+
+  it("inspects the plugin that declares a differently named selected engine", async () => {
+    vi.mocked(loadManifestMetadataSnapshot).mockReturnValueOnce(
+      createPluginMetadataSnapshotFixture({
+        plugins: [{ id: "vendor-plugin", contextEngineIds: ["MiXeD-Engine"] }],
+      }),
+    );
+    vi.mocked(acquirePluginRegistryForInspection).mockResolvedValueOnce({
+      registry: createEmptyPluginRegistry(),
+      release: async () => undefined,
+    });
+    await collectWarnings(
+      doctorParams(
+        configWithEngine("MiXeD-Engine", {
+          plugins: { entries: { "vendor-plugin": { enabled: true } } },
+        }),
+      ),
+    );
+    expect(vi.mocked(acquirePluginRegistryForInspection)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ onlyPluginIds: ["vendor-plugin"] }),
+    );
+  });
 
   it.each([false, true])("repairs incompatible system-agent hosts (mixed=%s)", async (mixed) => {
     const engineId = await registerEngine(["assemble-before-prompt"]);
