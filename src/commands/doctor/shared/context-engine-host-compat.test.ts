@@ -9,8 +9,8 @@ import {
 import type { ContextEngineHostCapability } from "../../../context-engine/types.js";
 import { acquirePluginRegistryForInspection } from "../../../plugins/loader.js";
 import { loadManifestMetadataSnapshot } from "../../../plugins/manifest-contract-eligibility.js";
-import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
 import { PluginInstance } from "../../../plugins/plugin-instance.js";
+import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../../../plugins/registry-empty.js";
 import { PluginRegistryInspectionResources } from "../../../plugins/registry-inspection-resources.js";
 import { retireInspectionInstances } from "../../../plugins/registry-inspection.test-support.js";
@@ -46,9 +46,9 @@ vi.mock("../../../plugins/loader.js", () => ({ acquirePluginRegistryForInspectio
 
 // mock-isolation: Fixture manifests declare engine owners without scanning installed plugins.
 vi.mock("../../../plugins/manifest-contract-eligibility.js", async () => {
-  const { createPluginMetadataSnapshotFixture } =
+  const { createPluginMetadataSnapshotFixture: createSnapshot } =
     await import("../../../plugins/plugin-metadata.test-support.js");
-  return { loadManifestMetadataSnapshot: vi.fn(() => createPluginMetadataSnapshotFixture()) };
+  return { loadManifestMetadataSnapshot: vi.fn(() => createSnapshot()) };
 });
 
 let engineCounter = 0;
