@@ -48,6 +48,15 @@ describe("findContextEnginePluginIdSelector", () => {
     });
   });
 
+  it("accepts an owner approved only through the allowlist", () => {
+    expect(
+      findContextEnginePluginIdSelector(
+        config("vendor-plugin", { allow: ["vendor-plugin"], entries: {} }),
+        [plugin("vendor-plugin", ["MiXeD-Engine"])],
+      ),
+    ).toMatchObject({ kind: "replace", engineId: "MiXeD-Engine" });
+  });
+
   it.each([
     ["an explicit engine", config("MiXeD-Engine"), [plugin("vendor-plugin", ["MiXeD-Engine"])]],
     [
@@ -87,6 +96,18 @@ describe("findContextEnginePluginIdSelector", () => {
       config("vendor-plugin", { entries: {} }),
       [plugin("vendor-plugin", ["MiXeD-Engine"])],
       'Enable plugins.entries.vendor-plugin or resolve the conflict, then set plugins.slots.contextEngine to "MiXeD-Engine"',
+    ],
+    [
+      "a case-equal engine outside a restrictive allowlist",
+      config("vendor-plugin", { allow: ["other"], entries: {} }),
+      [plugin("vendor-plugin", ["Vendor-Plugin"])],
+      "is not independently enabled",
+    ],
+    [
+      "an enabled owner outside a restrictive allowlist",
+      config("vendor-plugin", { allow: ["other"] }),
+      [plugin("vendor-plugin", ["MiXeD-Engine"])],
+      "is not independently enabled",
     ],
     [
       "a denied owner",

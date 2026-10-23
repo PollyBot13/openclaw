@@ -1,7 +1,11 @@
 import { sanitizeForLog } from "../../../../packages/terminal-core/src/ansi.js";
 import { resolveAgentWorkspaceDir, tryResolveDefaultAgentId } from "../../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { resolveSelectedContextEnginePluginId } from "../../../plugins/config-state.js";
+import {
+  normalizePluginId,
+  normalizePluginsConfig,
+  resolveSelectedContextEnginePluginId,
+} from "../../../plugins/config-state.js";
 import { hasIncompletePluginDiscovery } from "../../../plugins/discovery-availability.js";
 import { loadManifestMetadataSnapshot } from "../../../plugins/manifest-contract-eligibility.js";
 import type { PluginManifestRecord } from "../../../plugins/manifest-registry.js";
@@ -53,13 +57,29 @@ export function findContextEnginePluginIdSelector(
     };
   }
   const records = plugins.map(({ id, contextEngineIds }) => ({ id, contextEngineIds }));
-  if (resolveSelectedContextEnginePluginId(withSelector(cfg, engineId), records) !== owner.id) {
+  if (
+    !isIndependentlyApproved(cfg, owner.id) ||
+    resolveSelectedContextEnginePluginId(withSelector(cfg, engineId), records) !== owner.id
+  ) {
     return {
       kind: "choose",
       message: `- ${SLOT_PATH}: "${selector}" is a plugin ID, not an engine ID. Plugin "${owner.id}" declares engine "${engineId}", but it is not independently enabled or another eligible plugin declares the same engine. Enable plugins.entries.${owner.id} or resolve the conflict, then set ${SLOT_PATH} to "${engineId}".`,
     };
   }
   return { kind: "replace", selector, pluginId: owner.id, engineId };
+}
+
+/**
+ * The resolver lets an explicit equal-ID selection bypass enablement and the allowlist.
+ * Doctor did not receive that selection, so it never widens activation on its own.
+ */
+function isIndependentlyApproved(cfg: OpenClawConfig, pluginId: string): boolean {
+  const policy = normalizePluginsConfig(cfg.plugins);
+  const key = normalizePluginPolicyId(normalizePluginId(pluginId));
+  return (
+    (policy.entries[key]?.enabled === true || policy.allow.includes(key)) &&
+    (policy.allow.length === 0 || policy.allow.includes(key))
+  );
 }
 
 function withSelector(cfg: OpenClawConfig, engineId: string): OpenClawConfig {
