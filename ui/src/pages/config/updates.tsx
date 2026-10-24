@@ -417,7 +417,12 @@ function GatewayUpdates(props: UpdatesViewProps) {
           value={settings().channel}
           options={channelOptions()}
           disabled={props.configBusy}
-          onChange={(value) => props.onChannelChange(value as UpdatesChannel)}
+          onChange={(value) => {
+            const channel = channelOptions().find((option) => option.value === value);
+            if (channel) {
+              props.onChannelChange(channel.value);
+            }
+          }}
         />
         <SettingsToggleRow
           title={t("updates.page.checkForUpdates")}

@@ -271,7 +271,11 @@ suite.define(() => {
         await gateway.deferNext("update.status", { refreshCheckout: true });
         await button(page, "Try again").click();
         await gateway.waitForRequest("update.status", { match: { refreshCheckout: true } });
-        expect(await confirmationDialog(page).count()).toBe(1);
+        expect(
+          await page
+            .getByRole("dialog", { name: "Couldn’t finish the update.", exact: true })
+            .count(),
+        ).toBe(1);
         expect(await button(page, "Try again").isDisabled()).toBe(true);
         await gateway.rejectDeferred("update.status", {
           code: "UNAVAILABLE",
