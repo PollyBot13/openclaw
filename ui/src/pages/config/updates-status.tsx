@@ -34,7 +34,10 @@ export function UpdatesStatus(props: UpdatesViewProps & { checking: boolean }) {
     } else if (campaignLabel) {
       kind = campaign?.state === "waiting-for-idle" ? "warn" : "accent";
       label = campaignLabel;
-    } else if (props.update.updateStatusBanner) {
+    } else if (
+      props.update.updateStatusBanner &&
+      (!run || props.update.updateStatusBanner.source === "read")
+    ) {
       kind =
         props.update.updateStatusBanner.tone === "danger"
           ? "danger"
@@ -101,7 +104,7 @@ export function UpdatesStatus(props: UpdatesViewProps & { checking: boolean }) {
   });
   return (
     <span
-      class={{ "updates-status-check-failed": status().checkFailed }}
+      class={["updates-status-control", { "updates-status-check-failed": status().checkFailed }]}
       role={status().countdown ? "timer" : undefined}
       aria-live={status().countdown ? "off" : undefined}
     >

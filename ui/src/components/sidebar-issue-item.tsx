@@ -189,6 +189,12 @@ export function renderSidebarUpdateSurface(params: {
       ? { updateAvailable, updateSchedule }
       : null;
   };
+  const readFailureActions = (attemptId: string | null) => ({
+    reportable: Boolean(attemptId) && snapshot().reportableUpdateFailureId === attemptId,
+    diagnosable: Boolean(attemptId) && snapshot().diagnosableUpdateFailureId === attemptId,
+    canReport: canReportUpdateFailure(gateway()),
+    canDiagnose: canCallGatewayMethod(gateway(), "openclaw.chat", "operator.admin"),
+  });
   return (
     <SidebarUpdateCard
       class="sidebar-issues-panel__update"
@@ -203,34 +209,19 @@ export function renderSidebarUpdateSurface(params: {
       connected={gateway().phase === "connected"}
       onAcknowledge={() => context.overlays.acknowledgeUpdateRun()}
       onReportFailure={(attemptId) => {
-        if (
-          context.overlays.snapshot.reportableUpdateFailureId === attemptId &&
-          canReportUpdateFailure(context.gateway.snapshot)
-        ) {
+        const actions = readFailureActions(attemptId);
+        if (actions.reportable && actions.canReport) {
           params.onNavigate();
           void context.overlays.reportUpdateFailure(attemptId);
         }
       }}
       onDiagnoseFailure={(attemptId) => {
-        if (
-          context.overlays.snapshot.diagnosableUpdateFailureId === attemptId &&
-          canCallGatewayMethod(context.gateway.snapshot, "openclaw.chat", "operator.admin")
-        ) {
+        const actions = readFailureActions(attemptId);
+        if (actions.diagnosable && actions.canDiagnose) {
           context.overlays.diagnoseUpdateFailure(attemptId);
         }
       }}
-      readFailureActions={(attemptId) => ({
-        reportable:
-          Boolean(attemptId) && context.overlays.snapshot.reportableUpdateFailureId === attemptId,
-        diagnosable:
-          Boolean(attemptId) && context.overlays.snapshot.diagnosableUpdateFailureId === attemptId,
-        canReport: canReportUpdateFailure(context.gateway.snapshot),
-        canDiagnose: canCallGatewayMethod(
-          context.gateway.snapshot,
-          "openclaw.chat",
-          "operator.admin",
-        ),
-      })}
+      readFailureActions={readFailureActions}
       prepareRetry={prepareRetry}
       canStartNativeUpdate={() =>
         canCallGatewayMethod(context.gateway.snapshot, "update.run", "operator.admin")

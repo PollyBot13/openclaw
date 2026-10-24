@@ -12,6 +12,8 @@ const enUpdateActions = {
     reviewUpdate: "Review update",
     run: {
       title: "Update progress",
+      updateSteps: "Update steps",
+      technicalDetails: "Technical details",
       phases: "Update phases",
       steps: "Installation steps",
       details: "Step details",
@@ -119,6 +121,9 @@ const enUpdateActions = {
     installKind: en.updates.installKind,
     page: {
       ...en.updates.page,
+      failureActionUnavailable: "This action is not available for this update attempt.",
+      reportOwnerRequired:
+        "Reporting requires a connected, identified user with administrator access.",
       checkStatus: "Refresh status",
       retryUpdate: "Try again",
       diagnoseFailure: "Diagnose",

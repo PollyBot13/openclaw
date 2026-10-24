@@ -71,13 +71,14 @@ export function DeviceUpdates(props: {
   };
   return (
     <Show when={snapshot() && updates()}>
-      <SettingsSection title={t(deviceSettingsGroupLabelKey(snapshot()!))}>
-        <SettingsRow
-          title={t("updates.page.system")}
-          control={
-            <SettingsValue value={snapshot()!.device.modelName ?? t("updates.page.thisDevice")} />
-          }
-        />
+      <p class="settings-page__hint">
+        {t("updates.page.system")}:{" "}
+        <strong>
+          {snapshot()!.device.modelName ?? t(deviceSettingsGroupLabelKey(snapshot()!))}
+        </strong>
+      </p>
+      <section class="card stack" aria-label={t("updates.device.checkTitle")}>
+        <h2 class="card-title">{t("updates.device.checkTitle")}</h2>
         <SettingsRow
           title={t("updates.device.version")}
           control={
@@ -98,6 +99,19 @@ export function DeviceUpdates(props: {
             />
           }
         >
+          <div class="filters">
+            <button
+              class="btn primary"
+              type="button"
+              onClick={() => props.capability.checkForUpdates()}
+            >
+              {t("updates.device.check")}
+            </button>
+          </div>
+        </Show>
+      </section>
+      <Show when={updates()!.available}>
+        <SettingsSection title={t("updates.page.policyTitle")}>
           <Errored
             fallback={(error, reset) => (
               <SettingsRow
@@ -130,20 +144,8 @@ export function DeviceUpdates(props: {
               />
             </Loading>
           </Errored>
-          <SettingsRow
-            title={t("updates.device.checkTitle")}
-            control={
-              <button
-                class="btn primary"
-                type="button"
-                onClick={() => props.capability.checkForUpdates()}
-              >
-                {t("updates.device.check")}
-              </button>
-            }
-          />
-        </Show>
-      </SettingsSection>
+        </SettingsSection>
+      </Show>
     </Show>
   );
 }

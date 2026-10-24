@@ -54,7 +54,10 @@ it.each(["confirmation", "report"] as const)(
     renderUpdates({
       onUpdateNow,
       onReportFailure,
-      update: { updateRun: run, reportableUpdateFailureId: run.runId },
+      update: {
+        updateStatusBanner: { tone: "danger", text: "Build failed" },
+        reportableUpdateFailureId: run.runId,
+      },
     });
     const label = operation === "confirmation" ? "Update" : "Report failure";
     const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find(

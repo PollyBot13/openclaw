@@ -950,9 +950,8 @@ it("stages policy changes through patchForm and confirms Update before overlays"
   expect(checkingButton.textContent?.trim()).toBe("Update");
   expect(checkingButton).toMatchObject({ disabled: true, title: "Checking for updates…" });
   expect(status()).toContain("Checking for updates…");
-  expect(container.querySelector(".settings-segmented__input")?.hasAttribute("disabled")).toBe(
-    true,
-  );
+  const channel = container.querySelector<HTMLSelectElement>(".settings-select")!;
+  expect(channel.disabled).toBe(true);
   context.overlays.snapshot.updateStatusRefreshing = false;
   context.overlays.snapshot.updateStatusCheckBanner = {
     mode: "manual",
@@ -975,7 +974,8 @@ it("stages policy changes through patchForm and confirms Update before overlays"
   expect(status()).toContain("Could not check for updates: timeout");
   expect(runUpdate).not.toHaveBeenCalled();
 
-  container.querySelector<HTMLInputElement>('.settings-segmented__input[value="beta"]')!.click();
+  channel.value = "beta";
+  channel.dispatchEvent(new Event("change", { bubbles: true }));
   const policySwitches = [
     ...container.querySelectorAll<HTMLInputElement>(".settings-toggle__input"),
   ];

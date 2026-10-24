@@ -45,7 +45,9 @@ describe("update status read recovery", () => {
       );
 
       expect(row("Status").textContent).toContain("update.runs.get timed out");
-      const check = row("Recovery").querySelector<HTMLButtonElement>("button")!;
+      const check = [...row("Status").querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "Refresh status",
+      )!;
       expect(check.textContent?.trim()).toBe("Refresh status");
       expect(check.disabled).toBe(!canCheckStatus);
       check.click();

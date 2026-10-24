@@ -71,10 +71,11 @@ export function UpdatesPage(props: UpdatesPageProps) {
       onAutomaticUpdatesChange={(enabled) =>
         props.context.runtimeConfig.patchForm(["update", "auto", "enabled"], enabled)
       }
-      onUpdateNow={() => {
+      onUpdateNow={(existingRun) => {
         const context = props.context;
         const update = overlays().read();
         return confirmAndStartUpdate({
+          existingRun,
           isCurrentTarget: context.overlays.captureUpdateTarget(),
           startGatewayUpdate: () => void context.overlays.runUpdate(),
           // The dialog outlives this page, so read live snapshots after each change.

@@ -580,6 +580,15 @@ it.each(["Report failure", "Diagnose"] as const)(
     });
     ownedFailureId = failedRun.runId;
     await stream.push({ run: failedRun, busy: false, connected: true, failure: null });
+    expect(document.querySelector(".exec-approval-title")?.textContent).toBe(
+      "Couldn’t finish the update.",
+    );
+    expect(document.querySelector(".update-run-view__heading")).toBeNull();
+    expect(
+      [...document.querySelectorAll(".update-run-view > details > summary")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Update steps", "Technical details"]);
     const report = findButton("Report failure");
     const diagnose = findButton("Diagnose");
     expect(report.disabled).toBe(false);
@@ -854,7 +863,12 @@ it.each([
       expect(view).toBe(retainedView);
       expect(view.getAttribute("data-run-id")).toBe(run.runId);
       expect(view.getAttribute("data-run-status")).toBe(status);
-      expect(view.querySelector("h3")?.textContent).toContain(
+      expect(
+        (status === "running"
+          ? view.querySelector("h3")
+          : modal.querySelector(".exec-approval-title")
+        )?.textContent,
+      ).toContain(
         status === "running"
           ? "OpenClaw update in progress: verifying"
           : "Couldn’t finish the update.",

@@ -189,7 +189,7 @@ suite.define(() => {
             expect(await dialog.textContent()).toContain("ENOSPC");
             await dialog.getByRole("button", { name: "Close", exact: true }).click();
           }
-          const diagnose = page.getByRole("button", { name: "Diagnose update", exact: true });
+          const diagnose = page.getByRole("button", { name: "Diagnose", exact: true });
           await diagnose.waitFor();
           expect(await diagnose.isEnabled()).toBe(true);
           expect(await page.locator(".custodian__alert-card").count()).toBe(0);
@@ -330,7 +330,7 @@ suite.define(() => {
             const status = page.locator("#config-section-update .settings-status");
             await status.getByText("openclaw triage", { exact: false }).waitFor();
             expect(await status.textContent()).toContain("ENOSPC");
-            const diagnose = page.getByRole("button", { name: "Diagnose update", exact: true });
+            const diagnose = page.getByRole("button", { name: "Diagnose", exact: true });
             await diagnose.waitFor();
             expect(await page.locator(".custodian__alert-card").count()).toBe(0);
             expect(await gateway.getRequests("openclaw.chat")).toHaveLength(0);

@@ -322,6 +322,16 @@ suite.define(() => {
         await sidebar.locator('a[href="/settings/updates"]').click();
         await page.getByRole("tab", { name: "Apps", exact: true }).click();
         const appsPanel = page.locator("#updates-apps-panel");
+        expect(await page.locator(".page-subtitle").count()).toBe(0);
+        expect(
+          await appsPanel.getByRole("heading", { name: "App updates", exact: true }).count(),
+        ).toBe(1);
+        expect(
+          await appsPanel
+            .locator(".settings-row__title")
+            .filter({ hasText: /^App updates$/ })
+            .count(),
+        ).toBe(0);
         await appsPanel.getByText("2026.9.3 (build 42)", { exact: true }).waitFor();
         await appsPanel
           .getByRole("switch", { name: "Automatic checks and downloads", exact: true })
