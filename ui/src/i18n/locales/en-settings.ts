@@ -1284,6 +1284,18 @@ const enSettings = {
     },
   },
   updates: {
+    apps: {
+      empty: "No paired companion apps.",
+      disconnected: "Connect to the Gateway to load paired apps.",
+      connected: "Connected",
+      offline: "Offline",
+      onDevice: "Update on device",
+      onDeviceDescription:
+        "Open this app on its device to check for and install updates. Remote updates are not supported.",
+      current: "This app",
+      platform: "Platform",
+      unknownVersion: "Not reported",
+    },
     device: {
       title: "This Mac",
       version: "App version",

@@ -35,7 +35,7 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { formatDateTimeMs, formatTimeAgo } from "../../lib/format.ts";
 import { registerEnglishCatalog, t } from "../../lib/reactive/i18n.ts";
 import { SettingsSelectRow } from "./settings-select-row.tsx";
-import { DeviceUpdates } from "./updates-device.tsx";
+import { AppsUpdates } from "./updates-apps.tsx";
 import { RecordedAttempt } from "./updates-recorded-attempt.tsx";
 import { UpdatesStatus } from "./updates-status.tsx";
 import {
@@ -494,7 +494,6 @@ function GatewayUpdates(props: UpdatesViewProps) {
 
 export function Updates(props: UpdatesViewProps) {
   const [surface, setSurface] = createSignal<"gateway" | "apps">("gateway");
-  const hasNative = () => Boolean(props.nativeDeviceSettings);
   const gatewayUpdateAvailable = () =>
     !props.update.updateStatusCheckBanner &&
     !props.update.updateStatusRefreshing &&
@@ -502,87 +501,68 @@ export function Updates(props: UpdatesViewProps) {
   return (
     <div id="config-section-update">
       <SettingsPage>
-        <Show when={hasNative()}>
-          <Tabs
-            class="settings-segmented settings-segmented--accent"
-            ariaLabel={t("updates.page.systems")}
-            active={surface()}
-            activation="auto"
-            onSelect={(value) => {
-              if (value === "gateway" || value === "apps") {
-                setSurface(value);
-              }
-            }}
-            items={[
-              {
-                value: "gateway",
-                label: (
-                  <>
-                    {t("updates.page.gateway")}
-                    <Show when={gatewayUpdateAvailable()}>
-                      <span
-                        class="updates-tabs__available"
-                        style={{ color: "var(--accent)" }}
-                        role="img"
-                        aria-label={t("updates.page.availableLabel")}
-                      >
-                        •
-                      </span>
-                    </Show>
-                  </>
-                ),
-                className: [
-                  "settings-segmented__btn",
-                  { "settings-segmented__btn--active": surface() === "gateway" },
-                ],
-                id: "updates-gateway-tab",
-                panelId: "updates-gateway-panel",
-              },
-              {
-                value: "apps",
-                label: t("updates.page.apps"),
-                className: [
-                  "settings-segmented__btn",
-                  { "settings-segmented__btn--active": surface() === "apps" },
-                ],
-                id: "updates-apps-tab",
-                panelId: "updates-apps-panel",
-              },
-            ]}
-          />
-        </Show>
-        <Show
-          when={hasNative()}
-          fallback={
-            <Show when={props.commandScope ?? props} keyed>
-              {(_scope) => <GatewayUpdates {...props} />}
-            </Show>
-          }
+        <Tabs
+          class="settings-segmented settings-segmented--accent"
+          ariaLabel={t("updates.page.systems")}
+          active={surface()}
+          activation="auto"
+          onSelect={(value) => {
+            if (value === "gateway" || value === "apps") {
+              setSurface(value);
+            }
+          }}
+          items={[
+            {
+              value: "gateway",
+              label: (
+                <>
+                  {t("updates.page.gateway")}
+                  <Show when={gatewayUpdateAvailable()}>
+                    <span
+                      class="updates-tabs__available"
+                      style={{ color: "var(--accent)" }}
+                      role="img"
+                      aria-label={t("updates.page.availableLabel")}
+                    >
+                      •
+                    </span>
+                  </Show>
+                </>
+              ),
+              className: [
+                "settings-segmented__btn",
+                { "settings-segmented__btn--active": surface() === "gateway" },
+              ],
+              id: "updates-gateway-tab",
+              panelId: "updates-gateway-panel",
+            },
+            {
+              value: "apps",
+              label: t("updates.page.apps"),
+              className: [
+                "settings-segmented__btn",
+                { "settings-segmented__btn--active": surface() === "apps" },
+              ],
+              id: "updates-apps-tab",
+              panelId: "updates-apps-panel",
+            },
+          ]}
+        />
+
+        <TabPanel
+          id="updates-gateway-panel"
+          tabId="updates-gateway-tab"
+          active={surface() === "gateway"}
         >
-          <TabPanel
-            id="updates-gateway-panel"
-            tabId="updates-gateway-tab"
-            active={surface() === "gateway"}
-          >
-            <Show when={props.commandScope ?? props} keyed>
-              {(_scope) => <GatewayUpdates {...props} />}
-            </Show>
-          </TabPanel>
-          <Show when={props.nativeDeviceSettings} keyed>
-            {(capability) => (
-              <TabPanel
-                id="updates-apps-panel"
-                tabId="updates-apps-tab"
-                active={surface() === "apps"}
-              >
-                <DeviceUpdates
-                  capability={capability}
-                  captureCommandPresentation={props.captureCommandPresentation}
-                />
-              </TabPanel>
-            )}
+          <Show when={props.commandScope ?? props} keyed>
+            {(_scope) => <GatewayUpdates {...props} />}
           </Show>
-        </Show>
+        </TabPanel>
+        <TabPanel id="updates-apps-panel" tabId="updates-apps-tab" active={surface() === "apps"}>
+          <Show when={surface() === "apps"}>
+            <AppsUpdates {...props} />
+          </Show>
+        </TabPanel>
       </SettingsPage>
     </div>
   );

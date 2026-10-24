@@ -47,6 +47,8 @@ export function UpdatesPage(props: UpdatesPageProps) {
       commandScope={snapshot().client ?? props.context.overlays}
       captureCommandPresentation={props.captureCommandPresentation}
       nativeDeviceSettings={props.context.nativeDeviceSettings}
+      appsClient={snapshot().client}
+      appsConnectionRevision={gateway().read().connectionRevision}
       configObject={props.configObject}
       gatewayVersion={config().read().serverVersion ?? snapshot().hello?.server?.version ?? null}
       controlUiCommit={CONTROL_UI_BUILD_INFO.commit}

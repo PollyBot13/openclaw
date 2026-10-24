@@ -1,3 +1,4 @@
+import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { NativeDeviceSettingsCapability } from "../../app/native-device-settings.ts";
 import type { ApplicationUpdateOverlaySnapshot } from "../../app/overlays-types.ts";
 
@@ -12,6 +13,8 @@ export type UpdatesCommandPresentation = {
 export type UpdatesViewProps = {
   update: ApplicationUpdateOverlaySnapshot;
   statusRead: Promise<boolean> | null;
+  appsClient?: Pick<GatewayBrowserClient, "request"> | null;
+  appsConnectionRevision?: number;
   commandScope?: object;
   captureCommandPresentation: () => UpdatesCommandPresentation;
   nativeDeviceSettings?: NativeDeviceSettingsCapability | null;

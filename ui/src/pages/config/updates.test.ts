@@ -145,8 +145,8 @@ describe("renderUpdates", () => {
     expect(container.querySelector(".updates-tabs__available")).toBeNull();
 
     renderUpdates();
-    // The Gateway tab is only shown in the native-app shell.
-    expect(container.querySelector('[role="tab"]')).toBeNull();
+    // Apps inventory is also available in browser Control UI.
+    expect(container.querySelector("#updates-apps-tab")).not.toBeNull();
   });
 
   it("opens the retained attempt in the result owner without starting another update", () => {
