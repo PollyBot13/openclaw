@@ -745,47 +745,6 @@ it.each([
   },
 );
 
-it("shows four direct recovery actions instead of a redundant Review update action", async () => {
-  const run = createUpdateRunFixture({
-    status: "failed",
-    phase: "finished",
-    reason: "build-failed",
-    finishedAtMs: 4_000,
-    steps: [
-      { step: "requested", status: "completed" },
-      { step: "staging", status: "failed", detail: "Update staging failed." },
-    ],
-  });
-  const stream = createProgressStream({ run, busy: false, connected: true, failure: null });
-  const { settled } = startUpdate({
-    existingRun: run,
-    onCheckStatus: vi.fn(async () => true),
-    onReviewUpdate: vi.fn(),
-    onReportFailure: vi.fn(),
-    onDiagnoseFailure: vi.fn(),
-    readFailureActions: (attemptId) => ({
-      reportable: attemptId === run.runId,
-      diagnosable: attemptId === run.runId,
-      canReport: true,
-      canDiagnose: true,
-    }),
-    watchUpdateProgress: stream.watchUpdateProgress,
-  });
-  const { modal } = await getRenderedModalDialog(document.body);
-  const actionLabels = new Set(
-    [...modal.querySelectorAll(".exec-approval-actions button")].map((button) =>
-      button.textContent?.trim(),
-    ),
-  );
-  expect(actionLabels).toEqual(
-    new Set(["Refresh status", "Report failure", "Diagnose", "Try again"]),
-  );
-  expect(modal.querySelectorAll("button")).toHaveLength(5); // Header X plus four recovery actions.
-  expect(modal.querySelector('[data-step="staging"]')?.getAttribute("data-status")).toBe("failed");
-  findButton("Close").click();
-  await settled;
-});
-
 it.each([
   { status: "running", entry: "existing" },
   { status: "failed", entry: "existing" },

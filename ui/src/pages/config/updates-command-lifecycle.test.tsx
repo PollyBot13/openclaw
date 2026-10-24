@@ -33,9 +33,12 @@ it.each([
       phase: "finished",
       reason: "build-failed",
     });
-    const request = vi.fn<RequestFn>((method) =>
-      method === "update.report" ? preview.promise : Promise.resolve({ lastRun: run }),
-    );
+    const request = vi.fn<RequestFn>((method) => {
+      if (method === "update.report") {
+        return preview.promise;
+      }
+      return Promise.resolve(method === "node.list" ? { nodes: [] } : { lastRun: run });
+    });
     const harness = updateRunHarness(request);
     harness.update({ selfUser: { id: "synthetic-admin" } });
     const overlays = createApplicationOverlays(harness.gateway);

@@ -323,9 +323,9 @@ suite.define(() => {
         await page.getByRole("tab", { name: "Apps", exact: true }).click();
         const appsPanel = page.locator("#updates-apps-panel");
         expect(await page.locator(".page-subtitle").count()).toBe(0);
-        expect(
-          await appsPanel.getByRole("heading", { name: "App updates", exact: true }).count(),
-        ).toBe(1);
+        await expect
+          .poll(() => appsPanel.getByRole("heading", { name: "App updates", exact: true }).count())
+          .toBe(1);
         expect(
           await appsPanel
             .locator(".settings-row__title")

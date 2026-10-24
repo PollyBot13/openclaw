@@ -107,6 +107,8 @@ it("keeps native automatic-update intent until acknowledgement and permits retry
   nativeCapability = createNativeDeviceSettingsCapability();
   post.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   renderUpdates({ nativeDeviceSettings: nativeCapability });
+  container.querySelector<HTMLButtonElement>("#updates-apps-tab")!.click();
+  flush();
   const input = toggle("Automatic checks and downloads");
   input.checked = false;
   input.dispatchEvent(new Event("change"));
