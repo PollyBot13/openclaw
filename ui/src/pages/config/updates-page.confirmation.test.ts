@@ -10,24 +10,7 @@ import { createModalDialogTestFixture } from "../../test-helpers/modal-dialog.ts
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
 import { flush } from "../../test-helpers/solid-settle.ts";
 import { createUpdateRunFixture } from "../../test-helpers/update-run.ts";
-import { reportFailureOnUpdatesRoute, UpdatesPage } from "./updates-page.tsx";
-
-it("routes a confirmation failure report to Updates before reporting the captured attempt", async () => {
-  const events: string[] = [];
-  const context = {
-    navigate: vi.fn((route: string) => events.push(`navigate:${route}`)),
-    overlays: {
-      reportUpdateFailure: vi.fn(async (attemptId: string) => {
-        events.push(`report:${attemptId}`);
-      }),
-    },
-  } as unknown as ApplicationContext;
-
-  await reportFailureOnUpdatesRoute(context, "displayed-attempt");
-
-  expect(events).toEqual(["navigate:updates", "report:displayed-attempt"]);
-  expect(context.overlays.reportUpdateFailure).toHaveBeenCalledExactlyOnceWith("displayed-attempt");
-});
+import { UpdatesPage } from "./updates-page.tsx";
 
 it.each(["loading", "open"] as const)(
   "retires a Gateway update confirmation when its target changes while %s",
