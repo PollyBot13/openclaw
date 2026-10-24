@@ -831,7 +831,7 @@ it("presents initial and manual update status reads without hiding policy contro
   initial.resolve(true);
   await waitForSolid(() => expect(status()).toContain("Recorded update status"));
   const check = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (button) => button.textContent?.trim() === "Check status",
+    (button) => button.textContent?.trim() === "Refresh status",
   )!;
   check.click();
   await waitForSolid(() => expect(status()).toContain("Checking for updates…"));
@@ -910,7 +910,7 @@ it("retries a rejected update status read without hiding policy controls", async
   });
 });
 
-it("stages policy changes through patchForm and confirms Update Gateway… before overlays", async () => {
+it("stages policy changes through patchForm and confirms Update before overlays", async () => {
   const patchForm = vi.fn();
   const updateActions = {
     captureUpdateTarget: () => () => true,
@@ -940,14 +940,14 @@ it("stages policy changes through patchForm and confirms Update Gateway… befor
   const restoreDialogPolyfill = installDialogPolyfill();
   const updateButton = () =>
     [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent?.trim() === "Update Gateway…",
+      (button) => button.textContent?.trim() === "Update",
     )!;
   const status = () => container.querySelector(".settings-status")?.textContent;
 
   context.overlays.snapshot.updateStatusRefreshing = true;
   publishConfigSource(context.overlays);
   const checkingButton = updateButton();
-  expect(checkingButton.textContent?.trim()).toBe("Update Gateway…");
+  expect(checkingButton.textContent?.trim()).toBe("Update");
   expect(checkingButton).toMatchObject({ disabled: true, title: "Checking for updates…" });
   expect(status()).toContain("Checking for updates…");
   expect(container.querySelector(".settings-segmented__input")?.hasAttribute("disabled")).toBe(
@@ -993,7 +993,7 @@ it("stages policy changes through patchForm and confirms Update Gateway… befor
     control.checked = checked;
     control.dispatchEvent(new Event("change"));
   };
-  togglePolicy("Check for updates", false);
+  togglePolicy("Check automatically", false);
   togglePolicy("Automatic updates", true);
   updateButton().click();
   await nextFrame();

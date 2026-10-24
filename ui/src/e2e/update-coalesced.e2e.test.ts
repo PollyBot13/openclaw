@@ -282,7 +282,7 @@ suite.define(() => {
 
         await openUpdateConfirmation(page);
         if (run) {
-          await button(page, "Retry update").click();
+          await button(page, "Try again").click();
         }
         expect(await page.locator("openclaw-modal-dialog").getAttribute("label")).toBe(
           "Update Mac app + Gateway",
@@ -314,7 +314,7 @@ suite.define(() => {
             const confirm = buttons.find(
               (element) => element.textContent?.trim() === "Update Mac app and restart",
             );
-            const retry = buttons.find((element) => element.textContent?.trim() === "Retry update");
+            const retry = buttons.find((element) => element.textContent?.trim() === "Try again");
             return {
               nativeUpdateDialogPresent: Boolean(modal),
               nativeUpdateDialogOpen: modal?.querySelector("dialog")?.open ?? false,

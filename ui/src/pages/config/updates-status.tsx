@@ -83,8 +83,7 @@ export function UpdatesStatus(props: UpdatesViewProps & { checking: boolean }) {
       kind = "accent";
       label = t("updates.page.available", { target });
     } else if (props.update.updateSchedule?.install?.kind === "package") {
-      kind = "ok";
-      label = t("updates.page.upToDate");
+      label = t("updates.page.noUpdateAnnounced");
     } else {
       label = t("updates.page.statusUnavailable");
     }

@@ -116,7 +116,12 @@ export function UpdateRunView(props: { run: UpdateRunRecord | null; connected: b
             <header class="update-run-view__heading">
               <h3 role="status" aria-live="polite">
                 <Show when={current().terminal} fallback={current().headline}>
-                  <ReportHeadline headline={current().headline} />
+                  <Show
+                    when={props.run?.status === "failed" && !current().reconciled}
+                    fallback={<ReportHeadline headline={current().headline} />}
+                  >
+                    {t("updates.run.failureHeadline")}
+                  </Show>
                 </Show>
               </h3>
               <Show when={current().compactLabel}>
@@ -154,7 +159,6 @@ export function UpdateRunView(props: { run: UpdateRunRecord | null; connected: b
             </Show>
             <details
               class="update-run-view__diagnostics"
-              open
               onToggle={(event) => event.currentTarget.open && logFollow.schedule(true)}
             >
               <summary>
@@ -206,12 +210,15 @@ export function UpdateRunView(props: { run: UpdateRunRecord | null; connected: b
                 ]}
                 aria-label={t("updates.run.report")}
               >
-                <h4>
-                  <ReportHeadline headline={current().report.headline} />
-                </h4>
-                <div class="update-run-view__report-body" tabindex={0}>
-                  <For each={current().report.lines}>{(line) => <p>{line}</p>}</For>
-                </div>
+                <details class="update-run-view__report-details">
+                  <summary>{t("updates.run.fullReport")}</summary>
+                  <h4>
+                    <ReportHeadline headline={current().report.headline} />
+                  </h4>
+                  <div class="update-run-view__report-body" tabindex={0}>
+                    <For each={current().report.lines}>{(line) => <p>{line}</p>}</For>
+                  </div>
+                </details>
               </section>
             </Show>
           </section>

@@ -73,6 +73,12 @@ export function DeviceUpdates(props: {
     <Show when={snapshot() && updates()}>
       <SettingsSection title={t(deviceSettingsGroupLabelKey(snapshot()!))}>
         <SettingsRow
+          title={t("updates.page.system")}
+          control={
+            <SettingsValue value={snapshot()!.device.modelName ?? t("updates.page.thisDevice")} />
+          }
+        />
+        <SettingsRow
           title={t("updates.device.version")}
           control={
             <SettingsValue
@@ -88,7 +94,7 @@ export function DeviceUpdates(props: {
           fallback={
             <SettingsRow
               title={t("updates.device.unavailable")}
-              description={updates()!.unavailableReason}
+              description={updates()!.unavailableReason ?? t("updates.device.unsupported")}
             />
           }
         >
@@ -117,13 +123,15 @@ export function DeviceUpdates(props: {
                 title={t("updates.device.automatic")}
                 checked={checked()}
                 saving={saving()}
-                description={saving() ? t("common.saving") : undefined}
+                description={
+                  saving() ? t("common.saving") : t("updates.device.automaticDescription")
+                }
                 onChange={(value) => void changeAutomatic(value)}
               />
             </Loading>
           </Errored>
           <SettingsRow
-            title={t("updates.device.check")}
+            title={t("updates.device.checkTitle")}
             control={
               <button
                 class="btn primary"

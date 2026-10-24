@@ -320,7 +320,20 @@ suite.define(() => {
         });
 
         await sidebar.locator('a[href="/settings/updates"]').click();
-        await page.getByRole("button", { name: "Check for Updates…", exact: true }).click();
+        await page.getByRole("tab", { name: "Apps", exact: true }).click();
+        const appsPanel = page.locator("#updates-apps-panel");
+        await appsPanel.getByText("2026.9.3 (build 42)", { exact: true }).waitFor();
+        await appsPanel
+          .getByRole("switch", { name: "Automatic checks and downloads", exact: true })
+          .waitFor();
+        if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
+          await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: path.join(artifactDir, "03-app-updates.png"),
+          });
+        }
+        await appsPanel.getByRole("button", { name: "Check now", exact: true }).click();
         await expect.poll(messages).toContainEqual({ type: "check-for-updates" });
       },
     );

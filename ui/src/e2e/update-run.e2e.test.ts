@@ -43,7 +43,7 @@ suite.define(() => {
         });
         await page.goto(`${suite.server.baseUrl}settings/updates`);
         await gateway.waitForRequest("config.get");
-        await page.getByRole("button", { name: "Update Gateway…", exact: true }).click();
+        await page.getByRole("button", { name: "Update", exact: true }).click();
         const dialog = page.locator("openclaw-modal-dialog");
         await dialog.getByRole("button", { name: "Update and restart", exact: true }).waitFor();
         expect(await gateway.getRequests("update.run")).toHaveLength(0);

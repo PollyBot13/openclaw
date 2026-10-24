@@ -957,6 +957,7 @@ textarea.settings-input {
 
 .updates-status-control {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-3);
@@ -966,6 +967,49 @@ textarea.settings-input {
     white-space: normal;
     overflow-wrap: anywhere;
   }
+}
+
+.updates-tabs {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.updates-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: var(--cursor-action);
+}
+
+.updates-tabs__tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.updates-tabs__available {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.updates-technical-details {
+  margin-top: var(--space-4);
+}
+
+.updates-technical-details > summary {
+  cursor: var(--cursor-action);
+  color: var(--muted);
+  font-size: var(--control-ui-text-sm);
 }
 
 .updates-status-check-failed .settings-status {

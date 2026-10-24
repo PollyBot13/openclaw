@@ -42,6 +42,12 @@ function rowButton(title: string) {
   return row(title).querySelector<HTMLButtonElement>("button")!;
 }
 
+function updateButton() {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+    ["Update", "Updating…"].includes(button.textContent?.trim() ?? ""),
+  )!;
+}
+
 function text(title: string) {
   return row(title).textContent;
 }
@@ -79,7 +85,7 @@ function statusCase(
     props,
     status,
     tone,
-    button: { disabled: false, title: "", label: "Update Gateway…", ...button },
+    button: { disabled: false, title: "", label: "Update", ...button },
   };
 }
 
@@ -133,29 +139,72 @@ function waitingUpdate(campaign: Pick<Campaign, "forceAtMs"> & Partial<Campaign>
 }
 
 describe("renderUpdates", () => {
+  it("keeps update availability separate from unknown and failed status", () => {
+    const nativeDeviceSettings = nativeSettings(createNativeDeviceSettingsSnapshot());
+    renderUpdates({ nativeDeviceSettings });
+    expect(container.querySelector('[role="tab"]')).not.toBeNull();
+    expect(container.querySelector(".updates-tabs__available")).not.toBeNull();
+
+    renderUpdates({ nativeDeviceSettings, update: { updateStatusCheckBanner: checkFailure } });
+    expect(container.querySelector(".updates-tabs__available")).toBeNull();
+
+    renderUpdates();
+    // The Gateway tab is only shown in the native-app shell.
+    expect(container.querySelector('[role="tab"]')).toBeNull();
+  });
+
+  it("shows all supported recovery actions on a failed attempt", () => {
+    const onCheckStatus = vi.fn(async () => true);
+    const onUpdateNow = vi.fn(async () => undefined);
+    const onReportFailure = vi.fn(async () => undefined);
+    const onDiagnoseFailure = vi.fn();
+    const run = failedRun();
+    renderUpdates({
+      update: {
+        updateRun: run,
+        reportableUpdateFailureId: run.runId,
+        diagnosableUpdateFailureId: run.runId,
+      },
+      onCheckStatus,
+      onUpdateNow,
+      onReportFailure,
+      onDiagnoseFailure,
+    });
+
+    const recovery = row("Recovery");
+    const actions = [...recovery.querySelectorAll<HTMLButtonElement>("button")];
+    expect(actions.map((button) => button.textContent?.trim())).toEqual([
+      "Refresh status",
+      "Diagnose",
+      "Try again",
+      "Report failure",
+    ]);
+    actions.forEach((button) => button.click());
+    expect(onCheckStatus).toHaveBeenCalledOnce();
+    expect(onDiagnoseFailure).toHaveBeenCalledWith(run.runId);
+    expect(onUpdateNow).toHaveBeenCalledOnce();
+    expect(onReportFailure).toHaveBeenCalledWith(run.runId);
+  });
+
   it.each([
-    ["available", {}, "Install the available update and restart the Gateway."],
+    ["available", {}],
     [
       "current",
       {
         updateSchedule: { channel: "stable", autoEnabled: false, install: { kind: "package" } },
         updateAvailable: null,
       },
-      "Run the Gateway updater and restart. The current version may be reinstalled.",
     ],
-    [
-      "unknown",
-      { updateSchedule: null, updateAvailable: null },
-      "Run the Gateway updater and restart. The current version may be reinstalled.",
-    ],
-  ] as const)("identifies the Gateway action with %s status", (_status, update, description) => {
+    ["unknown", { updateSchedule: null, updateAvailable: null }],
+  ] as const)("identifies the Gateway action with %s status", (_status, update) => {
     renderUpdates({ update });
-    const action = row("Update Gateway…");
-    expect(action.textContent).toContain(description);
-    expect(action.querySelector("button")?.classList.contains("primary")).toBe(false);
+    expect(row("Installed version").textContent).toContain("2026.8.1");
+    expect(row("Status")).toBeDefined();
+    expect(updateButton().textContent?.trim()).toBe("Update");
+    expect(updateButton().classList.contains("primary")).toBe(false);
   });
 
-  it.each(["Update Gateway…", "Retry update"])(
+  it.each(["Update", "Try again"])(
     "dispatches %s to the latest handler without replacing the button",
     (label) => {
       const initial = vi.fn(async () => undefined);
@@ -164,7 +213,7 @@ describe("renderUpdates", () => {
         onTestFinished(dispose);
         return createSignal<() => Promise<void>>(() => initial);
       });
-      const update = label === "Retry update" ? { updateRun: failedRun() } : undefined;
+      const update = label === "Try again" ? { updateRun: failedRun() } : undefined;
       mountUpdates(
         merge(createProps({ update }), {
           get onUpdateNow() {
@@ -229,8 +278,8 @@ describe("renderUpdates", () => {
           updateAvailable: null,
         },
       },
-      "Up to date",
-      "ok",
+      "No update announced",
+      "muted",
     ),
     statusCase("update available", {}),
     statusCase(
@@ -255,13 +304,13 @@ describe("renderUpdates", () => {
       status,
       tone === "muted" ? "settings-status" : `settings-status settings-status--${tone}`,
     ]);
-    const button = row("Update Gateway…").querySelector<HTMLButtonElement>("button")!;
+    const button = updateButton();
     expect(button.textContent?.trim()).toBe(expected.label);
     expect(button).toMatchObject({ disabled: expected.disabled, title: expected.title });
     if (props.update?.updateStatusCheckBanner) {
       expect(container.textContent).not.toContain("Latest update attempt");
       const check = statusRow.querySelector<HTMLButtonElement>("button")!;
-      expect([check.textContent?.trim(), check.disabled]).toEqual(["Check for updates", false]);
+      expect([check.textContent?.trim(), check.disabled]).toEqual(["Refresh status", false]);
       check.click();
       expect(onCheckStatus).toHaveBeenCalledOnce();
     }
@@ -295,10 +344,10 @@ describe("renderUpdates", () => {
       const props = createProps({ nativeDeviceSettings });
       mountUpdates(props);
       expect(container.textContent).not.toMatch(
-        /This Mac|This iPhone|This device|App version|Check for updates automatically/,
+        /This Mac|This iPhone|This device|App version|Automatic checks and downloads/,
       );
-      expect(text("Gateway version")).toContain("2026.8.1");
-      rowButton("Update Gateway…").click();
+      expect(text("Installed version")).toContain("2026.8.1");
+      updateButton().click();
       expect(props.onUpdateNow).toHaveBeenCalledOnce();
       expect(nativeDeviceSettings.checkForUpdates).not.toHaveBeenCalled();
     },
@@ -319,16 +368,19 @@ describe("renderUpdates", () => {
     } satisfies NativeDeviceSettingsCapability;
     const props = createProps({ nativeDeviceSettings, canAdmin: false, configBusy: true });
     mountUpdates(props);
+    container.querySelector<HTMLButtonElement>('[role="tab"]:nth-child(2)')?.click();
+    flush();
     expect(container.textContent).toContain("This Mac");
+    expect(row("System").textContent).toContain("This device");
     expect(row("App version").textContent).toContain("2026.9.3 (build 42)");
-    expect(toggle("Check for updates automatically").hasAttribute("aria-disabled")).toBe(false);
-    setToggle("Check for updates automatically", false);
+    expect(toggle("Automatic checks and downloads").hasAttribute("aria-disabled")).toBe(false);
+    setToggle("Automatic checks and downloads", false);
     expect(nativeDeviceSettings.set).toHaveBeenCalledWith(
       "updates.automatic",
       false,
       expect.any(Function),
     );
-    const appUpdateButton = rowButton("Check for Updates…");
+    const appUpdateButton = rowButton("App updates");
     expect(appUpdateButton.classList.contains("primary")).toBe(true);
     appUpdateButton.click();
     expect(nativeDeviceSettings.checkForUpdates).toHaveBeenCalledOnce();
@@ -349,7 +401,7 @@ describe("renderUpdates", () => {
       expect(row("App version").textContent).toContain("2026.9.4 (build 43)"),
     );
     expect(row("App updates unavailable").textContent).toContain("Updater is not bundled");
-    expect(container.textContent).not.toContain("Check for updates automatically");
+    expect(container.textContent).not.toContain("Automatic checks and downloads");
     renderUpdates();
     await waitForSolid(() => expect(container.textContent).not.toContain("This Mac"));
   });
@@ -357,7 +409,7 @@ describe("renderUpdates", () => {
   it("renders build facts and retains policy controls across a config refresh", () => {
     const onAutomaticUpdatesChange = vi.fn();
     renderUpdates({ onAutomaticUpdatesChange });
-    expect(text("Gateway version")).toContain("2026.8.1");
+    expect(text("Installed version")).toContain("2026.8.1");
     expect(text("Control UI commit")).toContain("0123456789ab");
     expect(
       ["Built", "Last commit"].map((title) => row(title).querySelector("time")?.dateTime),
@@ -444,7 +496,9 @@ describe("renderUpdates", () => {
     mountUpdates({ ...props, nowMs: 61_000 });
     expect(row("Status").querySelector("[role='timer']")).toBe(timer);
     expect(timer?.textContent).toContain("Waiting for active work · forced update in 11:41");
-    const hold = row("Status").querySelector<HTMLButtonElement>("button");
+    const hold = [...row("Status").querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Hold 1 h",
+    );
     expect(hold?.textContent?.trim()).toBe("Hold 1 h");
     hold!.click();
     await waitForSolid(() => expect(hold!.disabled).toBe(true));
@@ -453,7 +507,11 @@ describe("renderUpdates", () => {
     expect(row("Status").querySelector("[role='timer']")).toBe(timer);
     holding.resolve(false);
     await waitForSolid(() => expect(hold!.disabled).toBe(false));
-    expect(row("Status").querySelector("button")).toBe(hold);
+    expect(
+      [...row("Status").querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Hold 1 h",
+      ),
+    ).toBe(hold);
     hold!.click();
     expect(onHoldUpdate).toHaveBeenCalledTimes(2);
     await waitForSolid(() => expect(hold!.disabled).toBe(false));
@@ -467,7 +525,9 @@ describe("renderUpdates", () => {
       .mockReturnValueOnce(retired.promise)
       .mockReturnValueOnce(current.promise);
     renderUpdates({ update: waitingUpdate({ forceAtMs: 762_000 }), onHoldUpdate });
-    const hold = row("Status").querySelector<HTMLButtonElement>("button")!;
+    const hold = [...row("Status").querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Hold 1 h",
+    )!;
     hold.click();
     await waitForSolid(() => expect(hold.disabled).toBe(true));
 
@@ -475,7 +535,9 @@ describe("renderUpdates", () => {
       update: waitingUpdate({ id: "campaign-2", forceAtMs: 762_000 }),
       onHoldUpdate,
     });
-    const replacement = row("Status").querySelector<HTMLButtonElement>("button")!;
+    const replacement = [...row("Status").querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Hold 1 h",
+    )!;
     expect(replacement.disabled).toBe(false);
     retired.resolve(false);
     await retired.promise;
@@ -494,13 +556,17 @@ describe("renderUpdates", () => {
     mountUpdates(props);
 
     expect(row("Status").textContent).toContain("Update held · resumes in 1:00");
-    expect(row("Status").querySelector("button")).toBeNull();
+    const holdButton = () =>
+      [...row("Status").querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "Hold 1 h",
+      );
+    expect(holdButton()).toBeUndefined();
     mountUpdates({ ...props, nowMs: 31_000 });
     expect(row("Status").textContent).toContain("Update held · resumes in 0:30");
-    expect(row("Status").querySelector("button")).toBeNull();
+    expect(holdButton()).toBeUndefined();
     mountUpdates({ ...props, nowMs: 61_000 });
     expect(row("Status").textContent).toContain("Waiting for active work · forced update in 15:00");
-    expect(row("Status").querySelector("button")?.textContent?.trim()).toBe("Hold 1 h");
+    expect(holdButton()?.textContent?.trim()).toBe("Hold 1 h");
 
     renderUpdates({
       update: {
@@ -508,7 +574,11 @@ describe("renderUpdates", () => {
         heldUpdateCampaignId: "campaign-1",
       },
     });
-    expect(row("Status").querySelector("button")).toBeNull();
+    expect(
+      [...row("Status").querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "Hold 1 h",
+      ),
+    ).toBe(false);
   });
 
   it("shows truthful Git build, install, and commit ages", () => {
@@ -609,12 +679,14 @@ describe("renderUpdates", () => {
       if (recovery) {
         const actions = row("Recovery");
         actions.querySelector<HTMLButtonElement>("button")?.click();
-        actions.querySelectorAll<HTMLButtonElement>("button")[1]?.click();
+        [...actions.querySelectorAll<HTMLButtonElement>("button")]
+          .find((button) => button.textContent?.trim() === "Try again")
+          ?.click();
         expect(onCheckStatus).toHaveBeenCalledOnce();
         expect(onUpdateNow).toHaveBeenCalledOnce();
         expect(row("CLI fallback").querySelector("code")?.textContent).toBe("openclaw triage");
       } else {
-        expect(container.textContent).not.toContain("Retry update");
+        expect(container.textContent).not.toContain("Try again");
         expect(container.textContent).not.toContain("openclaw triage");
       }
       if (reconciled) {
@@ -650,7 +722,7 @@ describe("renderUpdates", () => {
       });
 
       expect(row("Status").textContent).toContain(reason);
-      expect(container.textContent?.includes("Retry update")).toBe(recovery);
+      expect(container.textContent?.includes("Try again")).toBe(recovery);
       expect(container.textContent?.includes("CLI fallback")).toBe(recovery);
       expect(container.textContent?.includes("openclaw triage")).toBe(recovery);
     },

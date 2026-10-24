@@ -88,7 +88,7 @@ it.each([
       if (command === "report") {
         const report = await waitForSolid(() => {
           const button = [...view.querySelectorAll<HTMLButtonElement>("button")].find(
-            (candidate) => candidate.textContent?.trim() === "Report update failure",
+            (candidate) => candidate.textContent?.trim() === "Report failure",
           );
           expect(button).toBeDefined();
           expect(button!.disabled).toBe(false);
@@ -101,9 +101,12 @@ it.each([
         );
         expect(overlays.snapshot.updateFailureReportBusy).toBe(true);
       } else {
+        [...view.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find((button) => button.textContent?.trim() === "Apps")
+          ?.click();
         const input = await waitForSolid(() => {
           const row = [...view.querySelectorAll(".settings-row")].find((candidate) =>
-            candidate.textContent?.includes("Check for updates automatically"),
+            candidate.textContent?.includes("Automatic checks and downloads"),
           );
           const toggleInput = row?.querySelector<HTMLInputElement>('input[role="switch"]');
           expect(toggleInput?.checked).toBe(true);
@@ -149,7 +152,7 @@ it.each([
         });
         await waitForSolid(() => {
           const report = [...view.querySelectorAll<HTMLButtonElement>("button")].find(
-            (button) => button.textContent?.trim() === "Report update failure",
+            (button) => button.textContent?.trim() === "Report failure",
           );
           expect(report?.disabled).toBe(false);
         });

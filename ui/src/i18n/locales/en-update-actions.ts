@@ -15,9 +15,11 @@ const enUpdateActions = {
       phases: "Update phases",
       steps: "Installation steps",
       details: "Step details",
+      fullReport: "Full report",
       noDetails: "No step details recorded yet.",
       verification: "Verification checks",
       report: "Update report",
+      failureHeadline: "Couldn’t finish the update.",
       restarting: "Gateway restarting…",
       reconnecting: "Reconnecting automatically. Update progress is saved on the gateway.",
       progress: "{completed} of {total} phases complete",
@@ -103,19 +105,25 @@ const enUpdateActions = {
         "The Gateway disconnected during the update. This page reconnects on its own. If it stays disconnected, run `openclaw triage` on the Gateway host to open a local coding agent for diagnosis and repair.",
       restarting:
         "The Gateway is restarting. This page disconnects and reconnects on its own. If it stays disconnected, run `openclaw triage` on the Gateway host to open a local coding agent for diagnosis and repair.",
-      checkStatus: "Check status",
+      checkStatus: "Refresh status",
       checkingStatus: "Checking status…",
       statusRefreshed: "Status refreshed.",
       statusNotRefreshed: "Status could not be refreshed. Check your connection and try again.",
       checkStatusDisconnected: "Reconnect to the Gateway to check status or retry the update.",
-      retryUpdate: "Retry update",
+      retryUpdate: "Try again",
       installing: "Installing the update on the Gateway. It restarts once the install finishes.",
       notStarted:
         "The update request went unanswered. Run `openclaw triage` on the Gateway host and inspect the result before retrying.",
     },
     channel: en.updates.channel,
     installKind: en.updates.installKind,
-    page: en.updates.page,
+    page: {
+      ...en.updates.page,
+      checkStatus: "Refresh status",
+      retryUpdate: "Try again",
+      diagnoseFailure: "Diagnose",
+      reportFailure: "Report failure",
+    },
     coalescedRestart: en.updates.coalescedRestart,
     error: en.updates.error,
     checkError: en.updates.checkError,
@@ -171,9 +179,11 @@ export const registerUpdateActionsEnglish = Object.assign(
       refreshFailed,
       holdOneHour,
       reviewUpdate,
+      page,
     } = enUpdateActions.updates;
     const { phase, ...runLabels } = run;
     Object.assign(en.updates, { adminRequired, refreshFailed, holdOneHour, reviewUpdate });
+    Object.assign(en.updates.page, page);
     Object.assign(en.updates.run, runLabels);
     Object.assign(en.updates.run.phase, phase);
     Object.assign(en.updates.target, target);

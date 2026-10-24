@@ -17,7 +17,6 @@ import {
 import type { UpdateScheduleState } from "../../api/types.ts";
 import {
   formatUpdateCampaignLabel,
-  formatUpdateTargetLabel,
   getUpdateGitComparison,
   isUpdateActionable,
 } from "../../app/update-schedule-projection.ts";
@@ -31,6 +30,7 @@ import {
   SettingsToggleRow,
   SettingsValue,
 } from "../../components/solid/settings-ui.tsx";
+import { TabPanel, Tabs } from "../../components/solid/tabs.tsx";
 import { UpdateGitRevisions } from "../../components/solid/update-git-revisions.tsx";
 import { registerSettingsEnglish } from "../../i18n/locales/en-settings.ts";
 import { registerUpdateActionsEnglish } from "../../i18n/locales/en-update-actions.ts";
@@ -115,7 +115,6 @@ function BuildFacts(props: UpdatesViewProps) {
     git()?.commitAtMs ?? parseDateStringTimestampMs(props.controlUiCommitAt) ?? null;
   return (
     <SettingsSection title={t("updates.page.buildTitle")}>
-      <BuildIdentifier title={t("updates.page.gatewayVersion")} value={props.gatewayVersion} />
       <BuildIdentifier
         title={t("updates.page.controlUiCommit")}
         value={props.controlUiCommit}
@@ -309,54 +308,36 @@ function GatewayUpdates(props: UpdatesViewProps) {
           {t("updates.adminRequired")}
         </div>
       </Show>
-      <BuildFacts {...props} />
-      <RecordedAttempt
-        {...props}
-        confirming={confirming()}
-        checking={checking()}
-        onUpdateNow={updateNow}
-      />
-      <SettingsSection title={t("updates.page.policyTitle")}>
+
+      <SettingsSection
+        title={t("updates.page.overview")}
+        actions={
+          <button
+            type="button"
+            class="btn"
+            title={updateButtonTitle()}
+            disabled={
+              confirming() ||
+              props.updateBusy ||
+              props.update.updateStatusRefreshing ||
+              !props.canUpdate ||
+              checkRequired()
+            }
+            onClick={() => void updateNow()}
+          >
+            <Icon name="download" />
+            {props.updateBusy ? t("updates.page.updating") : t("updates.page.update")}
+          </button>
+        }
+      >
         <SettingsRow
-          title={t("updates.page.channel")}
-          description={t("updates.page.channelDescription")}
-          stacked
-          control={
-            <SettingsSegmented
-              value={settings().channel}
-              options={channelOptions()}
-              ariaLabel={t("updates.page.channel")}
-              disabled={props.configBusy}
-              onChange={props.onChannelChange}
-            />
-          }
+          title={t("updates.page.component")}
+          control={<SettingsValue value={t("updates.page.gateway")} />}
         />
-        <SettingsToggleRow
-          title={t("updates.page.checkForUpdates")}
-          description={t("updates.page.checkForUpdatesDescription")}
-          checked={!checksDisabled()}
-          disabled={props.configBusy}
-          onChange={props.onUpdateChecksChange}
+        <SettingsRow
+          title={t("updates.page.installedVersion")}
+          control={<SettingsValue value={props.gatewayVersion ?? t("common.na")} />}
         />
-        <SettingsToggleRow
-          title={t("updates.page.automaticUpdates")}
-          description={
-            settings().extendedStable
-              ? t("updates.page.extendedStableAutomaticHint")
-              : devPackageInstall()
-                ? t("updates.page.devPackageAutomaticHint")
-                : checksDisabled()
-                  ? t("updates.page.checksDisabledAutomaticHint")
-                  : t("updates.page.automaticUpdatesDescription")
-          }
-          checked={!settings().extendedStable && settings().autoEnabled}
-          disabled={
-            props.configBusy || checksDisabled() || settings().extendedStable || devPackageInstall()
-          }
-          onChange={props.onAutomaticUpdatesChange}
-        />
-      </SettingsSection>
-      <SettingsSection title={t("updates.page.statusTitle")}>
         <SettingsRow
           title={t("updates.page.scheduleStatus")}
           description={
@@ -400,28 +381,26 @@ function GatewayUpdates(props: UpdatesViewProps) {
                   />
                 </Show>
               </div>
-              <Show when={props.update.updateStatusCheckBanner}>
-                <button
-                  type="button"
-                  class="btn btn--sm"
-                  title={
-                    props.update.updateStatusRefreshing
-                      ? t("updates.page.checking")
-                      : props.canCheckStatus
-                        ? ""
-                        : t("updates.adminRequired")
-                  }
-                  disabled={
-                    !props.canCheckStatus ||
-                    checking() ||
-                    props.update.updateStatusRefreshing ||
-                    props.updateBusy
-                  }
-                  onClick={() => void props.onCheckStatus()}
-                >
-                  {t("updates.page.checkForUpdates")}
-                </button>
-              </Show>
+              <button
+                type="button"
+                class="btn btn--sm"
+                title={
+                  props.update.updateStatusRefreshing
+                    ? t("updates.page.checking")
+                    : props.canCheckStatus
+                      ? ""
+                      : t("updates.adminRequired")
+                }
+                disabled={
+                  !props.canCheckStatus ||
+                  checking() ||
+                  props.update.updateStatusRefreshing ||
+                  props.updateBusy
+                }
+                onClick={() => void props.onCheckStatus()}
+              >
+                {t("updates.page.checkStatus")}
+              </button>
               <Show when={showHold()}>
                 <button
                   type="button"
@@ -490,33 +469,56 @@ function GatewayUpdates(props: UpdatesViewProps) {
         <Show when={!run()}>
           <CommitList {...props} />
         </Show>
+      </SettingsSection>
+      <RecordedAttempt
+        {...props}
+        confirming={confirming()}
+        checking={checking()}
+        onUpdateNow={updateNow}
+      />
+      <SettingsSection title={t("updates.page.policyTitle")}>
         <SettingsRow
-          title={t("updates.page.updateNow")}
-          description={t(
-            formatUpdateTargetLabel(props.update.updateSchedule, props.update.updateAvailable)
-              ? "updates.page.updateNowDescription"
-              : "updates.page.noKnownUpdateDescription",
-          )}
+          title={t("updates.page.channel")}
+          description={t("updates.page.channelDescription")}
+          stacked
           control={
-            <button
-              type="button"
-              class="btn"
-              title={updateButtonTitle()}
-              disabled={
-                confirming() ||
-                props.updateBusy ||
-                props.update.updateStatusRefreshing ||
-                !props.canUpdate ||
-                checkRequired()
-              }
-              onClick={() => void updateNow()}
-            >
-              <Icon name="download" />
-              {props.updateBusy ? t("updates.page.updating") : t("updates.page.updateNow")}
-            </button>
+            <SettingsSegmented
+              value={settings().channel}
+              options={channelOptions()}
+              ariaLabel={t("updates.page.channel")}
+              disabled={props.configBusy}
+              onChange={props.onChannelChange}
+            />
           }
         />
+        <SettingsToggleRow
+          title={t("updates.page.checkForUpdates")}
+          checked={!checksDisabled()}
+          disabled={props.configBusy}
+          onChange={props.onUpdateChecksChange}
+        />
+        <SettingsToggleRow
+          title={t("updates.page.automaticUpdates")}
+          description={
+            settings().extendedStable
+              ? t("updates.page.extendedStableAutomaticHint")
+              : devPackageInstall()
+                ? t("updates.page.devPackageAutomaticHint")
+                : checksDisabled()
+                  ? t("updates.page.checksDisabledAutomaticHint")
+                  : t("updates.page.automaticUpdatesDescription")
+          }
+          checked={!settings().extendedStable && settings().autoEnabled}
+          disabled={
+            props.configBusy || checksDisabled() || settings().extendedStable || devPackageInstall()
+          }
+          onChange={props.onAutomaticUpdatesChange}
+        />
       </SettingsSection>
+      <details class="updates-technical-details">
+        <summary>{t("updates.page.technicalDetails")}</summary>
+        <BuildFacts {...props} />
+      </details>
       <p class="settings-page__hint">
         <a href="https://docs.openclaw.ai/install/update-troubleshooting" target="_blank">
           {t("updates.page.troubleshoot")}
@@ -546,19 +548,86 @@ function GatewayUpdates(props: UpdatesViewProps) {
 }
 
 export function Updates(props: UpdatesViewProps) {
+  const [surface, setSurface] = createSignal<"gateway" | "apps">("gateway");
+  const hasNative = () => Boolean(props.nativeDeviceSettings);
+  const gatewayUpdateAvailable = () =>
+    !props.update.updateStatusCheckBanner &&
+    !props.update.updateStatusRefreshing &&
+    isUpdateActionable(props.update.updateAvailable, props.update.updateSchedule, props.updateBusy);
   return (
     <div id="config-section-update">
       <SettingsPage>
-        <Show when={props.nativeDeviceSettings} keyed>
-          {(capability) => (
-            <DeviceUpdates
-              capability={capability}
-              captureCommandPresentation={props.captureCommandPresentation}
-            />
-          )}
+        <Show when={hasNative()}>
+          <Tabs
+            class="updates-tabs"
+            ariaLabel={t("updates.page.systems")}
+            active={surface()}
+            activation="auto"
+            onSelect={(value) => {
+              if (value === "gateway" || value === "apps") {
+                setSurface(value);
+              }
+            }}
+            items={[
+              {
+                value: "gateway",
+                label: (
+                  <>
+                    {t("updates.page.gateway")}
+                    <Show when={gatewayUpdateAvailable()}>
+                      <span
+                        class="updates-tabs__available"
+                        role="img"
+                        aria-label={t("updates.page.availableLabel")}
+                      />
+                    </Show>
+                  </>
+                ),
+                className: "updates-tabs__tab",
+                id: "updates-gateway-tab",
+                panelId: "updates-gateway-panel",
+              },
+              {
+                value: "apps",
+                label: t("updates.page.apps"),
+                className: "updates-tabs__tab",
+                id: "updates-apps-tab",
+                panelId: "updates-apps-panel",
+              },
+            ]}
+          />
         </Show>
-        <Show when={props.commandScope ?? props} keyed>
-          {(_scope) => <GatewayUpdates {...props} />}
+        <Show
+          when={hasNative()}
+          fallback={
+            <Show when={props.commandScope ?? props} keyed>
+              {(_scope) => <GatewayUpdates {...props} />}
+            </Show>
+          }
+        >
+          <TabPanel
+            id="updates-gateway-panel"
+            tabId="updates-gateway-tab"
+            active={surface() === "gateway"}
+          >
+            <Show when={props.commandScope ?? props} keyed>
+              {(_scope) => <GatewayUpdates {...props} />}
+            </Show>
+          </TabPanel>
+          <Show when={props.nativeDeviceSettings} keyed>
+            {(capability) => (
+              <TabPanel
+                id="updates-apps-panel"
+                tabId="updates-apps-tab"
+                active={surface() === "apps"}
+              >
+                <DeviceUpdates
+                  capability={capability}
+                  captureCommandPresentation={props.captureCommandPresentation}
+                />
+              </TabPanel>
+            )}
+          </Show>
         </Show>
       </SettingsPage>
     </div>

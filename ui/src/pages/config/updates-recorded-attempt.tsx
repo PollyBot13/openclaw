@@ -88,49 +88,68 @@ export function RecordedAttempt(
                 >
                   {t("updates.page.checkStatus")}
                 </button>
-                <Show when={props.update.diagnosableUpdateFailureId}>
+                <Show when={failed()}>
                   <button
                     class="btn btn--sm"
                     type="button"
-                    title={props.canDiagnose ? "" : t("updates.adminRequired")}
+                    title={
+                      !props.update.diagnosableUpdateFailureId
+                        ? t("updates.page.failureActionUnavailable")
+                        : props.canDiagnose
+                          ? ""
+                          : t("updates.adminRequired")
+                    }
                     disabled={
+                      !props.update.diagnosableUpdateFailureId ||
                       reporting() ||
                       !props.canDiagnose ||
                       props.updateBusy ||
                       props.update.updateStatusRefreshing ||
                       props.update.updateFailureReportBusy
                     }
-                    onClick={() =>
-                      props.onDiagnoseFailure(props.update.diagnosableUpdateFailureId!)
-                    }
+                    onClick={() => {
+                      const id = props.update.diagnosableUpdateFailureId;
+                      if (id) {
+                        props.onDiagnoseFailure(id);
+                      }
+                    }}
                   >
                     {t("updates.page.diagnoseFailure")}
                   </button>
-                </Show>
-                <Show when={failed()}>
                   <button
                     class="btn btn--sm primary"
                     type="button"
                     title={canRetry() ? "" : t("updates.adminRequired")}
-                    disabled={!canRetry()}
+                    disabled={!failed() || !canRetry()}
                     onClick={() => void props.onUpdateNow()}
                   >
                     {t("updates.page.retryUpdate")}
                   </button>
-                </Show>
-                <Show when={failed() && props.update.reportableUpdateFailureId}>
                   <button
                     class="btn btn--sm"
                     type="button"
-                    title={props.canReport ? "" : t("updates.page.reportOwnerRequired")}
+                    title={
+                      !props.update.reportableUpdateFailureId
+                        ? t("updates.page.failureActionUnavailable")
+                        : props.canReport
+                          ? ""
+                          : t("updates.page.reportOwnerRequired")
+                    }
                     disabled={
+                      !failed() ||
+                      !props.update.reportableUpdateFailureId ||
                       reporting() ||
                       !props.canReport ||
                       props.updateBusy ||
                       props.update.updateStatusRefreshing ||
                       props.update.updateFailureReportBusy
                     }
-                    onClick={() => void reportFailure(props.update.reportableUpdateFailureId!)}
+                    onClick={() => {
+                      const id = props.update.reportableUpdateFailureId;
+                      if (id) {
+                        void reportFailure(id);
+                      }
+                    }}
                   >
                     {reporting() || props.update.updateFailureReportBusy
                       ? t("updates.page.reportSubmitting")

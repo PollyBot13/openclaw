@@ -1,6 +1,8 @@
 // Control UI tests cover the routed Updates settings page through a mocked Gateway.
+import path from "node:path";
 import type { Page } from "playwright";
 import { expect, it } from "vitest";
+import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createUpdateRunFixture } from "../test-helpers/update-run.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
@@ -57,8 +59,18 @@ suite.define(() => {
       });
       expect((await page.goto(`${suite.server.baseUrl}settings/updates`))?.status()).toBe(200);
       await gateway.waitForRequest("update.status");
+      if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: false,
+          path: path.join(
+            createControlUiE2eArtifactDir("updates-settings-proof"),
+            "gateway-overview.png",
+          ),
+        });
+      }
       const policy = page.getByRole("switch", { name: "Automatic updates" });
-      const checks = page.getByRole("switch", { name: "Check for updates" });
+      const checks = page.getByRole("switch", { name: "Check automatically" });
       await policy.waitFor();
       await expect.poll(() => policy.isDisabled()).toBe(false);
 
@@ -148,14 +160,14 @@ suite.define(() => {
 
       const content = page.locator("#control-ui-main");
       await content.getByText("Updates", { exact: true }).waitFor();
-      const checks = content.getByRole("switch", { name: "Check for updates", exact: true });
+      const checks = content.getByRole("switch", { name: "Check automatically", exact: true });
       const automatic = content.getByRole("switch", { name: "Automatic updates", exact: true });
       await expect.poll(() => automatic.isChecked()).toBe(true);
       expect(await checks.isChecked()).toBe(false);
       expect(await automatic.isDisabled()).toBe(true);
       await content
         .locator(".settings-row__title")
-        .filter({ hasText: /^Check for updates$/ })
+        .filter({ hasText: /^Check automatically$/ })
         .click();
       const checksSaved = await gateway.waitForRequest("config.set");
       const checksRaw = (checksSaved.params as { raw?: unknown }).raw;
@@ -215,8 +227,10 @@ suite.define(() => {
       );
       await expectRadiosDisabled(page);
       expect(await page.getByRole("switch", { name: "Automatic updates" }).isDisabled()).toBe(true);
-      expect(await page.getByRole("switch", { name: "Check for updates" }).isDisabled()).toBe(true);
-      expect(await page.getByRole("button", { name: "Update Gateway…" }).isDisabled()).toBe(true);
+      expect(await page.getByRole("switch", { name: "Check automatically" }).isDisabled()).toBe(
+        true,
+      );
+      expect(await page.getByRole("button", { name: "Update" }).isDisabled()).toBe(true);
       expect(await gateway.getRequests("config.schema")).toHaveLength(0);
     });
   });
@@ -263,7 +277,7 @@ suite.define(() => {
         });
         await page.goto(`${suite.server.baseUrl}settings/updates`);
         await gateway.waitForRequest("update.status");
-        const report = page.getByRole("button", { name: "Report update failure", exact: true });
+        const report = page.getByRole("button", { name: "Report failure", exact: true });
         await report.waitFor();
         expect(await report.isEnabled()).toBe(true);
         await report.click();

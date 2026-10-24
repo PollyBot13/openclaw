@@ -7,6 +7,7 @@ import type { ScopeUpgradeState } from "../app/device-scope-upgrade-availability
 import type { ExecApprovalDecision, ExecApprovalRequest } from "../app/exec-approval.ts";
 import { hasNativeUpdateBridge } from "../app/native-link-routing.ts";
 import type { UpdateProgress } from "../app/update-confirmation.ts";
+import { canReportUpdateFailure } from "../app/update-failure-report-owner.ts";
 import { isUpdateActionable } from "../app/update-schedule-projection.ts";
 import { registerSidebarAttentionEnglish } from "../i18n/locales/en-sidebar-attention.ts";
 import { canCallGatewayMethod } from "../lib/gateway-methods.ts";
@@ -201,6 +202,35 @@ export function renderSidebarUpdateSurface(params: {
       updateRunAcknowledged={snapshot().updateRunAcknowledged}
       connected={gateway().phase === "connected"}
       onAcknowledge={() => context.overlays.acknowledgeUpdateRun()}
+      onReportFailure={(attemptId) => {
+        if (
+          context.overlays.snapshot.reportableUpdateFailureId === attemptId &&
+          canReportUpdateFailure(context.gateway.snapshot)
+        ) {
+          params.onNavigate();
+          void context.overlays.reportUpdateFailure(attemptId);
+        }
+      }}
+      onDiagnoseFailure={(attemptId) => {
+        if (
+          context.overlays.snapshot.diagnosableUpdateFailureId === attemptId &&
+          canCallGatewayMethod(context.gateway.snapshot, "openclaw.chat", "operator.admin")
+        ) {
+          context.overlays.diagnoseUpdateFailure(attemptId);
+        }
+      }}
+      readFailureActions={(attemptId) => ({
+        reportable:
+          Boolean(attemptId) && context.overlays.snapshot.reportableUpdateFailureId === attemptId,
+        diagnosable:
+          Boolean(attemptId) && context.overlays.snapshot.diagnosableUpdateFailureId === attemptId,
+        canReport: canReportUpdateFailure(context.gateway.snapshot),
+        canDiagnose: canCallGatewayMethod(
+          context.gateway.snapshot,
+          "openclaw.chat",
+          "operator.admin",
+        ),
+      })}
       prepareRetry={prepareRetry}
       canStartNativeUpdate={() =>
         canCallGatewayMethod(context.gateway.snapshot, "update.run", "operator.admin")
