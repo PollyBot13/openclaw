@@ -137,7 +137,10 @@ suite.define(() => {
         );
         expect(await gateway.getRequests("update.run")).toHaveLength(1);
 
-        await dialog.getByRole("button", { name: "Close", exact: true }).click();
+        await dialog
+          .locator(".exec-approval-actions")
+          .getByRole("button", { name: "Close", exact: true })
+          .click();
         await dialog.waitFor({ state: "detached" });
         await page.getByRole("button", { name: "View result", exact: true }).click();
         await text(page.locator("openclaw-update-run-view"), headline).first().waitFor();
