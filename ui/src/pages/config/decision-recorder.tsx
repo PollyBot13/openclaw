@@ -268,8 +268,8 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
     let lines: string[];
     if (snapshot.format === "json") {
       // SAFETY: The Gateway export contract supplies a JSON array of selected records.
-      const records = JSON.parse(snapshot.content) as unknown[];
-      lines = records.map((value) => JSON.stringify(value));
+      const exportedRecords = JSON.parse(snapshot.content) as unknown[];
+      lines = exportedRecords.map((value) => JSON.stringify(value));
     } else {
       lines = snapshot.content.trimEnd().split("\n");
     }
