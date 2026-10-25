@@ -89,14 +89,17 @@ export async function assessWebFetchQuality(params: {
   };
   try {
     // Defer the Decision runtime until the page is fetched and both opt-ins hold.
-    const [{ evaluateDecisionInRegistry }, { getPluginRegistryForContext }] = await Promise.all([
+    const [
+      { evaluateDecisionOperation, completeDecisionEvaluation },
+      { getPluginRegistryForContext },
+    ] = await Promise.all([
       import("../../decisions/runtime.js"),
       import("../../plugins/runtime/gateway-request-scope.js"),
     ]);
     if (!isCurrent() || !canDispatch()) {
       return payload;
     }
-    const outcome = await evaluateDecisionInRegistry(
+    const evaluation = await evaluateDecisionOperation(
       {
         state: {
           status: typeof payload.status === "number" ? payload.status : null,
@@ -122,6 +125,7 @@ export async function assessWebFetchQuality(params: {
       {
         agentId,
         purpose: "web-fetch.page-quality",
+        priority: "optional",
         rubricVersion: "1",
         timeoutMs: 5_000,
         signal,
@@ -135,6 +139,7 @@ export async function assessWebFetchQuality(params: {
     if (!isCurrent() || !canDispatch()) {
       return payload;
     }
+    const outcome = evaluation.outcome;
     const answer = outcome.status === "ok" ? outcome.result.answers.unusable_page : undefined;
     const probabilityUnusable = answer?.type === "boolean" ? answer.probabilityTrue : undefined;
     const suppressed =
@@ -149,20 +154,23 @@ export async function assessWebFetchQuality(params: {
       ...(probabilityUnusable === undefined ? {} : { probabilityUnusable }),
       suppressed,
     };
-    if (!suppressed) {
-      return { ...payload, quality };
+    const result: Record<string, unknown> = { ...payload, quality };
+    if (suppressed) {
+      const textBudget =
+        params.maxChars ??
+        (typeof payload.length === "number" ? payload.length : WITHHELD_TEXT.length);
+      const notice =
+        textBudget >= WITHHELD_TEXT.length
+          ? WITHHELD_TEXT
+          : textBudget >= COMPACT_WITHHELD_TEXT.length
+            ? COMPACT_WITHHELD_TEXT
+            : COMPACT_WITHHELD_MESSAGE;
+      const withheld = truncateWebFetchText(notice, textBudget).text;
+      result.text = withheld;
+      result.length = withheld.length;
     }
-    const textBudget =
-      params.maxChars ??
-      (typeof payload.length === "number" ? payload.length : WITHHELD_TEXT.length);
-    const notice =
-      textBudget >= WITHHELD_TEXT.length
-        ? WITHHELD_TEXT
-        : textBudget >= COMPACT_WITHHELD_TEXT.length
-          ? COMPACT_WITHHELD_TEXT
-          : COMPACT_WITHHELD_MESSAGE;
-    const withheld = truncateWebFetchText(notice, textBudget).text;
-    return { ...payload, text: withheld, length: withheld.length, quality };
+    completeDecisionEvaluation(evaluation);
+    return result;
   } catch {
     signal.throwIfAborted();
     params.assertInvocationCurrent?.();

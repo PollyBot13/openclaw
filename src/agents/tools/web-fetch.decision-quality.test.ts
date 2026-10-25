@@ -17,7 +17,12 @@ const mocks = vi.hoisted(() => ({
 // mock-isolation: a deterministic HTTP response exercises the real fetch result path without network access.
 vi.mock("./web-guarded-fetch.js", () => ({ fetchWithWebToolsNetworkGuard: mocks.fetch }));
 // mock-isolation: force Decision outcomes while keeping provider lifecycle and credentials out of this tool test.
-vi.mock("../../decisions/runtime.js", () => ({ evaluateDecisionInRegistry: mocks.evaluate }));
+vi.mock("../../decisions/runtime.js", () => ({
+  evaluateDecisionOperation: async (...args: unknown[]) => ({
+    outcome: await mocks.evaluate(...args),
+  }),
+  completeDecisionEvaluation: ({ outcome }: { outcome: unknown }) => outcome,
+}));
 // mock-isolation: the mocked Decision runtime needs no Gateway registry.
 vi.mock("../../plugins/runtime/gateway-request-scope.js", () => ({
   getPluginRegistryForContext: () => null,
