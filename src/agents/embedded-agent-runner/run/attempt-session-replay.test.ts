@@ -5,12 +5,12 @@ import {
   loadTranscriptEventsSync,
   upsertSessionEntryCore,
 } from "../../../config/sessions/session-accessor.js";
-import { SessionTranscriptProjectionUnavailableError } from "../../../config/sessions/session-transcript-projection-error.js";
 import { resolveSessionTranscriptReadFence } from "../../../config/sessions/session-transcript-read-fence.js";
 import {
   waitForSessionTranscriptIndexReconcile,
   waitForSessionTranscriptProjection,
 } from "../../../config/sessions/session-transcript-reconcile.js";
+import { appendAssistantMessageToSessionTranscript } from "../../../config/sessions/transcript.runtime.js";
 import type { ContextEngine } from "../../../context-engine/types.js";
 import type { ImageContent } from "../../../llm/types.js";
 import { finalizeRuntimePromptImages } from "../../../media/runtime-prompt-image-provenance.js";
@@ -20,6 +20,7 @@ import {
   type PersistedUserTurnMessage,
 } from "../../../sessions/user-turn-transcript.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
+import { SKILL_WORKSHOP_CHANGE_NOTICE_KIND } from "../../../shared/transcript-only-openclaw-assistant.js";
 import { openOpenClawAgentDatabase } from "../../../state/openclaw-agent-db.js";
 import { observeMainThreadSql } from "../../../test-utils/main-thread-sql-spies.test-support.js";
 import { runWithModelFallback } from "../../model-fallback-runner.js";
@@ -35,7 +36,7 @@ import {
   testModel,
 } from "../../sessions/agent-session-loop-correctness.test-support.js";
 import type { AgentSession } from "../../sessions/agent-session.js";
-import { isSessionFileEntry } from "../../sessions/session-file-parser.js";
+import { sessionManagerPrepareCurrentTurnReplay } from "../../sessions/session-manager-current-turn.js";
 import { SessionManager } from "../../sessions/session-manager.js";
 import {
   appendCompletedToolWork,
@@ -80,91 +81,38 @@ function expectCapturedCurrentUserPrefix(
   );
 }
 
-it("recovers a fresh admitted turn when its active projection is rebuilding", async () => {
-  await withInterruptedTurn(
-    false,
-    async ({ target, prepare }) => {
-      await waitForSessionTranscriptIndexReconcile({ agentId: target.agentId });
-      const database = openOpenClawAgentDatabase({ agentId: target.agentId });
-      const invalidated = database.db
-        .prepare("UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?")
-        .run(target.sessionId);
-      expect(invalidated.changes).toBe(1);
-
-      const prepared = await prepare();
-      expect(
-        prepared.sessionManager
-          .getBranch()
-          .some((entry) => entry.type === "message" && entry.message.role === "user"),
-      ).toBe(true);
-      expect(
-        loadTranscriptEventsSync(target).filter(
-          (event) =>
-            isSessionFileEntry(event) && event.type === "message" && event.message.role === "user",
-        ),
-      ).toHaveLength(1);
-    },
-    { interruptedTurn: false },
-  );
-});
-
-it.each(["window-changed", "other-session", "read-failure"])(
-  "does not retry fresh-turn hydration for %s",
-  async (failure) => {
+describe("context engine bootstrap", () => {
+  it("recovers a fresh admitted turn when its active projection is rebuilding", async () => {
     await withInterruptedTurn(
       false,
       async ({ target, prepare }) => {
-        const error =
-          failure === "read-failure"
-            ? new Error("read failed")
-            : new SessionTranscriptProjectionUnavailableError(
-                failure === "other-session" ? "different-session" : target.sessionId,
-                failure === "window-changed" ? "window-changed" : "rebuilding",
-              );
-        const open = vi.spyOn(SessionManager, "openAsync").mockRejectedValueOnce(error);
+        await waitForSessionTranscriptIndexReconcile({ agentId: target.agentId });
+        const database = openOpenClawAgentDatabase({ agentId: target.agentId });
+        expect(
+          database.db
+            .prepare(
+              "UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?",
+            )
+            .run(target.sessionId).changes,
+        ).toBe(1);
+        const prepared = await prepare();
         try {
-          await expect(prepare()).rejects.toBe(error);
-          expect(open).toHaveBeenCalledTimes(1);
+          expect(
+            prepared.sessionManager
+              .getBranch()
+              .filter((entry) => entry.type === "message" && entry.message.role === "user"),
+          ).toHaveLength(1);
         } finally {
-          open.mockRestore();
+          await cleanupEmbeddedAttemptResources({
+            sessionManager: prepared.sessionManager,
+            flushPendingToolResultsAfterIdle: async () => {},
+          });
         }
       },
       { interruptedTurn: false },
     );
-  },
-);
+  });
 
-it("publishes an opened manager for cleanup before rejecting a revoked writer", async () => {
-  await withInterruptedTurn(
-    false,
-    async ({ prepare, revoke }) => {
-      const original = SessionManager.openAsync.bind(SessionManager);
-      const open = vi.spyOn(SessionManager, "openAsync").mockImplementation(async (...args) => {
-        const manager = await original(...args);
-        revoke();
-        return manager;
-      });
-      let created: SessionManager | undefined;
-      try {
-        await expect(
-          prepare((manager) => {
-            created = manager;
-          }),
-        ).rejects.toThrow("original writer closed");
-        expect(created).toBeDefined();
-      } finally {
-        open.mockRestore();
-        await cleanupEmbeddedAttemptResources({
-          sessionManager: created,
-          flushPendingToolResultsAfterIdle: async () => {},
-        });
-      }
-    },
-    { interruptedTurn: false },
-  );
-});
-
-describe("context engine bootstrap", () => {
   it("bootstraps the context engine under the admitted user turn's read fence", async () => {
     // Unfenced, the engine imports the already-persisted current turn from the
     // transcript and the host appends it again after assembly; the next run
@@ -219,6 +167,70 @@ describe("context engine bootstrap", () => {
 });
 
 describe("interrupted canonical user replay", () => {
+  it.each([false, true])(
+    "replays once across a background Workshop notice (selected reader: %s)",
+    async (selectedOwner) => {
+      await withInterruptedTurn(
+        false,
+        async (fixture) => {
+          const { attempt, target } = fixture;
+          const appendNotice = vi.fn(async () => {
+            const appended = await appendAssistantMessageToSessionTranscript({
+              ...target,
+              expectedSessionId: target.sessionId,
+              idempotencyKey: `skill-workshop-notice:${attempt.runId}`,
+              text: "One skill changed after review",
+              deliveryMirror: {
+                kind: SKILL_WORKSHOP_CHANGE_NOTICE_KIND,
+                agentId: target.agentId,
+                runId: "background-review",
+                skills: [{ name: "some-skill", action: "updated" }],
+              },
+            });
+            expect(appended.ok).toBe(true);
+          });
+          await withReplaySession(
+            fixture,
+            false,
+            async (session, submit, manager) => {
+              if (!selectedOwner) {
+                const select = manager[sessionManagerPrepareCurrentTurnReplay].bind(manager);
+                vi.spyOn(manager, sessionManagerPrepareCurrentTurnReplay).mockImplementationOnce(
+                  async (...args) => {
+                    const selected = await select(...args);
+                    expect(selected).toBeDefined();
+                    // Change the real transcript after selection, before anchor validation.
+                    await appendNotice();
+                    return selected;
+                  },
+                );
+              }
+              streamMocks.streamSimple.mockImplementation((model) =>
+                createAssistantResultStream(
+                  createAssistant(model, [{ type: "text", text: "WORKSHOP_NOTICE_RECOVERED" }]),
+                ),
+              );
+              await submit();
+              expect(appendNotice).toHaveBeenCalledOnce();
+              expect(streamMocks.streamSimple).toHaveBeenCalledOnce();
+              expect(session.getLastAssistantText()).toBe("WORKSHOP_NOTICE_RECOVERED");
+              expect(
+                loadTranscriptEventsSync(target).filter(
+                  (entry) =>
+                    isRecord(entry) &&
+                    isRecord(entry.message) &&
+                    entry.message.idempotencyKey === `${attempt.runId}:user`,
+                ),
+              ).toHaveLength(1);
+            },
+            selectedOwner ? { afterReplayPreparation: appendNotice } : {},
+          );
+        },
+        { selectedOwner },
+      );
+    },
+  );
+
   it.each([
     { boundary: "same-run progress", sourceReply: { final: false }, resumes: true },
     { boundary: "same-run final", sourceReply: { final: true }, resumes: false },

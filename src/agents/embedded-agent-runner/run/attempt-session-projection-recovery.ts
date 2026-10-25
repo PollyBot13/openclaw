@@ -5,6 +5,8 @@ import {
 } from "../../../config/sessions/session-accessor.js";
 import { isSessionTranscriptProjectionUnavailableError } from "../../../config/sessions/session-transcript-projection-error.js";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../timeout.js";
+import { outsideExecutionCapacity } from "./execution-capacity.js";
+import type { EmbeddedRunAttemptParams } from "./types.js";
 
 /** Retry one admitted open after its projection rebuild, outside transcript write custody. */
 export async function openSessionAfterProjectionRecovery<T>(input: {
@@ -13,6 +15,7 @@ export async function openSessionAfterProjectionRecovery<T>(input: {
   timeoutMs: number;
   signal: AbortSignal;
   assertCurrent: () => void;
+  replyOperation?: EmbeddedRunAttemptParams["replyOperation"];
 }): Promise<T> {
   input.signal.throwIfAborted();
   try {
@@ -27,19 +30,26 @@ export async function openSessionAfterProjectionRecovery<T>(input: {
     }
     input.assertCurrent();
     input.signal.throwIfAborted();
-    const deadline = new AbortController();
-    const recoveryBudgetMs =
-      input.timeoutMs >= MAX_TIMER_TIMEOUT_MS
-        ? DEFAULT_AGENT_TIMEOUT_MS
-        : Math.max(1, input.timeoutMs);
-    const timer = setTimeout(() => deadline.abort(error), recoveryBudgetMs);
-    timer.unref();
+    input.replyOperation?.markWaitingForDeferredMaintenance();
     try {
-      await recoverSessionTranscriptProjection(
-        { ...input.target, sessionId: error.sessionId },
-        AbortSignal.any([input.signal, deadline.signal]),
-        input.assertCurrent,
-      );
+      await outsideExecutionCapacity(async () => {
+        const deadline = new AbortController();
+        const recoveryBudgetMs =
+          input.timeoutMs >= MAX_TIMER_TIMEOUT_MS
+            ? DEFAULT_AGENT_TIMEOUT_MS
+            : Math.max(1, input.timeoutMs);
+        const timer = setTimeout(() => deadline.abort(error), recoveryBudgetMs);
+        timer.unref();
+        try {
+          await recoverSessionTranscriptProjection(
+            input.target,
+            AbortSignal.any([input.signal, deadline.signal]),
+            input.assertCurrent,
+          );
+        } finally {
+          clearTimeout(timer);
+        }
+      });
     } catch (waitError) {
       input.assertCurrent();
       input.signal.throwIfAborted();
@@ -51,7 +61,7 @@ export async function openSessionAfterProjectionRecovery<T>(input: {
       }
       throw waitError;
     } finally {
-      clearTimeout(timer);
+      input.replyOperation?.markDeferredMaintenanceWaitEnded();
     }
     input.assertCurrent();
     input.signal.throwIfAborted();

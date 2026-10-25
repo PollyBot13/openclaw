@@ -9,12 +9,15 @@ import { SessionTranscriptProjectionUnavailableError } from "../../../config/ses
 import { waitForSessionTranscriptIndexReconcile } from "../../../config/sessions/session-transcript-reconcile.js";
 import { useReconcileWorkerObserver } from "../../../config/sessions/session-transcript-reconcile.test-support.js";
 import type { SessionTranscriptReconcileWorkerMessage } from "../../../config/sessions/session-transcript-reconcile.worker.js";
+import { enqueueCommandInLane, getCommandLaneSnapshot } from "../../../process/command-queue.js";
 import { openOpenClawAgentDatabase } from "../../../state/openclaw-agent-db.js";
 import { isSessionFileEntry } from "../../sessions/session-file-parser.js";
 import { sessionManagerOpenTranscriptCohort } from "../../sessions/session-manager-core.js";
 import { SessionManager } from "../../sessions/session-manager.js";
+import { openSessionAfterProjectionRecovery } from "./attempt-session-projection-recovery.js";
 import { withInterruptedTurn } from "./attempt-session-replay.test-support.js";
 import { cleanupEmbeddedAttemptResources } from "./attempt-subscription-cleanup.js";
+import { withReleasableExecutionCapacity } from "./execution-capacity.js";
 
 vi.mock("node:worker_threads", async () =>
   (
@@ -23,6 +26,30 @@ vi.mock("node:worker_threads", async () =>
 );
 
 const observer = useReconcileWorkerObserver();
+
+it.each(["window-changed", "other-session", "read-failure"])(
+  "does not retry hydration for %s",
+  async (failure) => {
+    const error =
+      failure === "read-failure"
+        ? new Error("read failed")
+        : new SessionTranscriptProjectionUnavailableError(
+            failure === "other-session" ? "different-session" : "current-session",
+            failure === "window-changed" ? "window-changed" : "rebuilding",
+          );
+    const open = vi.fn().mockRejectedValue(error);
+    await expect(
+      openSessionAfterProjectionRecovery({
+        open,
+        target: { sessionId: "current-session" },
+        timeoutMs: 1_000,
+        signal: new AbortController().signal,
+        assertCurrent() {},
+      }),
+    ).rejects.toBe(error);
+    expect(open).toHaveBeenCalledOnce();
+  },
+);
 
 it("waits for the owning shared-store projection before retrying a fresh turn", async () => {
   await withInterruptedTurn(
@@ -59,9 +86,14 @@ it("waits for the owning shared-store projection before retrying a fresh turn", 
       };
       const open = vi.spyOn(SessionManager, sessionManagerOpenTranscriptCohort);
       let created: SessionManager | undefined;
-      const preparing = prepare((manager) => {
-        created = manager;
-      });
+      const lane = "shared-projection-recovery";
+      const preparing = withReleasableExecutionCapacity(
+        (task, options) => enqueueCommandInLane(lane, task, options),
+        () =>
+          prepare((manager) => {
+            created = manager;
+          }),
+      );
       const outcome = preparing.then(
         () => ({ kind: "resolved" as const }),
         (error: unknown) => ({ kind: "rejected" as const, error }),
@@ -74,6 +106,10 @@ it("waits for the owning shared-store projection before retrying a fresh turn", 
           }),
         ]);
         expect(open).toHaveBeenCalledTimes(1);
+        expect(getCommandLaneSnapshot(lane).activeCount).toBe(0);
+        await expect(enqueueCommandInLane(lane, async () => "sibling finished")).resolves.toBe(
+          "sibling finished",
+        );
         releaseWorker?.();
         await expect(preparing).resolves.toBeDefined();
         expect(open).toHaveBeenCalledTimes(2);
