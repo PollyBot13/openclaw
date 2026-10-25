@@ -118,6 +118,7 @@ export function createRuntimeProcessEntrypoints(currentModuleUrl: string) {
     gitOperations: runtimeProcessEntrypoint("infra/git-operation.worker"),
     gitPackCleanup: runtimeProcessEntrypoint("agents/worktrees/git-pack-cleanup.worker"),
     fsSafeCopy: runtimeProcessEntrypoint("infra/fs-safe-copy.worker"),
+    decisionRecorderStore: runtimeProcessEntrypoint("decisions/flight-recorder-store.worker"),
     sharedStateStore: runtimeProcessEntrypoint("state/openclaw-state.worker"),
     clientCredentials: runtimeProcessEntrypoint("infra/client-credential.worker"),
     ttsPreferences: runtimeProcessEntrypoint("tts/tts-settings-write.worker"),

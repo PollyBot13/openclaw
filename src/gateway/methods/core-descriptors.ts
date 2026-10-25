@@ -3,7 +3,7 @@ import { cronListShareKey, modelsListShareKey, operatorReadShareKey } from "./re
 
 // Canonical append-only method table; derived lookup and dispatch policy lives in core-method-policy.ts.
 const CONTROL_PLANE_WRITE = { controlPlaneWrite: true } as const;
-const SIDECAR_CONTROL_PLANE_WRITE = { startup: true, controlPlaneWrite: true } as const;
+const SIDECAR_WRITE = { startup: true, controlPlaneWrite: true } as const;
 const UNADVERTISED = { advertise: false } as const;
 const PROFILE_DEPENDENT = { profileAccess: "required" } as const;
 const PROFILE_STARTUP = { startup: true, ...PROFILE_DEPENDENT } as const;
@@ -426,7 +426,7 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   // sessions.files.* trusted-operator read domain.
   ["controlUi.sessionPullRequests.subscribe", "control-ui", "operator.read", "2026.7"],
   ["controlUi.sessionPreview", "control-ui", "operator.read", "2026.8"],
-  ["gateway.suspend.prepare", "suspend", "operator.admin", "2026.7", SIDECAR_CONTROL_PLANE_WRITE],
+  ["gateway.suspend.prepare", "suspend", "operator.admin", "2026.7", SIDECAR_WRITE],
   ["gateway.suspend.status", "suspend", "operator.read", "2026.7"],
   // Resume is the safety escape hatch and must not sit behind write-rate limiting.
   ["gateway.suspend.resume", "suspend", "operator.admin", "2026.7"],
@@ -439,8 +439,8 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["openclaw.setup.verify", "system-agent", "operator.admin", "<=2026.7"],
   // Cloud-worker mutations depend on the loaded provider registry and owned
   // reconciler, so advertise them early but gate dispatch until sidecars are ready.
-  ["environments.create", "environments", "operator.admin", "2026.7", SIDECAR_CONTROL_PLANE_WRITE],
-  ["environments.destroy", "environments", "operator.admin", "2026.7", SIDECAR_CONTROL_PLANE_WRITE],
+  ["environments.create", "environments", "operator.admin", "2026.7", SIDECAR_WRITE],
+  ["environments.destroy", "environments", "operator.admin", "2026.7", SIDECAR_WRITE],
   ["sessions.catalog.list", "session-catalog", "operator.read", "2026.7"],
   ["sessions.catalog.read", "session-catalog", "operator.read", "2026.7"],
   ["terminal.upload", "terminal", "operator.admin", "2026.7"],
@@ -449,14 +449,8 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["approval.get", null, "operator.approvals", "2026.7"],
   ["approval.resolve", null, "operator.approvals", "2026.7"],
   ["sessions.search", "sessions-read", "operator.read", "<=2026.7"],
-  ["sessions.dispatch", "sessions-dispatch", "dynamic", "2026.7", SIDECAR_CONTROL_PLANE_WRITE],
-  [
-    "sessions.reclaim",
-    "sessions-dispatch",
-    "operator.write",
-    "2026.7",
-    SIDECAR_CONTROL_PLANE_WRITE,
-  ],
+  ["sessions.dispatch", "sessions-dispatch", "dynamic", "2026.7", SIDECAR_WRITE],
+  ["sessions.reclaim", "sessions-dispatch", "operator.write", "2026.7", SIDECAR_WRITE],
   ["models.probe", "models-probe", "operator.admin", "<=2026.7"],
   // Memory migration reads host assistant state and writes agent workspaces.
   ["migrations.memory.plan", "migrations", "operator.admin", "2026.7"],
@@ -527,7 +521,7 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["portal.list", "portals", "operator.read", "2026.8"],
   ["portal.open", "portals", "operator.write", "2026.8", CONTROL_PLANE_WRITE],
   ["portal.close", "portals", "operator.write", "2026.8", CONTROL_PLANE_WRITE],
-  ["sessions.move", "sessions-dispatch", "dynamic", "2026.8", SIDECAR_CONTROL_PLANE_WRITE],
+  ["sessions.move", "sessions-dispatch", "dynamic", "2026.8", SIDECAR_WRITE],
   ["sessions.assignOwner", "sessions-mutations", "operator.write", "2026.8"],
   ["progressCard.get", "progress-card", "operator.read", "2026.8"],
   ["progressCard.put", "progress-card", "operator.write", "2026.8"],
@@ -562,25 +556,13 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["session.members.listEvidence", "sessions-sharing", "operator.read", "2026.8"],
   ["plugins.inspect", "plugins", "operator.read", "2026.8"],
   ["users.github.status", "users", "operator.read", "2026.8", { startup: true }],
-  ["users.github.authorize.start", "users", "operator.read", "2026.8", SIDECAR_CONTROL_PLANE_WRITE],
-  ["users.github.authorize.poll", "users", "operator.read", "2026.8", SIDECAR_CONTROL_PLANE_WRITE],
-  [
-    "users.github.authorize.cancel",
-    "users",
-    "operator.read",
-    "2026.8",
-    SIDECAR_CONTROL_PLANE_WRITE,
-  ],
-  ["users.github.disconnect", "users", "operator.read", "2026.8", SIDECAR_CONTROL_PLANE_WRITE],
+  ["users.github.authorize.start", "users", "operator.read", "2026.8", SIDECAR_WRITE],
+  ["users.github.authorize.poll", "users", "operator.read", "2026.8", SIDECAR_WRITE],
+  ["users.github.authorize.cancel", "users", "operator.read", "2026.8", SIDECAR_WRITE],
+  ["users.github.disconnect", "users", "operator.read", "2026.8", SIDECAR_WRITE],
   ["sessions.github.options", "sessions-github", "operator.read", "2026.8", { startup: true }],
   ["sessions.github.status", "sessions-github", "operator.read", "2026.8", { startup: true }],
-  [
-    "sessions.github.confirm",
-    "sessions-github",
-    "operator.write",
-    "2026.8",
-    SIDECAR_CONTROL_PLANE_WRITE,
-  ],
+  ["sessions.github.confirm", "sessions-github", "operator.write", "2026.8", SIDECAR_WRITE],
   ["sessions.title.prepare", "sessions-title", "operator.write", "2026.8", CONTROL_PLANE_WRITE],
   ["users.mentionable", "users-mentionable", "operator.read", "2026.8", PROFILE_STARTUP],
   ["mentions.list", "mentions", "operator.read", "2026.8", { startup: true }],
@@ -613,7 +595,7 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["plugins.catalog.browse", "plugins", "operator.read", "2026.9"],
   ["plugins.catalog.categories", "plugins", "operator.read", "2026.9"],
   ["plugins.catalog.get", "plugins", "operator.read", "2026.9"],
-  ["environments.prepare", "environments", "operator.admin", "2026.9", SIDECAR_CONTROL_PLANE_WRITE],
+  ["environments.prepare", "environments", "operator.admin", "2026.9", SIDECAR_WRITE],
   ["models.authRefresh", "models-auth-status", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["models.authLogin", "models-auth-login", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["models.authSetApiKey", "models-auth-status", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
@@ -741,4 +723,21 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["chat.pendingInputs.dismiss", "chat", "operator.write", "2026.10", OWN_SESSION_WRITE],
   ["update.recovery.cleanup", "update", "operator.admin", "2026.10", CONTROL_PLANE_WRITE],
   ["diagnostics.capabilities", "diagnostics", "operator.read", "2026.10"],
+  ["decisionRecorder.status", "decision-recorder", "operator.admin", "2026.10"],
+  ["decisionRecorder.list", "decision-recorder", "operator.admin", "2026.10"],
+  ["decisionRecorder.export", "decision-recorder", "operator.admin", "2026.10"],
+  [
+    "decisionRecorder.window",
+    "decision-recorder",
+    "operator.admin",
+    "2026.10",
+    CONTROL_PLANE_WRITE,
+  ],
+  [
+    "decisionRecorder.delete",
+    "decision-recorder",
+    "operator.admin",
+    "2026.10",
+    CONTROL_PLANE_WRITE,
+  ],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];

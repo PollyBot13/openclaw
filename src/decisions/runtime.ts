@@ -23,6 +23,7 @@ import {
 import { finalizePluginModelUsage } from "../plugins/runtime/runtime-model-usage.js";
 import { modelKey } from "../shared/model-key.js";
 import { logDecisionEvaluation } from "./diagnostics.js";
+import { getDecisionFlightRecorder } from "./flight-recorder.js";
 import type { DecisionProviderHost, PreparedDecisionBilling } from "./provider-host.js";
 import type { DecisionBatchV2, DecisionEvaluateOptionsV2, DecisionOutcomeV2 } from "./types-v2.js";
 import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "./types.js";
@@ -143,6 +144,49 @@ export function evaluateDecisionV2Operation(
 }
 
 async function evaluateVersion(
+  ...args: Parameters<typeof evaluateVersionUnrecorded>
+): Promise<DecisionEvaluation> {
+  const [batch, options, , config, version] = args;
+  let finish: ReturnType<ReturnType<typeof getDecisionFlightRecorder>["begin"]>;
+  try {
+    const selected = resolveDecisionModelSetting(config, options?.agentId);
+    finish = getDecisionFlightRecorder().begin(
+      {
+        formatVersion: 1,
+        version,
+        purpose: typeof options?.purpose === "string" ? options.purpose.slice(0, 128) : "invalid",
+        rubricVersion:
+          typeof options?.rubricVersion === "string"
+            ? options.rubricVersion.slice(0, 128)
+            : "invalid",
+        agentId: options?.agentId,
+        provider: selected?.provider,
+        model: selected ? splitTrailingAuthProfile(selected.model).model : undefined,
+      },
+      batch,
+    );
+  } catch {
+    // Optional recording must never change evaluation, including invalid input.
+  }
+  try {
+    const evaluation = await evaluateVersionUnrecorded(...args);
+    try {
+      finish?.(evaluation.outcome);
+    } catch {
+      /* Recording is best effort. */
+    }
+    return evaluation;
+  } catch (error) {
+    try {
+      finish?.(undefined, options?.signal?.aborted);
+    } catch {
+      /* Never retain raw errors. */
+    }
+    throw error;
+  }
+}
+
+async function evaluateVersionUnrecorded(
   batch: DecisionBatch | DecisionBatchV2,
   inputOptions: DecisionEvaluateOptionsV2,
   registry: PluginRegistry | null | undefined,

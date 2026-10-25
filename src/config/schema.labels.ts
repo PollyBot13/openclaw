@@ -14,6 +14,7 @@ import { META_FIELD_LABELS } from "./schema.meta.js";
 import { NODE_CAPABILITY_FIELD_LABELS } from "./schema.node-capabilities.js";
 import { CLOUD_WORKER_FIELD_LABELS } from "./zod-schema.cloud-workers.js";
 import { DATABASE_FIELD_LABELS } from "./zod-schema.database.js";
+import { DECISION_RECORDER_FIELD_LABELS } from "./zod-schema.decision-recorder.js";
 import { DESKTOP_FIELD_LABELS } from "./zod-schema.desktop.js";
 import { NODE_HOST_FIELD_LABELS } from "./zod-schema.node-host.js";
 import { STORAGE_FIELD_LABELS } from "./zod-schema.storage.js";
@@ -111,6 +112,7 @@ export const FIELD_LABELS: Record<string, string> = {
   cloudWorkers: "Cloud Workers",
   ...CLOUD_WORKER_FIELD_LABELS,
   ...DATABASE_FIELD_LABELS,
+  ...DECISION_RECORDER_FIELD_LABELS,
   ...STORAGE_FIELD_LABELS,
   ...DESKTOP_FIELD_LABELS,
   ...GATEWAY_FIELD_LABELS,

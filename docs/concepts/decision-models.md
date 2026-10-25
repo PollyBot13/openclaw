@@ -371,6 +371,51 @@ Keep active models warm when memory permits, or choose a smaller model. See
 and the effect of active cancellation. For missing TypeSafe credentials, follow
 its [setup instructions](/plugins/typesafe#enable-and-configure).
 
+### Bounded local recorder
+
+The optional Decision recorder is separate from the content-free DEBUG log.
+Open **Settings → Advanced → Decision recorder** to enable it. Recording is off
+by default. Basic recording stores call metadata, status, timing, and the typed
+answer. Answers and caller-supplied identifiers can contain private information.
+
+Full-input capture requires a separate explicit **Start capture** action. It
+stores the structured state, questions, and rubric supplied to the shared Decision
+runtime, including supplied image data when present. It does not collect extra
+conversation history or claim to capture the provider's wire prompt. The capture
+window ends automatically, even with the settings page closed; renew it explicitly
+to continue. Restarting the Gateway does not resume full-input capture.
+
+The configuration defaults are:
+
+```json5
+{
+  decisionRecorder: {
+    enabled: false,
+    maxBytes: 52428800, // 50 MiB total pool budget
+    fullInputWindowMs: 900000, // 15 minutes per explicit start or renewal
+  },
+}
+```
+
+The UI displays the budget in MiB and the window in minutes. All recorded data
+shares one rotating pool: oldest records are removed when space is needed, and
+records **do not expire by age**. The total budget includes storage overhead and
+reserved rollback-journal headroom, so the usable record capacity is smaller than
+the configured budget. Calls are not sampled. Inputs that do not fit are omitted
+with a completeness marker; omitted inputs are not replayable. Recording failures
+are reported by the recorder and do not change Decision evaluation or fallback.
+
+Use **View** to inspect a record deliberately. Select records and choose
+**Export selected** for local JSON or JSONL, with the prepared download size shown
+before saving. Exports include format and completeness metadata. They can contain
+private answers and captured inputs; nothing is uploaded automatically. Downloaded
+copies are outside the rotating pool and its storage budget.
+
+**Delete stored decisions** clears the recorder's pool after confirmation. It does
+not remove downloaded exports or change model selection. Turning recording off
+keeps existing records available for inspection, export, or deletion. Recorder
+inspection and management require operator-admin access.
+
 ## Provide models from a plugin
 
 New providers should use the [prepared V2 execution contract](/plugins/sdk-overview/capabilities#prepared-decision-execution-contract-version-2)

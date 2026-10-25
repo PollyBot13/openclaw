@@ -23,6 +23,8 @@ const CORE_GATEWAY_HANDLER_MODULES = {
     import("./agents-workspace.js").then((module) => module.agentsWorkspaceHandlers),
   artifacts: () => import("./artifacts.js").then((module) => module.artifactsHandlers),
   board: () => import("./board.js").then((module) => module.boardHandlers),
+  "decision-recorder": () =>
+    import("./decision-recorder.js").then((module) => module.decisionRecorderHandlers),
   audit: () => import("./audit.js").then((module) => module.auditHandlers),
   users: () => import("./users.js").then((module) => module.usersHandlers),
   "users-mentionable": () =>

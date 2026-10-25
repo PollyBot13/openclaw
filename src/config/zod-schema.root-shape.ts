@@ -17,6 +17,7 @@ import {
   TtsConfigSchema,
 } from "./zod-schema.core.js";
 import { DatabaseConfigSchema } from "./zod-schema.database.js";
+import { DecisionRecorderConfigSchema } from "./zod-schema.decision-recorder.js";
 import { DesktopConfigSchema } from "./zod-schema.desktop.js";
 import { GatewayConfigSchema } from "./zod-schema.gateway.js";
 import { HookMappingSchema, HooksGmailSchema, InternalHooksSchema } from "./zod-schema.hooks.js";
@@ -98,6 +99,7 @@ export const OpenClawSchemaShape = {
     })
     .optional(),
   telemetry: TelemetryConfigSchema,
+  decisionRecorder: DecisionRecorderConfigSchema,
   browser: z
     .strictObject({
       enabled: z.boolean().optional(),
