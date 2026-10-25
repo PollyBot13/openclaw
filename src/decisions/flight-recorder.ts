@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rename, rm, stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -15,6 +15,7 @@ import type {
 } from "./flight-recorder.types.js";
 import { finiteJson } from "./validation-common.js";
 
+const PENDING_LIMIT = 8 * 1024 * 1024;
 const poolFileSuffixes = ["", "-journal", "-wal", "-shm"];
 
 type Settings = NonNullable<OpenClawConfig["decisionRecorder"]>;
@@ -29,8 +30,6 @@ export const decisionRecorderDefaults = {
 export class DecisionFlightRecorder {
   private tail: Promise<unknown> = Promise.resolve();
   private store?: SqliteWorkerStore<RecorderStoreOperations>;
-  private storeBudget?: number;
-  private candidate?: SqliteWorkerStore<RecorderStoreOperations>;
   private generation = 0;
   private pendingBytes = 0;
   private fullInputUntil: number | null = null;
@@ -103,17 +102,14 @@ export class DecisionFlightRecorder {
     if (this.fullInputUntil !== null && this.fullInputUntil > startedAt) {
       // Capture must not execute getters/proxies that the Decision contract rejects.
       const shape = finiteJson(batch, {
-        maxBytes: Math.min(settings.maxBytes / 4, 8 * 1024 * 1024),
+        maxBytes: PENDING_LIMIT,
         rejectProxies: true,
       });
       completeness = shape === "invalid" ? "unsupported-input" : "oversize";
       if (shape === "valid") {
         const json = JSON.stringify(batch);
         const bytes = Buffer.byteLength(json);
-        if (
-          this.pendingBytes + this.inputBytes + bytes <=
-          Math.min(settings.maxBytes, 8 * 1024 * 1024)
-        ) {
+        if (this.pendingBytes + this.inputBytes + bytes <= PENDING_LIMIT) {
           // SAFETY: finiteJson admitted this Batch; parsing its JSON preserves that shape.
           this.inputs.set(id, { batch: JSON.parse(json) as Batch, bytes });
           this.inputBytes += bytes;
@@ -147,10 +143,7 @@ export class DecisionFlightRecorder {
       };
       const json = JSON.stringify(record);
       const bytes = Buffer.byteLength(json);
-      if (
-        this.pendingBytes + this.inputBytes + bytes >
-        Math.min(settings.maxBytes, 8 * 1024 * 1024)
-      ) {
+      if (this.pendingBytes + this.inputBytes + bytes > PENDING_LIMIT) {
         this.droppedRecords++;
         return;
       }
@@ -194,72 +187,14 @@ export class DecisionFlightRecorder {
     this.tail = pending.catch(() => undefined);
     return pending;
   }
-  private async discardCandidate() {
-    await this.candidate?.close();
-    this.candidate = undefined;
-    for (const suffix of poolFileSuffixes) {
-      await rm(`${this.databasePath}.next${suffix}`, { force: true });
-    }
-  }
-  private async open(existingOnly: boolean, resize = true) {
-    if (this.candidate) {
-      await this.discardCandidate();
-    }
-    const { maxBytes } = this.settings();
+  private async open(existingOnly: boolean) {
     if (!this.store) {
       this.store = await openSqliteWorkerStore<RecorderStoreOperations>({
         moduleUrl: resolveRuntimeProcessEntrypointUrl("decisionRecorderStore"),
         databasePath: this.databasePath,
-        input: { maxBytes },
+        input: { maxBytes: this.settings().maxBytes },
         existingOnly,
       });
-      this.storeBudget = undefined;
-    }
-    if (resize && this.store && this.storeBudget !== maxBytes) {
-      let resized: RecorderStoreOperations["resize"]["output"];
-      try {
-        resized = await this.store.execute({ type: "resize", input: { maxBytes } });
-      } catch (error) {
-        // A failed resize may have changed SQLite's native cap before its budget commit.
-        this.storeBudget = undefined;
-        await this.store.close();
-        this.store = undefined;
-        throw error;
-      }
-      if (resized.replace) {
-        const candidatePath = `${this.databasePath}.next`;
-        try {
-          await this.discardCandidate();
-          this.candidate = await openSqliteWorkerStore<RecorderStoreOperations>({
-            moduleUrl: resolveRuntimeProcessEntrypointUrl("decisionRecorderStore"),
-            databasePath: candidatePath,
-            input: { maxBytes, sourcePath: this.databasePath },
-          });
-          await this.candidate.close();
-          this.candidate = undefined;
-          await this.store.close();
-          this.store = undefined;
-          await rename(candidatePath, this.databasePath);
-          this.store = await openSqliteWorkerStore<RecorderStoreOperations>({
-            moduleUrl: resolveRuntimeProcessEntrypointUrl("decisionRecorderStore"),
-            databasePath: this.databasePath,
-            input: { maxBytes },
-            existingOnly: true,
-          });
-        } catch (error) {
-          // Retire original writes before reclaiming replacement/journal headroom.
-          // A failed close stays owned and sealed for a later close/delete retry.
-          this.storeBudget = undefined;
-          try {
-            await this.store?.close();
-            this.store = undefined;
-          } finally {
-            await this.discardCandidate();
-          }
-          throw error;
-        }
-      }
-      this.storeBudget = maxBytes;
     }
     return this.store;
   }
@@ -283,6 +218,7 @@ export class DecisionFlightRecorder {
     return {
       ...settings,
       maxBytes: pool.maxBytes,
+      configuredMaxBytes: settings.maxBytes,
       fullInputUntil: this.fullInputUntil,
       recordCount: pool.recordCount,
       storageBytes: pool.storageBytes,
@@ -315,10 +251,7 @@ export class DecisionFlightRecorder {
     this.inputBytes = 0;
     return this.enqueue(async () => {
       assertCurrent();
-      const files = poolFileSuffixes.flatMap((suffix) => [
-        `${this.databasePath}${suffix}`,
-        `${this.databasePath}.next${suffix}`,
-      ]);
+      const files = poolFileSuffixes.map((suffix) => `${this.databasePath}${suffix}`);
       let freedBytes = 0;
       for (const file of files) {
         try {
@@ -329,18 +262,15 @@ export class DecisionFlightRecorder {
       }
       let deletedRecords: number | null = null;
       try {
-        const store = await this.open(true, false);
+        const store = await this.open(true);
         deletedRecords = store
           ? (await store.execute({ type: "list", input: { limit: 1 } })).recordCount
           : 0;
       } catch {
         // Reclamation must remain available when count/integrity reads fail.
       }
-      await this.candidate?.close();
-      this.candidate = undefined;
       await this.store?.close();
       this.store = undefined;
-      this.storeBudget = undefined;
       for (const file of files) {
         assertCurrent();
         await rm(file, { force: true });
@@ -353,7 +283,6 @@ export class DecisionFlightRecorder {
     this.generation++;
     this.stopWindow();
     await this.tail;
-    await this.discardCandidate();
     await this.store?.close();
     this.store = undefined;
   }

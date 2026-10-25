@@ -374,15 +374,14 @@ its [setup instructions](/plugins/typesafe#enable-and-configure).
 ### Bounded local recorder
 
 The optional Decision recorder is separate from the content-free DEBUG log.
-Open **Settings → Advanced → Decision recorder** to enable it. Recording is off
-by default. Basic recording stores call metadata, status, timing, and the typed
+Enable `decisionRecorder.enabled` in configuration. Recording is off by default. Basic recording stores call metadata, status, timing, and the typed
 answer. Answers and caller-supplied identifiers can contain private information.
 
-Full-input capture requires a separate explicit **Start capture** action. It
+Full-input capture requires a separate explicit `decisionRecorder.window` start action. It
 stores the structured state, questions, and rubric supplied to the shared Decision
 runtime, including supplied image data when present. It does not collect extra
 conversation history or claim to capture the provider's wire prompt. The capture
-window ends automatically, even with the settings page closed; renew it explicitly
+window ends automatically, without an attached client; renew it explicitly
 to continue. Restarting the Gateway does not resume full-input capture.
 
 The configuration defaults are:
@@ -397,7 +396,9 @@ The configuration defaults are:
 }
 ```
 
-The UI displays the budget in MiB and the window in minutes. All recorded data
+The budget is fixed when the pool is created and survives restart. Changing
+`maxBytes` does not resize or discard existing records; explicitly delete the pool
+to apply the new budget to its replacement. All recorded data
 shares one rotating pool: oldest records are removed when space is needed, and
 records **do not expire by age**. The total budget includes storage overhead and
 reserved rollback-journal headroom, so the usable record capacity is smaller than
@@ -405,16 +406,25 @@ the configured budget. Calls are not sampled. Inputs that do not fit are omitted
 with a completeness marker; omitted inputs are not replayable. Recording failures
 are reported by the recorder and do not change Decision evaluation or fallback.
 
-Use **View** to inspect a record deliberately. Select records and choose
-**Export selected** for local JSON or JSONL, with the prepared download size shown
-before saving. Exports include format and completeness metadata. They can contain
-private answers and captured inputs; nothing is uploaded automatically. Downloaded
-copies are outside the rotating pool and its storage budget.
+Manage the recorder with admin-scoped Gateway RPCs using the existing CLI:
 
-**Delete stored decisions** clears the recorder's pool after confirmation. It does
-not remove downloaded exports or change model selection. Turning recording off
-keeps existing records available for inspection, export, or deletion. Recorder
-inspection and management require operator-admin access.
+```bash
+openclaw gateway call decisionRecorder.status --params '{}' --json
+openclaw gateway call decisionRecorder.window --params '{"action":"start"}' --json
+openclaw gateway call decisionRecorder.list --params '{"limit":50}' --json
+openclaw gateway call decisionRecorder.export --params '{"ids":["record-id"],"format":"json","preview":false}' --json
+```
+
+Status reports the effective pool `maxBytes` and next-pool `configuredMaxBytes`.
+Export selects records by ID, is limited to 8 MiB, and supports JSON or JSONL;
+`preview: true` returns the size without content. Exports can contain private
+answers and captured inputs. Downloaded copies are outside pool retention.
+
+`decisionRecorder.delete` with empty parameters explicitly clears the pool,
+including an unreadable pool whose record count cannot be determined. It does
+not remove exports, disable future recording, or change model selection. Turning
+recording off keeps existing records available. All recorder RPCs require
+operator-admin access. A separate UI contribution builds on this backend.
 
 ## Provide models from a plugin
 

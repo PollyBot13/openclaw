@@ -27,6 +27,7 @@ export type DecisionRecordingSummary = Omit<DecisionRecording, "outcome" | "inpu
 export type DecisionRecorderStatus = {
   enabled: boolean;
   maxBytes: number;
+  configuredMaxBytes: number;
   fullInputWindowMs: number;
   fullInputUntil: number | null;
   recordCount: number;
@@ -35,10 +36,6 @@ export type DecisionRecorderStatus = {
   lastError: string | null;
 };
 export type RecorderStoreOperations = {
-  resize: {
-    input: { maxBytes: number };
-    output: { replace?: boolean };
-  };
   append: { input: DecisionRecording; output: { retained: boolean; evicted: number } };
   list: {
     input: { limit: number; cursor?: number };

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Generated } from "kysely";
 import {
@@ -40,28 +40,20 @@ function serialize(record: DecisionRecording, maxBytes: number) {
   return Buffer.byteLength(json) > limit ? undefined : json;
 }
 export function createSqliteWorkerBackend(
-  input: { maxBytes: number; sourcePath?: string },
+  input: { maxBytes: number },
   { databasePath }: { databasePath: string },
 ) {
   mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
   chmodSync(path.dirname(databasePath), 0o700);
-  // A failed pre-swap resize left only an unaccepted candidate; never resume it.
-  for (const suffix of ["", "-journal", "-wal", "-shm"]) {
-    rmSync(`${databasePath}.next${suffix}`, { force: true });
-  }
   const db = openNodeSqliteDatabase(databasePath);
   chmodSync(databasePath, 0o600);
   const query = getNodeSqliteKysely<Schema>(db);
   let maxBytes = input.maxBytes;
   const physicalBytes = () =>
-    [
-      databasePath,
-      `${databasePath}-journal`,
-      `${databasePath}-wal`,
-      `${databasePath}-shm`,
-      `${databasePath}.next`,
-      `${databasePath}.next-journal`,
-    ].reduce((sum, file) => sum + (existsSync(file) ? statSync(file).size : 0), 0);
+    [databasePath, `${databasePath}-journal`, `${databasePath}-wal`, `${databasePath}-shm`].reduce(
+      (sum, file) => sum + (existsSync(file) ? statSync(file).size : 0),
+      0,
+    );
   try {
     const version = readSqliteUserVersion(db);
     if (version !== 0 && version !== 1) {
@@ -81,72 +73,15 @@ export function createSqliteWorkerBackend(
       throw new Error("Recorder pool layout is incompatible with its budget.");
     }
     if (version === 0) {
-      let rows: { seq: number; id: string; record_json: string }[] = [];
-      if (input.sourcePath) {
-        // The original owner has validated this pool and holds its queue while
-        // the separately admitted replacement actor reads it without mutations.
-        const source = openNodeSqliteDatabase(input.sourcePath, { readOnly: true });
-        const sourceQuery = getNodeSqliteKysely<Schema>(source);
-        try {
-          rows = [];
-          let cursor = Number.MAX_SAFE_INTEGER;
-          let bytes = 0;
-          while (bytes < maxBytes / 2) {
-            const page = executeSqliteQuerySync(
-              source,
-              sourceQuery
-                .selectFrom("records")
-                .selectAll()
-                .where("seq", "<", cursor)
-                .orderBy("seq", "desc")
-                .limit(32),
-            ).rows;
-            if (!page.length) {
-              break;
-            }
-            for (const row of page) {
-              const json = row.record_json;
-              if (Buffer.byteLength(json) <= (recorderPageLimit(maxBytes) - 4) * PAGE_SIZE) {
-                rows.push({ seq: row.seq, id: row.id, record_json: json });
-                bytes += Buffer.byteLength(json);
-              }
-              cursor = row.seq;
-              if (bytes >= maxBytes / 2) {
-                break;
-              }
-            }
-          }
-        } finally {
-          source.close();
-        }
-      }
-      for (;;) {
-        let inserted = 0;
-        try {
-          // Initial creation has no old pages to journal. This permits a bounded
-          // replacement beside the old pool even for a near-equal budget shrink.
-          runSqliteImmediateTransactionSync(db, () => {
-            // sqlite-allow-raw: first-use DDL for this private versioned pool, not data queries.
-            db.exec(SCHEMA);
-            writeSqliteUserVersion(db, 1);
-            executeSqliteQuerySync(
-              db,
-              query.insertInto("budget").values({ id: 1, max_bytes: maxBytes }),
-            );
-            for (const row of rows) {
-              executeSqliteQuerySync(db, query.insertInto("records").values(row));
-              inserted++;
-            }
-          });
-          break;
-        } catch (error) {
-          if (!full(error) || rows.length === 0) {
-            throw error;
-          }
-          // Retry only the newest prefix proven to fit before SQLITE_FULL.
-          rows.length = inserted;
-        }
-      }
+      runSqliteImmediateTransactionSync(db, () => {
+        // sqlite-allow-raw: first-use DDL for this private versioned pool, not data queries.
+        db.exec(SCHEMA);
+        writeSqliteUserVersion(db, 1);
+        executeSqliteQuerySync(
+          db,
+          query.insertInto("budget").values({ id: 1, max_bytes: maxBytes }),
+        );
+      });
     }
     assertSqliteIntegrity(db, "Recorder pool", { check: "quick" });
   } catch (error) {
@@ -155,24 +90,6 @@ export function createSqliteWorkerBackend(
   }
   return bindSqliteWorkerDatabase<RecorderStoreOperations>(db, {
     execute(command) {
-      if (command.type === "resize") {
-        const targetBytes = command.input.maxBytes;
-        if (targetBytes === maxBytes) {
-          return {};
-        }
-        if (targetBytes > maxBytes) {
-          configureSqliteBoundedFile(db, recorderPageLimit(targetBytes));
-          runSqliteImmediateTransactionSync(db, () =>
-            executeSqliteQuerySync(
-              db,
-              query.updateTable("budget").set({ max_bytes: targetBytes }).where("id", "=", 1),
-            ),
-          );
-          maxBytes = targetBytes;
-          return {};
-        }
-        return { replace: true };
-      }
       if (command.type === "append") {
         const json = serialize(command.input, maxBytes);
         if (!json) {

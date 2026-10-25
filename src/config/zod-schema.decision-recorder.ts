@@ -16,7 +16,7 @@ export const DecisionRecorderConfigSchema = z
       .optional()
       .register(configUiMetadata, {
         label: "Recording Pool Budget (bytes)",
-        help: "Total dedicated SQLite pool and rollback-journal budget. Defaults to 50 MiB; about half is reserved for safe journal headroom. Oldest records rotate out; there is no age expiry.",
+        help: "Total dedicated SQLite pool and rollback-journal budget. Defaults to 50 MiB; about half is reserved for safe journal headroom. Fixed when the pool is created; delete the pool to apply a changed budget. Oldest records rotate out; there is no age expiry.",
       }),
     fullInputWindowMs: z
       .number()
