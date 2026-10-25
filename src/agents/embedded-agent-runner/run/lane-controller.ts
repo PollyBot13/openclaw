@@ -59,7 +59,9 @@ import {
 import type { RunEmbeddedAgentParams } from "./params.js";
 import { claimAgentSessionWriter } from "./session-bootstrap.js";
 
-export function createEmbeddedRunLaneController<TParams extends RunEmbeddedAgentParams>(options: {
+type LaneParams = RunEmbeddedAgentParams & { sessionFile: string };
+
+export function createEmbeddedRunLaneController<TParams extends LaneParams>(options: {
   getLifecycleGeneration: () => string;
   getParams: () => TParams;
   globalLane: string;
