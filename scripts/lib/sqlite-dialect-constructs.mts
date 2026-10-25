@@ -5,6 +5,8 @@ export const SQLITE_PRIMITIVE_OWNERS: readonly string[] = [
   "src/infra/sqlite-strict.ts",
   // Canonical owner of SQLite user_version read/write.
   "src/infra/sqlite-user-version.ts",
+  // Physical file budget owner: rollback-journal policy and fixed-page layout, not feature data.
+  "src/infra/sqlite-bounded-file.ts",
   // SQLite archive-format owner: catalog capture and offline restoration of migration table scopes.
   "src/infra/sqlite-migration-scoped-snapshot.ts",
   // SQLite artifact owner: native admission, journal normalization, and verified publication.

@@ -114,6 +114,7 @@ export class DecisionFlightRecorder {
           this.pendingBytes + this.inputBytes + bytes <=
           Math.min(settings.maxBytes, 8 * 1024 * 1024)
         ) {
+          // SAFETY: finiteJson admitted this Batch; parsing its JSON preserves that shape.
           this.inputs.set(id, { batch: JSON.parse(json) as Batch, bytes });
           this.inputBytes += bytes;
           completeness = "complete";
@@ -154,6 +155,7 @@ export class DecisionFlightRecorder {
         return;
       }
       // The returned provider outcome belongs to its caller; retain a snapshot.
+      // SAFETY: json was serialized from the typed record immediately above.
       record = JSON.parse(json) as DecisionRecording;
       this.pendingBytes += bytes;
       this.pendingRecords.add(record);

@@ -100,14 +100,14 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
   const validBudget = () =>
     Number.isSafeInteger(budgetBytes()) && budgetBytes() >= MIB && budgetBytes() <= 1024 * MIB;
   const active = () => (currentStatus()?.fullInputUntil ?? 0) > now();
-  function disabled() {
+  function disabled(requireStatus = true) {
     status.configProjection.read();
     return (
       props.mutationDisabled ||
       saving() ||
       operation !== null ||
       !status.client() ||
-      !currentStatus()
+      (requireStatus && !currentStatus())
     );
   }
   function configDisabled() {
@@ -147,10 +147,11 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
       isCurrent: () => boolean,
       signal: AbortSignal,
     ) => Promise<void>,
+    requireStatus = true,
   ) {
     const client = status.client();
     const ownsConnection = status.capture();
-    if (disabled() || !client || !ownsConnection()) {
+    if (disabled(requireStatus) || !client || !ownsConnection()) {
       return;
     }
     const controller = new AbortController();
@@ -264,11 +265,14 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
     if (snapshot.content === undefined || snapshot.format === format) {
       return;
     }
-    // SAFETY: The Gateway export contract supplies a JSON array of selected records.
-    const lines =
-      snapshot.format === "json"
-        ? (JSON.parse(snapshot.content) as unknown[]).map((value) => JSON.stringify(value))
-        : snapshot.content.trimEnd().split("\n");
+    let lines: string[];
+    if (snapshot.format === "json") {
+      // SAFETY: The Gateway export contract supplies a JSON array of selected records.
+      const records = JSON.parse(snapshot.content) as unknown[];
+      lines = records.map((value) => JSON.stringify(value));
+    } else {
+      lines = snapshot.content.trimEnd().split("\n");
+    }
     const content = format === "json" ? `[${lines.join(",")}]` : `${lines.join("\n")}\n`;
     setDialog({
       kind: "export",
@@ -277,6 +281,7 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
     });
   }
   function deleteRecords() {
+    // Recovery deletion must work even when the pool cannot supply readable status.
     void run(async (client, isCurrent, signal) => {
       await client.request("decisionRecorder.delete", {}, { signal });
       if (isCurrent()) {
@@ -286,7 +291,7 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
         refreshAll();
         setFeedback("Stored decisions deleted. Downloaded exports were not affected.");
       }
-    });
+    }, false);
   }
   function RecordsList() {
     const list = () => {
@@ -551,7 +556,7 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
                   }
                   onClick={() => {
                     const bytes = budgetBytes();
-                    if (bytes < (currentStatus()?.storageBytes ?? 0)) {
+                    if (bytes < (currentStatus()?.maxBytes ?? 0)) {
                       setDialog({ kind: "budget", bytes, isCurrent: status.capture() });
                     } else {
                       applyBudget(bytes);
@@ -587,7 +592,7 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
             control={
               <button
                 class="btn btn--danger"
-                disabled={disabled() || !currentStatus()?.recordCount}
+                disabled={disabled(false) || currentStatus()?.recordCount === 0}
                 onClick={() => setDialog({ kind: "delete", isCurrent: status.capture() })}
               >
                 Delete stored decisions…
@@ -634,7 +639,7 @@ export function DecisionRecorderSettings(props: { mutationDisabled?: boolean }) 
         <DecisionRecorderDialog
           dialog={status.client() ? dialog() : null}
           status={currentStatus()}
-          disabled={disabled()}
+          disabled={disabled(dialog()?.kind !== "delete")}
           configDisabled={configDisabled()}
           failure={failure()}
           onClose={() => setDialog(null)}

@@ -349,6 +349,13 @@
       "kind": "html-text",
       "name": "text",
       "path": "ui/src/pages/config/decision-recorder-dialog.tsx",
+      "text": "all"
+    },
+    {
+      "count": 1,
+      "kind": "html-text",
+      "name": "text",
+      "path": "ui/src/pages/config/decision-recorder-dialog.tsx",
       "text": "bytes"
     },
     {
@@ -448,6 +455,13 @@
       "name": "text",
       "path": "ui/src/pages/config/decision-recorder-dialog.tsx",
       "text": "stored decisions?"
+    },
+    {
+      "count": 1,
+      "kind": "html-text",
+      "name": "text",
+      "path": "ui/src/pages/config/decision-recorder-dialog.tsx",
+      "text": "The record count and recording state are unavailable."
     },
     {
       "count": 1,

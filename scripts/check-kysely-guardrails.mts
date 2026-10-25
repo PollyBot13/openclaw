@@ -56,6 +56,8 @@ const rawSqliteAllowPathGroups = {
   "isolated vector reader owns connection-local query-only and busy-timeout pragmas": [
     "src/infra/database-engine/sqlite-vector.child.ts",
   ],
+  "bounded SQLite file primitive owns rollback-journal policy and fixed-page layout, not data queries":
+    ["src/infra/sqlite-bounded-file.ts"],
   "SQLite database lifecycle, schema, transactions, and pragmas": [
     "src/daemon/runtime-pin-store.ts",
     // Engine admission owns anchor metadata and schema bootstrap, not application queries.

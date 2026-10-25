@@ -21,7 +21,7 @@ beforeEach(() => {
   restoreDialog = installDialogPolyfill();
 });
 afterEach(() => restoreDialog());
-async function mount(overrides: Partial<DecisionRecorderStatus> = {}) {
+async function mount(overrides: Partial<DecisionRecorderStatus> = {}, mutationDisabled = false) {
   let status: DecisionRecorderStatus = {
     enabled: false,
     maxBytes: 50 * 1048576,
@@ -124,7 +124,9 @@ async function mount(overrides: Partial<DecisionRecorderStatus> = {}) {
   const request = vi.fn(respond);
   // SAFETY: The fixture only exercises the request transport of this client.
   const client = { request } as unknown as GatewayBrowserClient;
-  const mounted = await mountConfigSettings(client, () => <DecisionRecorderSettings />);
+  const mounted = await mountConfigSettings(client, () => (
+    <DecisionRecorderSettings mutationDisabled={mutationDisabled} />
+  ));
   await waitSettingsText(mounted.page, "Synthetic choice");
   await waitForSolid(() => expect(settingsButton(mounted.page, "Refresh").disabled).toBe(false));
   return { ...mounted, request, respond, content };
@@ -227,9 +229,9 @@ it("ignores a delayed export after reconnect and retains default-off recording",
   expect(page.textContent).not.toContain("secret");
   expect(settingsButton(page, "Export selected…").disabled).toBe(true);
 });
-it("requires confirmation before shrinking below usage and before deletion", async () => {
-  const { page, request } = await mount({ storageBytes: 3 * 1048576 });
-  input(page, 'input[aria-label="Total storage limit in MiB"]', "1");
+it("requires confirmation before reducing the budget above current usage and before deletion", async () => {
+  const { page, request } = await mount({ storageBytes: 24 * 1048576 });
+  input(page, 'input[aria-label="Total storage limit in MiB"]', "30");
   clickSettings(page, "Apply", true);
   await waitSettingsText(page, "Reduce limit");
   expect(request.mock.calls.filter(([method]) => method === "config.patch")).toHaveLength(0);
@@ -291,6 +293,66 @@ it("shows a failed status read and recovers through Refresh without discarding a
   expect(page.textContent).not.toContain("Recorder unavailable");
   expect(page.querySelector<HTMLInputElement>("#decision-duration")?.value).toBe("4");
 });
+
+it.each([false, true])(
+  "keeps unreadable-pool recovery deletion confirmed and guarded (mutations disabled: %s)",
+  async (mutationDisabled) => {
+    const { page, request, respond, publish, client } = await mount(
+      { enabled: true },
+      mutationDisabled,
+    );
+    const held = createDeferred<unknown>();
+    request.mockImplementation((method, params) => {
+      if (method === "decisionRecorder.status" || method === "decisionRecorder.list") {
+        return Promise.reject(new Error("Recorder pool unreadable"));
+      }
+      return method === "decisionRecorder.delete" ? held.promise : respond(method, params);
+    });
+    clickSettings(page, "Refresh", true);
+    await waitSettingsText(page, "Recorder pool unreadable");
+    await waitForSolid(() => expect(settingsButton(page, "Refresh").disabled).toBe(false));
+    expect(settingsButton(page, "Start capture").disabled).toBe(true);
+    expect(settingsButton(page, "Delete stored decisions…").disabled).toBe(mutationDisabled);
+    if (mutationDisabled) {
+      clickSettings(page, "Delete stored decisions…");
+      expect(page.querySelector("openclaw-modal-dialog")).toBeNull();
+      expect(request.mock.calls.some(([method]) => method === "decisionRecorder.delete")).toBe(
+        false,
+      );
+      return;
+    }
+    clickSettings(page, "Delete stored decisions…", true);
+    await waitSettingsText(page, "Remove all stored decisions?");
+    expect(page.textContent).toContain("The record count and recording state are unavailable.");
+    expect(page.textContent).not.toContain("Recording is off.");
+    expect(page.textContent).toContain("This cannot be undone");
+    const staleConfirm = settingsButton(page, "Delete stored decisions");
+    publish(false, client);
+    flush();
+    expect(settingsButton(page, "Delete stored decisions…").disabled).toBe(true);
+    clickSettings(page, "Delete stored decisions…");
+    staleConfirm.click();
+    flush();
+    expect(request.mock.calls.some(([method]) => method === "decisionRecorder.delete")).toBe(false);
+    publish(true, client);
+    await waitForSolid(() =>
+      expect(settingsButton(page, "Delete stored decisions…").disabled).toBe(false),
+    );
+    clickSettings(page, "Delete stored decisions…", true);
+    await waitSettingsText(page, "This cannot be undone");
+    clickSettings(page, "Delete stored decisions", true);
+    await waitForSolid(() =>
+      expect(settingsButton(page, "Delete stored decisions").disabled).toBe(true),
+    );
+    expect(settingsButton(page, "Delete stored decisions…").disabled).toBe(true);
+    clickSettings(page, "Delete stored decisions");
+    expect(
+      request.mock.calls.filter(([method]) => method === "decisionRecorder.delete"),
+    ).toHaveLength(1);
+    held.resolve({ deletedRecords: 1, freedBytes: 4096 });
+    await waitSettingsText(page, "Stored decisions deleted.");
+  },
+);
 
 it("a detached confirmation cannot delete records on a replacement connection", async () => {
   const { page, request, publish, client } = await mount();

@@ -49,12 +49,14 @@ export function DecisionRecorderDialog(props: {
             <div class="card">
               <h2 class="card-title">{title}</h2>
               <Show when={current.kind === "delete"}>
-                <p>Remove {props.status?.recordCount} stored decisions?</p>
+                <p>Remove {props.status?.recordCount ?? "all"} stored decisions?</p>
                 <p>This cannot be undone. Downloaded exports are not affected.</p>
                 <p>
-                  {props.status?.enabled
-                    ? "Recording remains on. New calls can still be stored."
-                    : "Recording is off."}
+                  {!props.status
+                    ? "The record count and recording state are unavailable."
+                    : props.status?.enabled
+                      ? "Recording remains on. New calls can still be stored."
+                      : "Recording is off."}
                 </p>
               </Show>
               <Show when={current.kind === "budget"}>
