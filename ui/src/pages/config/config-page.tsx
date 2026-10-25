@@ -31,6 +31,9 @@ import { Config } from "./view.tsx";
 registerRouteSubtitlesEnglish();
 export type { ConfigPageId } from "./config-sections.ts";
 
+const DecisionRecorderSettings = lazy(() => import("./decision-recorder.tsx"), {
+  export: "DecisionRecorderSettings",
+});
 const MeetingCaptureSettings = lazy(() => import("./meeting-capture.tsx"), {
   export: "MeetingCaptureSettings",
 });
@@ -58,6 +61,9 @@ export function preloadConfigPage(
   }
   return Promise.all([
     preloadConfigSection(section),
+    ...(pageId === "advanced" && section === "decisionRecorder"
+      ? [DecisionRecorderSettings.preload()]
+      : []),
     ...(pageId === "communications" && section === "transcripts"
       ? [MeetingCaptureSettings.preload()]
       : []),
@@ -111,7 +117,16 @@ function ConfigBody(props: {
         fallback={
           <Show
             when={props.pageId === "ai-agents" && props.config.activeSection === "session"}
-            fallback={editor}
+            fallback={
+              <Show
+                when={
+                  props.pageId === "advanced" && props.config.activeSection === "decisionRecorder"
+                }
+                fallback={editor}
+              >
+                <DecisionRecorderSettings mutationDisabled={props.state.mutationDisabled()} />
+              </Show>
+            }
           >
             <SessionStorageSettings
               mutationDisabled={props.state.mutationDisabled()}

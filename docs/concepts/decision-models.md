@@ -374,7 +374,8 @@ its [setup instructions](/plugins/typesafe#enable-and-configure).
 ### Bounded local recorder
 
 The optional Decision recorder is separate from the content-free DEBUG log.
-Enable `decisionRecorder.enabled` in configuration. Recording is off by default. Basic recording stores call metadata, status, timing, and the typed
+Open **Settings → Advanced → Decision recorder** to enable it, or configure
+`decisionRecorder.enabled` directly. Recording is off by default. Basic recording stores call metadata, status, timing, and the typed
 answer. Answers and caller-supplied identifiers can contain private information.
 
 Full-input capture requires a separate explicit `decisionRecorder.window` start action. It
@@ -424,7 +425,13 @@ answers and captured inputs. Downloaded copies are outside pool retention.
 including an unreadable pool whose record count cannot be determined. It does
 not remove exports, disable future recording, or change model selection. Turning
 recording off keeps existing records available. All recorder RPCs require
-operator-admin access. A separate UI contribution builds on this backend.
+operator-admin access.
+
+The Settings page shows the current pool usage and its effective limit separately
+from the **New pool storage limit**. Saving a new limit never deletes records or
+resizes the current pool. Use **View** for details, **Export selected** for a local
+JSON/JSONL download with its byte count, and **Delete stored decisions** to confirm
+clearing the pool. The next captured call creates a pool with the configured limit.
 
 ## Provide models from a plugin
 
