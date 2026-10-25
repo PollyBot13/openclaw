@@ -27,6 +27,37 @@ vi.mock("node:worker_threads", async () =>
 
 const observer = useReconcileWorkerObserver();
 
+it("recovers a fresh admitted turn when its active projection is rebuilding", async () => {
+  await withInterruptedTurn(
+    false,
+    async ({ target, prepare }) => {
+      await waitForSessionTranscriptIndexReconcile({ agentId: target.agentId });
+      const database = openOpenClawAgentDatabase({ agentId: target.agentId });
+      expect(
+        database.db
+          .prepare(
+            "UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?",
+          )
+          .run(target.sessionId).changes,
+      ).toBe(1);
+      const prepared = await prepare();
+      try {
+        expect(
+          prepared.sessionManager
+            .getBranch()
+            .filter((entry) => entry.type === "message" && entry.message.role === "user"),
+        ).toHaveLength(1);
+      } finally {
+        await cleanupEmbeddedAttemptResources({
+          sessionManager: prepared.sessionManager,
+          flushPendingToolResultsAfterIdle: async () => {},
+        });
+      }
+    },
+    { interruptedTurn: false },
+  );
+});
+
 it.each(["window-changed", "other-session", "read-failure"])(
   "does not retry hydration for %s",
   async (failure) => {
