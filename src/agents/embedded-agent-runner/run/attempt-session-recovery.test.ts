@@ -72,7 +72,12 @@ it.each(["window-changed", "other-session", "read-failure"])(
     await expect(
       openSessionAfterProjectionRecovery({
         open,
-        target: { sessionId: "current-session" },
+        target: {
+          agentId: "main",
+          sessionId: "current-session",
+          sessionKey: "agent:main:current-session",
+          storePath: "/synthetic/sessions.sqlite",
+        },
         timeoutMs: 1_000,
         signal: new AbortController().signal,
         assertCurrent() {},
