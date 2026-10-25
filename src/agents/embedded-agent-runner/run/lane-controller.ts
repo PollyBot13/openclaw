@@ -59,11 +59,7 @@ import {
 import type { RunEmbeddedAgentParams } from "./params.js";
 import { claimAgentSessionWriter } from "./session-bootstrap.js";
 
-type LaneParams = RunEmbeddedAgentParams & {
-  sessionFile: string;
-};
-
-export function createEmbeddedRunLaneController<TParams extends LaneParams>(options: {
+export function createEmbeddedRunLaneController<TParams extends RunEmbeddedAgentParams>(options: {
   getLifecycleGeneration: () => string;
   getParams: () => TParams;
   globalLane: string;
@@ -549,17 +545,21 @@ export function createEmbeddedRunLaneController<TParams extends LaneParams>(opti
               activeGlobalCapacityTickets -= 1;
             }
           };
-          return enqueue
+          const queued = enqueue
             ? enqueue(runTicket, queueOptions)
             : enqueueCommandInLane(options.globalLane, runTicket, queueOptions);
+          return queued.catch((error: unknown) => {
+            // Cancel raw work before the capacity owner joins its cleanup.
+            if (isCommandLaneTaskTimeoutError(error)) {
+              laneTaskAbortController.abort(error);
+            }
+            throw error;
+          });
         },
         () => trackGlobalExecution(taskWithCurrentLifecycle()),
       );
       return await trackGlobalExecution(queuedRun);
     } catch (error) {
-      if (isCommandLaneTaskTimeoutError(error)) {
-        laneTaskAbortController.abort(error);
-      }
       throw (abortSignal.aborted && resolveLaneTimeoutError()) || error;
     } finally {
       finishGlobalLaneAdmission();
