@@ -37,23 +37,25 @@ import type { SessionsYieldCallback } from "./sessions-yield-tool.js";
 const log = createSubsystemLogger("agent/tool-handoff");
 const pending = new WeakSet<object>();
 
+type HandoffScope = { assertCurrent: () => void; signal: AbortSignal };
+type HandoffWork =
+  | { run: (scope: HandoffScope) => Promise<Record<string, unknown>>; request?: never }
+  | { request: { method: "plugins.reload"; params: Record<string, unknown> }; run?: never };
+
 /** Retain invocation authority while the reply owner yields to an existing Gateway operation. */
-export async function handoffSessionTool(params: {
-  name: string;
-  fenceSuccessors?: true;
-  run?: (scope: {
-    assertCurrent: () => void;
-    signal: AbortSignal;
-  }) => Promise<Record<string, unknown>>;
-  request?: { method: "plugins.reload"; params: Record<string, unknown> };
-  sessionId?: string;
-  runId?: string;
-  operation?: ReplyOperation;
-  requestOwners?: readonly ExecRequestOwner[];
-  onYield?: SessionsYieldCallback;
-  signal?: AbortSignal;
-  formatResult: (payload: Record<string, unknown>) => string;
-}) {
+export async function handoffSessionTool(
+  params: HandoffWork & {
+    name: string;
+    fenceSuccessors?: true;
+    sessionId?: string;
+    runId?: string;
+    operation?: ReplyOperation;
+    requestOwners?: readonly ExecRequestOwner[];
+    onYield?: SessionsYieldCallback;
+    signal?: AbortSignal;
+    formatResult: (payload: Record<string, unknown>) => string;
+  },
+) {
   if (getAgentToolExecutionContext()?.hasUnobservedAsyncToolResults) {
     return jsonResult({
       status: "deferred",
@@ -82,16 +84,10 @@ export async function handoffSessionTool(params: {
   let continuation:
     | Awaited<ReturnType<typeof captureOperatorToolGatewayContinuationContext>>
     | Awaited<ReturnType<typeof captureOperatorToolGatewayRequestContinuationContext>> = undefined;
-  let runDeferred:
-    | ((scope: {
-        assertCurrent: () => void;
-        signal: AbortSignal;
-      }) => Promise<Record<string, unknown>>)
-    | undefined;
+  let runDeferred: ((scope: HandoffScope) => Promise<Record<string, unknown>>) | undefined;
   let enqueueDeferred:
     | ((
-        text: string,
-        options: Parameters<typeof enqueueSessionEventForHost>[1],
+        ...args: Parameters<typeof enqueueSessionEventForHost>
       ) =>
         | ReturnType<typeof enqueueSessionEventForHost>
         | Promise<ReturnType<typeof enqueueSessionEventForHost>>)
@@ -112,7 +108,7 @@ export async function handoffSessionTool(params: {
       const captured = await captureOperatorToolGatewayContinuationContext(gatewayTarget);
       const run = params.run;
       continuation = captured;
-      runDeferred = run && captured ? (scope) => captured.run(() => run(scope)) : undefined;
+      runDeferred = captured ? (scope) => captured.run(() => run(scope)) : undefined;
       enqueueDeferred = captured
         ? (text, options) =>
             captured.run(() =>
