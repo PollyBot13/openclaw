@@ -5,45 +5,29 @@ import { isKeepCurrentAuthChoice, promptAuthChoiceGrouped } from "./auth-choice-
 import { makePrompter } from "./setup/__tests__/test-utils.js";
 
 const buildAuthChoiceGroups = vi.hoisted(() => vi.fn());
-const compareAuthChoiceGroups = vi.hoisted(() =>
-  vi.fn((a: AuthChoiceGroup, b: AuthChoiceGroup) => a.label.localeCompare(b.label)),
-);
-const isFeaturedAuthChoiceGroup = vi.hoisted(() =>
-  vi.fn((group: AuthChoiceGroup) =>
-    ["openai", "anthropic", "xai", "google", "openrouter"].includes(group.value),
-  ),
-);
 
-vi.mock("./auth-choice-options.js", () => ({
+vi.mock("./auth-choice-options.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./auth-choice-options.js")>()),
   buildAuthChoiceGroups,
-  compareAuthChoiceGroups,
-  isFeaturedAuthChoiceGroup,
 }));
 
 function authChoiceGroup(
-  value: string,
-  label: string,
+  groupValue: string,
+  groupLabel: string,
   methods: Array<readonly [value: string, label: string]>,
 ): AuthChoiceGroup {
   return {
-    value,
-    label,
-    options: methods.map(([methodValue, methodLabel]) => ({
-      value: methodValue,
-      label: methodLabel,
-    })),
+    value: groupValue,
+    label: groupLabel,
+    options: methods.map(([value, label]) => ({ value, label })),
   };
 }
 
 function openAIGroup(): AuthChoiceGroup {
-  const methods: Array<readonly [string, string]> = [
+  return authChoiceGroup("openai", "OpenAI", [
     ["openai", "ChatGPT Login"],
     ["openai-api-key", "OpenAI API Key"],
-  ];
-  return {
-    ...authChoiceGroup("openai", "OpenAI", methods),
-    providerIds: ["openai"],
-  };
+  ]);
 }
 
 function mockGroups(groups: AuthChoiceGroup[]) {
@@ -54,14 +38,17 @@ function mockGroups(groups: AuthChoiceGroup[]) {
 }
 
 function scriptedPrompter(
-  steps: Array<string | readonly [message: string, answer: string]>,
+  steps: ReadonlyArray<string | readonly [message: string, answer: string, searchable?: true]>,
   unmatchedAnswers: readonly string[] = [],
 ) {
   const prompts: WizardSelectParams<unknown>[] = [];
   const select = async (params: WizardSelectParams<unknown>) => {
     const step = steps[prompts.length];
-    if (!step || (typeof step !== "string" && step[0] !== params.message)) {
+    if (!step) {
       throw new Error(`unexpected prompt ${params.message}`);
+    }
+    if (typeof step !== "string") {
+      expect([params.message, params.searchable]).toEqual([step[0], step[2]]);
     }
     const answer = typeof step === "string" ? step : step[1];
     if (!unmatchedAnswers.includes(answer)) {
@@ -70,9 +57,7 @@ function scriptedPrompter(
     prompts.push(params);
     return answer;
   };
-  const prompter = makePrompter({
-    select: vi.fn(select) as WizardPrompter["select"],
-  });
+  const prompter = makePrompter({ select: vi.fn(select) as WizardPrompter["select"] });
   return { prompter, prompts };
 }
 
@@ -86,19 +71,12 @@ const providerSearchMessage =
 describe("promptAuthChoiceGrouped", () => {
   beforeEach(() => {
     buildAuthChoiceGroups.mockReset();
-    compareAuthChoiceGroups
-      .mockReset()
-      .mockImplementation((a, b) => a.label.localeCompare(b.label));
-    isFeaturedAuthChoiceGroup.mockClear();
   });
 
   it("marks the configured provider and offers keep current config first", async () => {
     mockGroups([
       openAIGroup(),
-      {
-        ...authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API Key"]]),
-        providerIds: ["anthropic"],
-      },
+      authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API Key"]]),
     ]);
     const { prompter, prompts } = scriptedPrompter([
       ["Model/auth provider", "openai"],
@@ -132,15 +110,6 @@ describe("promptAuthChoiceGrouped", () => {
   });
 
   it("filters guided choices while keeping featured providers and grouped methods", async () => {
-    const featuredOrder = new Map([
-      ["openai", 0],
-      ["anthropic", 1],
-    ]);
-    compareAuthChoiceGroups.mockImplementation((a, b) => {
-      const priorityA = featuredOrder.get(a.value) ?? Number.POSITIVE_INFINITY;
-      const priorityB = featuredOrder.get(b.value) ?? Number.POSITIVE_INFINITY;
-      return priorityA - priorityB || a.label.localeCompare(b.label);
-    });
     mockGroups([
       authChoiceGroup("minimax", "MiniMax", [
         ["minimax-global-oauth", "MiniMax OAuth (Global)"],
@@ -201,8 +170,8 @@ describe("promptAuthChoiceGrouped", () => {
     expect(optionValues(prompts[0])).toEqual([
       "detected-ai",
       "recommended-ai",
-      "anthropic",
       "openai",
+      "anthropic",
       "__more",
       "skip",
     ]);
@@ -231,36 +200,24 @@ describe("promptAuthChoiceGrouped", () => {
     });
   });
 
-  it.each([
-    {
-      featured: true,
-      answers: ["__more", "missing", "minimax", "__back", "__back", "skip"],
-      searchable: [undefined, true, true, undefined, true, undefined],
-      messages: [
-        "Model/auth provider",
-        providerSearchMessage,
-        providerSearchMessage,
-        "MiniMax auth method",
-        providerSearchMessage,
-        "Model/auth provider",
-      ],
-      notes: 0,
-    },
-    {
-      featured: false,
-      answers: ["minimax", "__back", "missing", "skip"],
-      searchable: [true, undefined, true, true],
-      messages: [
-        providerSearchMessage,
-        "MiniMax auth method",
-        providerSearchMessage,
-        providerSearchMessage,
-      ],
-      notes: 1,
-    },
-  ])(
-    "keeps the ClawHub hint on searchable provider pages through recovery and Back (featured=$featured)",
-    async ({ featured, answers, searchable, messages, notes }) => {
+  it.each([true, false])(
+    "keeps the ClawHub hint on searchable provider pages through recovery and Back (featured=%s)",
+    async (featured) => {
+      const steps = featured
+        ? ([
+            ["Model/auth provider", "__more"],
+            [providerSearchMessage, "missing", true],
+            [providerSearchMessage, "minimax", true],
+            ["MiniMax auth method", "__back"],
+            [providerSearchMessage, "__back", true],
+            ["Model/auth provider", "skip"],
+          ] as const)
+        : ([
+            [providerSearchMessage, "minimax", true],
+            ["MiniMax auth method", "__back"],
+            [providerSearchMessage, "missing", true],
+            [providerSearchMessage, "skip", true],
+          ] as const);
       mockGroups([
         ...(featured ? [openAIGroup()] : []),
         authChoiceGroup("minimax", "MiniMax", [
@@ -268,12 +225,11 @@ describe("promptAuthChoiceGrouped", () => {
           ["minimax-cn-api", "CN API key"],
         ]),
       ]);
-      const { prompter, prompts } = scriptedPrompter(answers, ["missing"]);
+      const { prompter, prompts } = scriptedPrompter(steps, ["missing"]);
 
       expect(await promptAuthChoiceGrouped({ prompter, includeSkip: true })).toBe("skip");
-      expect(prompts.map((prompt) => prompt.searchable)).toEqual(searchable);
-      expect(prompts.map((prompt) => prompt.message)).toEqual(messages);
-      expect(prompter.note).toHaveBeenCalledTimes(notes);
+      expect(prompts).toHaveLength(steps.length);
+      expect(prompter.note).toHaveBeenCalledTimes(featured ? 0 : 1);
       expect(prompts.at(-1)?.options.at(-1)?.value).toBe("skip");
     },
   );
