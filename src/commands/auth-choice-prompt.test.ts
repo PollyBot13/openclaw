@@ -24,15 +24,13 @@ function authChoiceGroup(
   value: string,
   label: string,
   methods: Array<readonly [value: string, label: string]>,
-  featured = false,
 ): AuthChoiceGroup {
   return {
     value,
     label,
-    options: methods.map(([methodValue, methodLabel], index) => ({
+    options: methods.map(([methodValue, methodLabel]) => ({
       value: methodValue,
       label: methodLabel,
-      ...(featured && index === 0 ? { onboardingFeatured: true } : {}),
     })),
   };
 }
@@ -43,7 +41,7 @@ function openAIGroup(): AuthChoiceGroup {
     ["openai-api-key", "OpenAI API Key"],
   ];
   return {
-    ...authChoiceGroup("openai", "OpenAI", methods, true),
+    ...authChoiceGroup("openai", "OpenAI", methods),
     providerIds: ["openai"],
   };
 }
@@ -55,19 +53,25 @@ function mockGroups(groups: AuthChoiceGroup[]) {
   });
 }
 
-function scriptedPrompter(steps: Array<string | readonly [message: string, answer: string]>) {
+function scriptedPrompter(
+  steps: Array<string | readonly [message: string, answer: string]>,
+  unmatchedAnswers: readonly string[] = [],
+) {
   const prompts: WizardSelectParams<unknown>[] = [];
   const select = async (params: WizardSelectParams<unknown>) => {
     const step = steps[prompts.length];
     if (!step || (typeof step !== "string" && step[0] !== params.message)) {
       throw new Error(`unexpected prompt ${params.message}`);
     }
+    const answer = typeof step === "string" ? step : step[1];
+    if (!unmatchedAnswers.includes(answer)) {
+      expect(optionValues(params)).toContain(answer);
+    }
     prompts.push(params);
-    return typeof step === "string" ? step : step[1];
+    return answer;
   };
   const prompter = makePrompter({
     select: vi.fn(select) as WizardPrompter["select"],
-    confirm: vi.fn(async () => true),
   });
   return { prompter, prompts };
 }
@@ -75,6 +79,9 @@ function scriptedPrompter(steps: Array<string | readonly [message: string, answe
 function optionValues(prompt: WizardSelectParams<unknown> | undefined) {
   return prompt?.options.map((option) => option.value);
 }
+
+const providerSearchMessage =
+  "Model/auth provider\nProvider not listed? Find community provider plugins at https://clawhub.ai/plugins";
 
 describe("promptAuthChoiceGrouped", () => {
   beforeEach(() => {
@@ -89,7 +96,7 @@ describe("promptAuthChoiceGrouped", () => {
     mockGroups([
       openAIGroup(),
       {
-        ...authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API Key"]], true),
+        ...authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API Key"]]),
         providerIds: ["anthropic"],
       },
     ]);
@@ -140,9 +147,9 @@ describe("promptAuthChoiceGrouped", () => {
         ["minimax-cn-api", "MiniMax API key (CN)"],
         ["minimax-legacy", "Legacy MiniMax login"],
       ]),
-      authChoiceGroup("meta", "Meta", [["meta-api-key", "Meta API key"]], true),
+      authChoiceGroup("meta", "Meta", [["meta-api-key", "Meta API key"]]),
       openAIGroup(),
-      authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API key"]], true),
+      authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API key"]]),
     ]);
     const { prompter, prompts } = scriptedPrompter([
       ["Model/auth provider", "__more"],
@@ -172,7 +179,7 @@ describe("promptAuthChoiceGrouped", () => {
   it("features caller-supplied groups first and excludes them from More", async () => {
     mockGroups([
       openAIGroup(),
-      authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API key"]], true),
+      authChoiceGroup("anthropic", "Anthropic", [["apiKey", "Anthropic API key"]]),
       authChoiceGroup("minimax", "MiniMax", [["minimax-api", "MiniMax API key"]]),
     ]);
     const { prompter, prompts } = scriptedPrompter([["Model/auth provider", "__more"], "minimax"]);
@@ -229,17 +236,31 @@ describe("promptAuthChoiceGrouped", () => {
       featured: true,
       answers: ["__more", "missing", "minimax", "__back", "__back", "skip"],
       searchable: [undefined, true, true, undefined, true, undefined],
+      messages: [
+        "Model/auth provider",
+        providerSearchMessage,
+        providerSearchMessage,
+        "MiniMax auth method",
+        providerSearchMessage,
+        "Model/auth provider",
+      ],
       notes: 0,
     },
     {
       featured: false,
       answers: ["minimax", "__back", "missing", "skip"],
       searchable: [true, undefined, true, true],
+      messages: [
+        providerSearchMessage,
+        "MiniMax auth method",
+        providerSearchMessage,
+        providerSearchMessage,
+      ],
       notes: 1,
     },
   ])(
-    "keeps method Back on its provider page and returns More to the root (featured=$featured)",
-    async ({ featured, answers, searchable, notes }) => {
+    "keeps the ClawHub hint on searchable provider pages through recovery and Back (featured=$featured)",
+    async ({ featured, answers, searchable, messages, notes }) => {
       mockGroups([
         ...(featured ? [openAIGroup()] : []),
         authChoiceGroup("minimax", "MiniMax", [
@@ -247,10 +268,11 @@ describe("promptAuthChoiceGrouped", () => {
           ["minimax-cn-api", "CN API key"],
         ]),
       ]);
-      const { prompter, prompts } = scriptedPrompter(answers);
+      const { prompter, prompts } = scriptedPrompter(answers, ["missing"]);
 
       expect(await promptAuthChoiceGrouped({ prompter, includeSkip: true })).toBe("skip");
       expect(prompts.map((prompt) => prompt.searchable)).toEqual(searchable);
+      expect(prompts.map((prompt) => prompt.message)).toEqual(messages);
       expect(prompter.note).toHaveBeenCalledTimes(notes);
       expect(prompts.at(-1)?.options.at(-1)?.value).toBe("skip");
     },
