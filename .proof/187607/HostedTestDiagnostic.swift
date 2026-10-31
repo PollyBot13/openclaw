@@ -73,7 +73,9 @@ private final class PreferenceProofTracking: NSObject {
 
     @objc private func timedOut() {
         self.failure = ProofError.failed("Native menu timed out: \(self.label)")
-        self.menu.cancelTracking()
+        if ProcessInfo.processInfo.environment["PROBE_CONTEXT"] == "noanimation" {
+                    self.menu.cancelTrackingWithoutAnimation()
+                } else { self.menu.cancelTracking() }
     }
 
     @objc private func inspect() {
@@ -132,11 +134,15 @@ private final class PreferenceProofTracking: NSObject {
                     RunLoop.main.add(timer, forMode: .common)
                 }
             } else {
-                self.menu.cancelTracking()
+                if ProcessInfo.processInfo.environment["PROBE_CONTEXT"] == "noanimation" {
+                    self.menu.cancelTrackingWithoutAnimation()
+                } else { self.menu.cancelTracking() }
             }
         } catch {
             self.failure = error
-            self.menu.cancelTracking()
+            if ProcessInfo.processInfo.environment["PROBE_CONTEXT"] == "noanimation" {
+                    self.menu.cancelTrackingWithoutAnimation()
+                } else { self.menu.cancelTracking() }
         }
     }
 }
@@ -181,11 +187,11 @@ let menu = NSMenu()
 menu.autoenablesItems = false
 menu.showsStateColumn = true
 menu.appearance = app.effectiveAppearance
-if ProcessInfo.processInfo.environment["PROBE_CONTEXT"] == "reused" { parentItem.submenu = menu }
+if ["attached", "reused", "noanimation"].contains(ProcessInfo.processInfo.environment["PROBE_CONTEXT"] ?? "") { parentItem.submenu = menu }
 
 for title in ["Off", "Low", "High"] { let item = NSMenuItem(title:title, action:#selector(Receiver.selected(_:)), keyEquivalent: ""); item.target=receiver; menu.addItem(item) }
 do {
-  if ProcessInfo.processInfo.environment["PROBE_CONTEXT"] == "reused" {
+  if ["cancelled", "reused", "noanimation"].contains(ProcessInfo.processInfo.environment["PROBE_CONTEXT"] ?? "") {
    for index in 0..<10 {
     try await PreferenceProofTracking(menu: menu, window: window, output: URL(fileURLWithPath: ProcessInfo.processInfo.environment["PROBE_OUTPUT"]!), label: "capture-\(index)").run()
    }
