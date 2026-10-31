@@ -29,7 +29,7 @@ jobs:
           swift build --package-path diagnostic/Probe --build-tests 2>&1 | tee diagnostic/build.log
           cd diagnostic
           for route in cg; do
-            for policy in attached cancelled reused noanimation; do
+            for policy in one reused defaultmode pause; do
               mkdir -p "$route-$policy" "$RUNNER_TEMP/probe-home/Library/Preferences" "$RUNNER_TEMP/probe-tmp"
               set +e
               (cd "$route-$policy" && env HOME="$RUNNER_TEMP/probe-home" CFFIXED_USER_HOME="$RUNNER_TEMP/probe-home" TMPDIR="$RUNNER_TEMP/probe-tmp/" PROBE_ROUTE="$route" PROBE_CONTEXT="$policy" PROBE_OUTPUT="$PWD" swift test --package-path ../Probe --skip-build --filter hostedNativeTestContext > probe.log 2>&1)
