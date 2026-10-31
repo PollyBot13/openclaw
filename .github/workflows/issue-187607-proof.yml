@@ -1,5 +1,6 @@
 name: Issue 187607 native proof
 on:
+  workflow_dispatch:
   push:
     branches: [proof/issue-187607]
 permissions:
