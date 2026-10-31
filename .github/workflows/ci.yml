@@ -23,7 +23,7 @@ jobs:
           swiftc -swift-version 6 .proof/187607/HostedInputDiagnostic.swift -o diagnostic/probe
           cd diagnostic
           for route in cg ns; do
-            for policy in accessory regular; do
+            for policy in fresh reused; do
               mkdir "$route-$policy"
               set +e
               (cd "$route-$policy" && ../probe "$route" "$policy" > probe.log 2>&1)

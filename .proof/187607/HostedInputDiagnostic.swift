@@ -67,7 +67,7 @@ private final class PreferenceProofTracking: NSObject {
             let location = NSApp.window(withWindowNumber: number)!.convertPoint(fromScreen: NSEvent.mouseLocation)
             let type: NSEvent.EventType = event.type == .mouseMoved ? .mouseMoved : event.type == .leftMouseDown ? .leftMouseDown : .leftMouseUp
             NSApp.postEvent(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: number, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!, atStart: false)
-        } else { event.post(tap: .cgSessionEventTap) }
+        } else { event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: 0); event.post(tap: .cgSessionEventTap) }
     }
 
     @objc private func timedOut() {
@@ -111,7 +111,7 @@ private final class PreferenceProofTracking: NSObject {
                                          mouseCursorPosition: point, mouseButton: .left))
                 }
                 try JSONSerialization.data(withJSONObject: [
-                    "method": CommandLine.arguments.contains("ns") ? "diagnostic NSEvent owned-queue routing" : "diagnostic CGEvent session routing with window hint",
+                    "method": CommandLine.arguments.contains("ns") ? "diagnostic NSEvent owned-queue routing" : "diagnostic CGEvent session routing without window hint",
                     "windowNumber": menuWindow.windowNumber,
                     "appKitScreenPoint": ["x": frame.midX, "y": frame.midY],
                     "quartzScreenPoint": ["x": point.x, "y": point.y],
@@ -160,13 +160,26 @@ private let receiver = Receiver()
 let window = NSWindow(contentRect: NSRect(x:120,y:150,width:500,height:240), styleMask:[.titled], backing:.buffered, defer:false)
 window.isReleasedWhenClosed = false
 window.title = "Synthetic hosted input diagnostic"
-window.makeKeyAndOrderFront(nil)
+window.orderFrontRegardless()
 app.activate(ignoringOtherApps:true)
 let monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseUp]) { e in print("LOCAL EVENT",e.type.rawValue,"window",e.windowNumber,"point",e.locationInWindow); return e }
+let parent = NSMenu()
+let parentItem = NSMenuItem(title: "Session", action: nil, keyEquivalent: "")
+parent.addItem(parentItem)
 let menu = NSMenu()
+menu.autoenablesItems = false
+menu.showsStateColumn = true
+menu.appearance = app.effectiveAppearance
+if CommandLine.arguments.contains("reused") { parentItem.submenu = menu }
+
 for title in ["Off", "Low", "High"] { let item = NSMenuItem(title:title, action:#selector(Receiver.selected(_:)), keyEquivalent: ""); item.target=receiver; menu.addItem(item) }
 Task { @MainActor in
  do {
+  if CommandLine.arguments.contains("reused") {
+   for index in 0..<10 {
+    try await PreferenceProofTracking(menu: menu, window: window, output: URL(fileURLWithPath: FileManager.default.currentDirectoryPath), label: "capture-\(index)").run()
+   }
+  }
   try await PreferenceProofTracking(menu:menu, window:window, output:URL(fileURLWithPath:FileManager.default.currentDirectoryPath), label:"probe", selection:menu.items[0]).run()
   print("TRACKING ACCEPTED actions", receiver.actions)
   exit(receiver.actions == 1 ? 0 : 2)
