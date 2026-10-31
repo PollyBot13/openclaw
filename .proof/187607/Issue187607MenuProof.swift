@@ -181,34 +181,42 @@ private final class PreferenceProofTracking: NSObject {
     }
 
     func run() async throws {
-        let pointer = try #require(CGEvent(source: nil)?.location)
-        defer { #expect(CGWarpMouseCursorPosition(pointer) == .success) }
-        try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            RunLoop.main.perform(inModes: [.common]) {
-                MainActor.assumeIsolated {
-                    let inspection = Timer(timeInterval: 0.2, target: self, selector: #selector(self.inspect), userInfo: nil, repeats: true)
-                    let deadline = Timer(timeInterval: 10, target: self, selector: #selector(self.timedOut), userInfo: nil, repeats: false)
-                    self.inspection = inspection
-                    self.deadline = deadline
-                    for mode in [RunLoop.Mode.common, .eventTracking] {
-                        RunLoop.main.add(inspection, forMode: mode)
-                        RunLoop.main.add(deadline, forMode: mode)
+        do {
+            let pointer = try #require(CGEvent(source: nil)?.location)
+            defer { #expect(CGWarpMouseCursorPosition(pointer) == .success) }
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                RunLoop.main.perform(inModes: [.common]) {
+                    MainActor.assumeIsolated {
+                        let inspection = Timer(timeInterval: 0.2, target: self, selector: #selector(self.inspect), userInfo: nil, repeats: true)
+                        let deadline = Timer(timeInterval: 10, target: self, selector: #selector(self.timedOut), userInfo: nil, repeats: false)
+                        self.inspection = inspection
+                        self.deadline = deadline
+                        for mode in [RunLoop.Mode.common, .eventTracking] {
+                            RunLoop.main.add(inspection, forMode: mode)
+                            RunLoop.main.add(deadline, forMode: mode)
+                        }
+                        let selected = self.menu.popUp(positioning: nil, at: NSPoint(x: 30, y: 140), in: self.window.contentView)
+                        self.inspection?.invalidate()
+                        self.deadline?.invalidate()
+                        self.inputTimers.forEach { $0.invalidate() }
+                        if let failure = self.failure {
+                            self.continuation?.resume(throwing: failure)
+                        } else if !self.observed || (self.selection != nil && !selected) {
+                            self.continuation?.resume(throwing: ProofError.failed("Native menu did not track/accept actual mouse selection: \(self.label)"))
+                        } else {
+                            self.continuation?.resume()
+                        }
+                        self.continuation = nil
                     }
-                    let selected = self.menu.popUp(positioning: nil, at: NSPoint(x: 30, y: 140), in: self.window.contentView)
-                    self.inspection?.invalidate()
-                    self.deadline?.invalidate()
-                    self.inputTimers.forEach { $0.invalidate() }
-                    if let failure = self.failure {
-                        self.continuation?.resume(throwing: failure)
-                    } else if !self.observed || (self.selection != nil && !selected) {
-                        self.continuation?.resume(throwing: ProofError.failed("Native menu did not track/accept actual mouse selection: \(self.label)"))
-                    } else {
-                        self.continuation?.resume()
-                    }
-                    self.continuation = nil
                 }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
             }
+        }
+        // Let AppKit finish the cancelled/accepted tracking lifecycle before another popup.
+        // Swift Testing can otherwise reenter common modes without an outer default-mode turn.
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform(inModes: [.default]) { continuation.resume() }
             CFRunLoopWakeUp(CFRunLoopGetMain())
         }
     }
