@@ -1,0 +1,74 @@
+name: Issue 187607 native proof
+on:
+  push:
+    branches: [proof/issue-187607]
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: openclaw/openclaw
+          ref: 4591070b2f4b1b043b57c306fcd6d235e56b04a2
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.22.1
+      - name: Prepare isolated native worker
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .openclaw/tmp/issue-187607
+          cp ../harness/.proof/187607/* .openclaw/tmp/issue-187607/
+          { sw_vers; xcodebuild -version; swift --version; node --version; ls /Applications | grep Xcode; } | tee .openclaw/tmp/issue-187607/worker.txt
+          (cd .openclaw/tmp/issue-187607 && shasum -a 256 -c SHA256SUMS.txt)
+          source scripts/lib/swift-toolchain.sh
+          require_swift_toolchain
+          scripts/install-swift-tools.sh "$RUNNER_TEMP/swift-tools"
+          echo "$RUNNER_TEMP/swift-tools" >> "$GITHUB_PATH"
+          corepack enable
+          pnpm install --frozen-lockfile --prefer-offline --optional --filter '@openclaw/mermaid-renderer...' --filter '@openclaw/gateway-protocol...' --config.ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true --config.side-effects-cache=true
+          node scripts/prepare-apple-mermaid.mjs
+      - name: Baseline regression must fail assertions
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check .openclaw/tmp/issue-187607/PATCH.diff
+          git apply .openclaw/tmp/issue-187607/PATCH.diff
+          set +e
+          /usr/bin/time -p /bin/bash .openclaw/tmp/issue-187607/run-native.sh red > .openclaw/tmp/issue-187607/red-driver.log 2>&1
+          rc=$?
+          set -e
+          cat .openclaw/tmp/issue-187607/red-driver.log
+          echo "$rc" > .openclaw/tmp/issue-187607/red-driver.exit
+          test "$rc" -ne 0
+          test "$(cat .openclaw/tmp/issue-187607/native-red-*/build.exit)" = 0
+          test "$(cat .openclaw/tmp/issue-187607/native-red-*/tests.exit)" -ne 0
+          grep -q 'Expectation failed' .openclaw/tmp/issue-187607/native-red-*/tests.log
+          grep -q 'session preference checkmarks distinguish inheritance from explicit Off' .openclaw/tmp/issue-187607/native-red-*/tests.log
+      - name: Apply minimal fix and run identical suites and static checks
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check .openclaw/tmp/issue-187607/PROPOSED-FIX.diff
+          git apply .openclaw/tmp/issue-187607/PROPOSED-FIX.diff
+          /usr/bin/time -p /bin/bash .openclaw/tmp/issue-187607/run-native.sh green > .openclaw/tmp/issue-187607/green-driver.log 2>&1
+          cat .openclaw/tmp/issue-187607/green-driver.log
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue-187607-native-proof
+          path: source/.openclaw/tmp/issue-187607
+          include-hidden-files: true
+          retention-days: 14
