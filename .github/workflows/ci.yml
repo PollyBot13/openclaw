@@ -19,14 +19,20 @@ jobs:
       - name: Observe hosted menu input boundary
         shell: bash
         run: |
-          mkdir diagnostic
-          swiftc -swift-version 6 .proof/187607/HostedInputDiagnostic.swift -o diagnostic/probe
+          mkdir -p diagnostic/Probe/Tests/ProbeTests
+          cp .proof/187607/HostedTestDiagnostic.swift diagnostic/Probe/Tests/ProbeTests/Probe.swift
+          cat > diagnostic/Probe/Package.swift <<'SWIFT'
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(name: "Probe", platforms: [.macOS(.v14)], targets: [.testTarget(name: "ProbeTests")])
+          SWIFT
+          swift build --package-path diagnostic/Probe --build-tests 2>&1 | tee diagnostic/build.log
           cd diagnostic
           for route in cg ns; do
             for policy in fresh reused; do
-              mkdir "$route-$policy"
+              mkdir -p "$route-$policy" "$RUNNER_TEMP/probe-home/Library/Preferences" "$RUNNER_TEMP/probe-tmp"
               set +e
-              (cd "$route-$policy" && ../probe "$route" "$policy" > probe.log 2>&1)
+              (cd "$route-$policy" && env HOME="$RUNNER_TEMP/probe-home" CFFIXED_USER_HOME="$RUNNER_TEMP/probe-home" TMPDIR="$RUNNER_TEMP/probe-tmp/" PROBE_ROUTE="$route" PROBE_CONTEXT="$policy" PROBE_OUTPUT="$PWD" swift test --package-path ../Probe --skip-build --filter hostedNativeTestContext > probe.log 2>&1)
               rc=$?
               set -e
               echo "$rc" > "$route-$policy/probe.exit"
@@ -36,7 +42,9 @@ jobs:
         if: always()
         with:
           name: hosted-input-diagnostic
-          path: diagnostic
+          path: |
+            diagnostic
+            !diagnostic/Probe/.build/**
   proof:
     if: ${{ !inputs.diagnostic }}
     runs-on: macos-26

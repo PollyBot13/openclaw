@@ -12,6 +12,12 @@ import Testing
 struct Issue187607MenuProof {
     @Test func trackedPreferenceMenusAndActions() async throws {
         try await AppKitTestSupport.startApplication()
+        print("Preference input environment: postAllowed=\(CGPreflightPostEventAccess()) AXTrusted=\(AXIsProcessTrusted()) active=\(NSApp.isActive)")
+        let inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseUp]) { event in
+            print("Preference local input: type=\(event.type.rawValue) window=\(event.windowNumber) point=\(event.locationInWindow)")
+            return event
+        }
+        defer { if let inputMonitor { NSEvent.removeMonitor(inputMonitor) } }
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -209,7 +215,9 @@ private final class PreferenceProofTracking: NSObject {
 
     @objc private func sendInput() {
         guard !self.pendingInputs.isEmpty else { return }
-        self.pendingInputs.removeFirst().post(tap: .cgSessionEventTap)
+        let event = self.pendingInputs.removeFirst()
+        print("Preference input timer: label=\(self.label) type=\(event.type.rawValue) active=\(NSApp.isActive) postAllowed=\(CGPreflightPostEventAccess())")
+        event.post(tap: .cgSessionEventTap)
     }
 
     @objc private func timedOut() {
@@ -255,6 +263,10 @@ private final class PreferenceProofTracking: NSObject {
                 try JSONSerialization.data(withJSONObject: [
                     "method": "CGEvent session routing -> native NSMenu event tracking (disposable hosted VM only)",
                     "windowNumber": menuWindow.windowNumber,
+                    "postEventAllowed": CGPreflightPostEventAccess(),
+                    "accessibilityTrusted": AXIsProcessTrusted(),
+                    "applicationActive": NSApp.isActive,
+                    "itemEnabled": selection.isEnabled,
                     "appKitScreenPoint": ["x": frame.midX, "y": frame.midY],
                     "quartzScreenPoint": ["x": point.x, "y": point.y],
                     "windowPoint": ["x": localPoint.x, "y": localPoint.y],
