@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           mkdir -p .openclaw/tmp/issue-187607
           cp ../harness/.proof/187607/* .openclaw/tmp/issue-187607/
+          cp ../harness/.proof/187607/Issue187607MenuProof.swift apps/macos/Tests/OpenClawIPCTests/
           { sw_vers; xcodebuild -version; swift --version; node --version; ls /Applications | grep Xcode; } | tee .openclaw/tmp/issue-187607/worker.txt
           (cd .openclaw/tmp/issue-187607 && shasum -a 256 -c SHA256SUMS.txt)
           source scripts/lib/swift-toolchain.sh
@@ -55,6 +56,14 @@ jobs:
           test "$(cat .openclaw/tmp/issue-187607/native-red-*/tests.exit)" -ne 0
           grep -q 'Expectation failed' .openclaw/tmp/issue-187607/native-red-*/tests.log
           grep -q 'session preference checkmarks distinguish inheritance from explicit Off' .openclaw/tmp/issue-187607/native-red-*/tests.log
+      - name: Capture baseline tracked menus and verify real selections
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo before > .openclaw/tmp/issue-187607/proof-phase.txt
+          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --skip-build --filter Issue187607MenuProof > .openclaw/tmp/issue-187607/before-menu-driver.log 2>&1
+          cat .openclaw/tmp/issue-187607/before-menu-driver.log
       - name: Apply minimal fix and run identical suites and static checks
         working-directory: source
         shell: bash
@@ -64,6 +73,24 @@ jobs:
           git apply .openclaw/tmp/issue-187607/PROPOSED-FIX.diff
           /usr/bin/time -p /bin/bash .openclaw/tmp/issue-187607/run-native.sh green > .openclaw/tmp/issue-187607/green-driver.log 2>&1
           cat .openclaw/tmp/issue-187607/green-driver.log
+      - name: Capture fixed tracked menus and verify real selections
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo after > .openclaw/tmp/issue-187607/proof-phase.txt
+          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --skip-build --filter Issue187607MenuProof > .openclaw/tmp/issue-187607/after-menu-driver.log 2>&1
+          cat .openclaw/tmp/issue-187607/after-menu-driver.log
+      - name: Retain exact provenance
+        if: always()
+        working-directory: source
+        shell: bash
+        run: |
+          mkdir -p .openclaw/tmp/issue-187607
+          git rev-parse HEAD > .openclaw/tmp/issue-187607/baseline-sha.txt
+          git diff --binary > .openclaw/tmp/issue-187607/final-candidate.diff
+          git -C ../harness rev-parse HEAD > .openclaw/tmp/issue-187607/workflow-sha.txt
+          shasum -a 256 apps/macos/Sources/OpenClaw/StatusMenuSessions.swift apps/macos/Tests/OpenClawIPCTests/StatusMenuSummariesTests.swift apps/macos/Tests/OpenClawIPCTests/Issue187607MenuProof.swift > .openclaw/tmp/issue-187607/final-source-sha256.txt
       - uses: actions/upload-artifact@v6
         if: always()
         with:
