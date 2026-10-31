@@ -160,6 +160,8 @@ private final class PreferenceProofTracking: NSObject {
     let selection: NSMenuItem?
     private var inspection: Timer?
     private var deadline: Timer?
+    private var inputTimers: [Timer] = []
+    private var pendingInputs: [CGEvent] = []
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
     private var observed = false
@@ -173,6 +175,8 @@ private final class PreferenceProofTracking: NSObject {
     }
 
     func run() async throws {
+        let pointer = try #require(CGEvent(source: nil)?.location)
+        defer { #expect(CGWarpMouseCursorPosition(pointer) == .success) }
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             RunLoop.main.perform(inModes: [.common]) {
@@ -188,6 +192,7 @@ private final class PreferenceProofTracking: NSObject {
                     let selected = self.menu.popUp(positioning: nil, at: NSPoint(x: 30, y: 140), in: self.window.contentView)
                     self.inspection?.invalidate()
                     self.deadline?.invalidate()
+                    self.inputTimers.forEach { $0.invalidate() }
                     if let failure = self.failure {
                         self.continuation?.resume(throwing: failure)
                     } else if !self.observed || (self.selection != nil && !selected) {
@@ -200,6 +205,11 @@ private final class PreferenceProofTracking: NSObject {
             }
             CFRunLoopWakeUp(CFRunLoopGetMain())
         }
+    }
+
+    @objc private func sendInput() {
+        guard !self.pendingInputs.isEmpty else { return }
+        self.pendingInputs.removeFirst().postToPid(ProcessInfo.processInfo.processIdentifier)
     }
 
     @objc private func timedOut() {
@@ -233,26 +243,36 @@ private final class PreferenceProofTracking: NSObject {
                       let menuWindow = NSApp.window(withWindowNumber: Int(number)) else {
                     throw ProofError.failed("Selected menu item has no owned native window/frame")
                 }
-                let point = menuWindow.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
-                let eventTypes: [NSEvent.EventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
-                let events = try eventTypes.enumerated().map { index, type in
-                    try #require(NSEvent.mouseEvent(
-                        with: type, location: point, modifierFlags: [],
-                        timestamp: ProcessInfo.processInfo.systemUptime,
-                        windowNumber: menuWindow.windowNumber, context: nil,
-                        eventNumber: index + 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+                let primaryScreen = try #require(NSScreen.screens.first)
+                let point = CGPoint(x: frame.midX, y: primaryScreen.frame.maxY - frame.midY)
+                try #require(CGWarpMouseCursorPosition(point) == .success)
+                let source = try #require(CGEventSource(stateID: .privateState))
+                let eventTypes: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
+                let events = try eventTypes.map { type in
+                    let event = try #require(CGEvent(mouseEventSource: source, mouseType: type,
+                                                     mouseCursorPosition: point, mouseButton: .left))
+                    event.setIntegerValueField(.mouseEventClickState, value: type == .mouseMoved ? 0 : 1)
+                    return event
                 }
                 try JSONSerialization.data(withJSONObject: [
-                    "method": "NSApplication.postEvent -> native NSMenu event tracking",
+                    "method": "CGEvent.postToPid -> native NSMenu event tracking (staged)",
                     "windowNumber": menuWindow.windowNumber,
-                    "screenPoint": ["x": frame.midX, "y": frame.midY],
-                    "windowPoint": ["x": point.x, "y": point.y],
+                    "appKitScreenPoint": ["x": frame.midX, "y": frame.midY],
+                    "quartzScreenPoint": ["x": point.x, "y": point.y],
+                    "pointerAfterWarp": ["x": NSEvent.mouseLocation.x, "y": NSEvent.mouseLocation.y],
                     "item": selection.title,
                 ], options: [.prettyPrinted, .sortedKeys])
                     .write(to: self.output.appendingPathComponent("\(self.label)-click.json"))
-                // Post only to our AppKit process; no system-wide event injection or AX grant.
-                // AppKit's real tracking loop chooses the menu item and dispatches production action.
-                for event in events { NSApp.postEvent(event, atStart: false) }
+                // Only the isolated runner's own process receives input. Pointer state must
+                // agree with event coordinates while AppKit tracks its real native menu.
+                self.pendingInputs = events
+                for index in events.indices {
+                    let timer = Timer(timeInterval: 0.15 * Double(index + 1), target: self,
+                                      selector: #selector(self.sendInput), userInfo: nil, repeats: false)
+                    self.inputTimers.append(timer)
+                    RunLoop.main.add(timer, forMode: .eventTracking)
+                    RunLoop.main.add(timer, forMode: .common)
+                }
             } else {
                 self.menu.cancelTracking()
             }
