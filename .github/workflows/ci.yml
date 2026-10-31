@@ -1,10 +1,44 @@
 name: Issue 187607 native proof (task branch only)
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  diagnostic:
+    if: ${{ inputs.diagnostic }}
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Observe hosted menu input boundary
+        shell: bash
+        run: |
+          mkdir diagnostic
+          swiftc -swift-version 6 .proof/187607/HostedInputDiagnostic.swift -o diagnostic/probe
+          cd diagnostic
+          for route in cg ns; do
+            for policy in accessory regular; do
+              mkdir "$route-$policy"
+              set +e
+              (cd "$route-$policy" && ../probe "$route" "$policy" > probe.log 2>&1)
+              rc=$?
+              set -e
+              echo "$rc" > "$route-$policy/probe.exit"
+            done
+          done
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: hosted-input-diagnostic
+          path: diagnostic
   proof:
+    if: ${{ !inputs.diagnostic }}
     runs-on: macos-26
     timeout-minutes: 75
     steps:
