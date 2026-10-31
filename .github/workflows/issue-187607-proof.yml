@@ -36,7 +36,7 @@ jobs:
           scripts/install-swift-tools.sh "$RUNNER_TEMP/swift-tools"
           echo "$RUNNER_TEMP/swift-tools" >> "$GITHUB_PATH"
           corepack enable
-          pnpm install --frozen-lockfile --prefer-offline --optional --filter '@openclaw/mermaid-renderer...' --filter '@openclaw/gateway-protocol...' --config.ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true --config.side-effects-cache=true
+          pnpm install --frozen-lockfile --prefer-offline --optional --filter '@openclaw/mermaid-renderer...' --filter '@openclaw/gateway-protocol...' --filter 'openclaw...' --config.ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true --config.side-effects-cache=true
           node scripts/prepare-apple-mermaid.mjs
       - name: Baseline regression must fail assertions
         working-directory: source
