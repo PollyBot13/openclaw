@@ -399,7 +399,7 @@ private final class PreferenceProofGateway {
                                                                                    "ok": true, "payload": payload]), on: connection)
                         }
                     } catch {
-                        Issue.record("Preference fixture failure: opcode=\(String(describing: metadata?.opcode)) bytes=\(data?.count ?? 0) error=\(error)")
+                        Issue.record("Preference fixture failure: opcode=\(String(describing: metadata?.opcode)) bytes=\(data.count) error=\(error)")
                         connection.cancel()
                     }
                 }
