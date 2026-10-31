@@ -161,7 +161,7 @@ private final class PreferenceProofTracking: NSObject {
     private var inspection: Timer?
     private var deadline: Timer?
     private var inputTimers: [Timer] = []
-    private var pendingInputs: [CGEvent] = []
+    private var pendingInputs: [NSEvent] = []
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
     private var observed = false
@@ -209,7 +209,7 @@ private final class PreferenceProofTracking: NSObject {
 
     @objc private func sendInput() {
         guard !self.pendingInputs.isEmpty else { return }
-        self.pendingInputs.removeFirst().postToPid(ProcessInfo.processInfo.processIdentifier)
+        NSApp.postEvent(self.pendingInputs.removeFirst(), atStart: false)
     }
 
     @objc private func timedOut() {
@@ -246,25 +246,27 @@ private final class PreferenceProofTracking: NSObject {
                 let primaryScreen = try #require(NSScreen.screens.first)
                 let point = CGPoint(x: frame.midX, y: primaryScreen.frame.maxY - frame.midY)
                 try #require(CGWarpMouseCursorPosition(point) == .success)
-                let source = try #require(CGEventSource(stateID: .privateState))
-                let eventTypes: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
-                let events = try eventTypes.map { type in
-                    let event = try #require(CGEvent(mouseEventSource: source, mouseType: type,
-                                                     mouseCursorPosition: point, mouseButton: .left))
-                    event.setIntegerValueField(.mouseEventClickState, value: type == .mouseMoved ? 0 : 1)
-                    return event
+                let localPoint = menuWindow.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
+                let eventTypes: [NSEvent.EventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
+                let events = try eventTypes.enumerated().map { index, type in
+                    try #require(NSEvent.mouseEvent(
+                        with: type, location: localPoint, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: menuWindow.windowNumber, context: nil,
+                        eventNumber: index + 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
                 }
                 try JSONSerialization.data(withJSONObject: [
-                    "method": "CGEvent.postToPid -> native NSMenu event tracking (staged)",
+                    "method": "NSApplication.postEvent -> native NSMenu event tracking (staged, pointer aligned)",
                     "windowNumber": menuWindow.windowNumber,
                     "appKitScreenPoint": ["x": frame.midX, "y": frame.midY],
                     "quartzScreenPoint": ["x": point.x, "y": point.y],
+                    "windowPoint": ["x": localPoint.x, "y": localPoint.y],
                     "pointerAfterWarp": ["x": NSEvent.mouseLocation.x, "y": NSEvent.mouseLocation.y],
                     "item": selection.title,
                 ], options: [.prettyPrinted, .sortedKeys])
                     .write(to: self.output.appendingPathComponent("\(self.label)-click.json"))
-                // Only the isolated runner's own process receives input. Pointer state must
-                // agree with event coordinates while AppKit tracks its real native menu.
+                // AppKit needs window-relative events and a matching global pointer.
+                // Stage input in its tracking loop; never inject into other processes.
                 self.pendingInputs = events
                 for index in events.indices {
                     let timer = Timer(timeInterval: 0.15 * Double(index + 1), target: self,
