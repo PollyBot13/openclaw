@@ -26,7 +26,16 @@ struct Issue187607MenuProof {
         let phase = try String(contentsOf: root.appendingPathComponent(".openclaw/tmp/issue-187607/proof-phase.txt"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         try #require(["before", "after"].contains(phase))
-        let fixture = try await PreferenceProofGateway.start(output: output, phase: phase)
+        let mode = try String(contentsOf: root.appendingPathComponent(".openclaw/tmp/issue-187607/proof-mode.txt"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let actions = [
+            ("thinkingLevel", "off", "session.thinking"),
+            ("thinkingLevel", "high", "session.thinking"),
+            ("verboseLevel", "off", "session.verbose"),
+            ("verboseLevel", "on", "session.verbose"),
+        ]
+        try #require(mode == "captures" || actions.contains { mode == "\($0.0)-\($0.1)" })
+        let fixture = try await PreferenceProofGateway.start(output: output, phase: "\(phase)-\(mode)")
         let endpoint = fixture.url
         let gateway = GatewayConnection(testEndpointProvider: {
             GatewayConnection.EndpointSnapshot(config: (endpoint, nil, nil), routeAuthority: nil, revision: 1)
@@ -53,7 +62,7 @@ struct Issue187607MenuProof {
             var thinking: NSMenu?
             var verbose: NSMenu?
             var observations: [[String: Any]] = []
-            for (scenario, values) in scenarios {
+            for (scenario, values) in scenarios where mode == "captures" {
                 fixture.preferences["proof-target-A"] = values
                 await sessions.refresh(force: true)
                 let row = try #require(sessions.rows.first { $0.key == "proof-target-A" })
@@ -84,16 +93,19 @@ struct Issue187607MenuProof {
                 }
             }
             // Real menu selections through WindowServer mouse events, not a direct RPC or target/action call.
-            fixture.preferences["proof-target-A"] = [:]
+            // Each action case starts before any menu cancellation in a fresh native process.
+            // Seed the sequence predecessor explicitly; do not claim cross-process persistence.
+            let initial: [String: [String: String]] = [
+                "captures": [:], "thinkingLevel-off": [:],
+                "thinkingLevel-high": ["thinkingLevel": "off"],
+                "verboseLevel-off": ["thinkingLevel": "high"],
+                "verboseLevel-on": ["thinkingLevel": "high", "verboseLevel": "off"],
+            ]
+            fixture.preferences["proof-target-A"] = try #require(initial[mode])
             await sessions.refresh(force: true)
             sessions.configureSessionItem(item, row: try #require(sessions.rows.first { $0.key == "proof-target-A" }))
             let controlsBefore = fixture.preferences["proof-control-B"]
-            for (field, value, identifier) in [
-                ("thinkingLevel", "off", "session.thinking"),
-                ("thinkingLevel", "high", "session.thinking"),
-                ("verboseLevel", "off", "session.verbose"),
-                ("verboseLevel", "on", "session.verbose"),
-            ] {
+            for (field, value, identifier) in actions where mode == "\(field)-\(value)" {
                 let before = fixture.preferences["proof-target-A"] ?? [:]
                 let count = fixture.patches.count
                 let submenu = try #require(item.submenu?.items.first { $0.identifier?.rawValue == identifier }?.submenu)
@@ -126,15 +138,16 @@ struct Issue187607MenuProof {
                     ($0.representedObject as? [String: String])?["value"]
                 }
                 #expect(checkedAfterReadback == [value])
-                observations.append(["selection": label, "request": patch, "checkedAfterReadback": checkedAfterReadback,
+                observations.append(["selection": label, "initialA": before, "caseIsolation": "fresh native process",
+                                     "request": patch, "checkedAfterReadback": checkedAfterReadback,
                                      "storedA": fixture.preferences["proof-target-A"] ?? [:],
                                      "storedB": fixture.preferences["proof-control-B"] ?? [:]])
                 try await PreferenceProofTracking(menu: refreshedSubmenu, window: window, output: output,
                                                   label: "\(label)-readback").run()
             }
-            try JSONSerialization.data(withJSONObject: ["phase": phase, "observations": observations,
+            try JSONSerialization.data(withJSONObject: ["phase": phase, "mode": mode, "observations": observations,
                                                         "requests": fixture.requests], options: [.prettyPrinted, .sortedKeys])
-                .write(to: output.appendingPathComponent("\(phase)-receipts.json"))
+                .write(to: output.appendingPathComponent("\(phase)-\(mode)-receipts.json"))
             await control.disconnect()
             await gateway.shutdown()
         } catch {

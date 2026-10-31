@@ -104,9 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo before > .openclaw/tmp/issue-187607/proof-phase.txt
-          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --skip-build --filter Issue187607MenuProof > .openclaw/tmp/issue-187607/before-menu-driver.log 2>&1
-          cat .openclaw/tmp/issue-187607/before-menu-driver.log
+          /bin/bash .openclaw/tmp/issue-187607/run-menu.sh before
       - name: Apply minimal fix and run identical suites and static checks
         id: fixed
         if: ${{ !cancelled() && steps.baseline.outcome == 'success' }}
@@ -124,9 +122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo after > .openclaw/tmp/issue-187607/proof-phase.txt
-          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --skip-build --filter Issue187607MenuProof > .openclaw/tmp/issue-187607/after-menu-driver.log 2>&1
-          cat .openclaw/tmp/issue-187607/after-menu-driver.log
+          /bin/bash .openclaw/tmp/issue-187607/run-menu.sh after
       - name: Retain exact provenance
         if: always()
         working-directory: source
