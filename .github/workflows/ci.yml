@@ -39,6 +39,7 @@ jobs:
           pnpm install --frozen-lockfile --prefer-offline --optional --filter '@openclaw/mermaid-renderer...' --filter '@openclaw/gateway-protocol...' --filter 'openclaw...' --config.ignore-scripts=false --config.engine-strict=false --config.enable-pre-post-scripts=true --config.side-effects-cache=true
           node scripts/prepare-apple-mermaid.mjs
       - name: Baseline regression must fail assertions
+        id: baseline
         working-directory: source
         shell: bash
         run: |
@@ -65,6 +66,8 @@ jobs:
           node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --skip-build --filter Issue187607MenuProof > .openclaw/tmp/issue-187607/before-menu-driver.log 2>&1
           cat .openclaw/tmp/issue-187607/before-menu-driver.log
       - name: Apply minimal fix and run identical suites and static checks
+        id: fixed
+        if: ${{ !cancelled() && steps.baseline.outcome == 'success' }}
         working-directory: source
         shell: bash
         run: |
@@ -74,6 +77,7 @@ jobs:
           /usr/bin/time -p /bin/bash .openclaw/tmp/issue-187607/run-native.sh green > .openclaw/tmp/issue-187607/green-driver.log 2>&1
           cat .openclaw/tmp/issue-187607/green-driver.log
       - name: Capture fixed tracked menus and verify real selections
+        if: ${{ !cancelled() && steps.fixed.outcome == 'success' }}
         working-directory: source
         shell: bash
         run: |

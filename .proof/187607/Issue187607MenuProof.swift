@@ -77,7 +77,7 @@ struct Issue187607MenuProof {
                                          "agentDefaults": fixture.agentDefaults])
                 }
             }
-            // Real menu selections through own-process native mouse events, not a direct RPC or target/action call.
+            // Real menu selections through WindowServer mouse events, not a direct RPC or target/action call.
             fixture.preferences["proof-target-A"] = [:]
             await sessions.refresh(force: true)
             sessions.configureSessionItem(item, row: try #require(sessions.rows.first { $0.key == "proof-target-A" }))
@@ -161,7 +161,7 @@ private final class PreferenceProofTracking: NSObject {
     private var inspection: Timer?
     private var deadline: Timer?
     private var inputTimers: [Timer] = []
-    private var pendingInputs: [NSEvent] = []
+    private var pendingInputs: [CGEvent] = []
     private var continuation: CheckedContinuation<Void, Error>?
     private var failure: Error?
     private var observed = false
@@ -209,7 +209,7 @@ private final class PreferenceProofTracking: NSObject {
 
     @objc private func sendInput() {
         guard !self.pendingInputs.isEmpty else { return }
-        NSApp.postEvent(self.pendingInputs.removeFirst(), atStart: false)
+        self.pendingInputs.removeFirst().post(tap: .cgSessionEventTap)
     }
 
     @objc private func timedOut() {
@@ -247,16 +247,13 @@ private final class PreferenceProofTracking: NSObject {
                 let point = CGPoint(x: frame.midX, y: primaryScreen.frame.maxY - frame.midY)
                 try #require(CGWarpMouseCursorPosition(point) == .success)
                 let localPoint = menuWindow.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
-                let eventTypes: [NSEvent.EventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
-                let events = try eventTypes.enumerated().map { index, type in
-                    try #require(NSEvent.mouseEvent(
-                        with: type, location: localPoint, modifierFlags: [],
-                        timestamp: ProcessInfo.processInfo.systemUptime,
-                        windowNumber: menuWindow.windowNumber, context: nil,
-                        eventNumber: index + 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+                let eventTypes: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp]
+                let events = try eventTypes.map { type in
+                    try #require(CGEvent(mouseEventSource: nil, mouseType: type,
+                                         mouseCursorPosition: point, mouseButton: .left))
                 }
                 try JSONSerialization.data(withJSONObject: [
-                    "method": "NSApplication.postEvent -> native NSMenu event tracking (staged, pointer aligned)",
+                    "method": "CGEvent session routing -> native NSMenu event tracking (disposable hosted VM only)",
                     "windowNumber": menuWindow.windowNumber,
                     "appKitScreenPoint": ["x": frame.midX, "y": frame.midY],
                     "quartzScreenPoint": ["x": point.x, "y": point.y],
@@ -265,8 +262,8 @@ private final class PreferenceProofTracking: NSObject {
                     "item": selection.title,
                 ], options: [.prettyPrinted, .sortedKeys])
                     .write(to: self.output.appendingPathComponent("\(self.label)-click.json"))
-                // AppKit needs window-relative events and a matching global pointer.
-                // Stage input in its tracking loop; never inject into other processes.
+                // WindowServer must route input to the tracked menu on the disposable VM.
+                // This proof must never run on an operator desktop.
                 self.pendingInputs = events
                 for index in events.indices {
                     let timer = Timer(timeInterval: 0.15 * Double(index + 1), target: self,
@@ -357,6 +354,12 @@ private final class PreferenceProofGateway {
                     connection.cancel()
                     return
                 }
+                // Control frames are not JSON application messages; NW replies to ping automatically.
+                if metadata?.opcode == .ping || metadata?.opcode == .pong {
+                    print("Preference fixture control frame: opcode=\(String(describing: metadata?.opcode)) bytes=\(data?.count ?? 0)")
+                    self.receive(connection)
+                    return
+                }
                 if let data {
                     do {
                         guard let frame = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -396,7 +399,7 @@ private final class PreferenceProofGateway {
                                                                                    "ok": true, "payload": payload]), on: connection)
                         }
                     } catch {
-                        Issue.record("Preference fixture failure: \(error)")
+                        Issue.record("Preference fixture failure: opcode=\(String(describing: metadata?.opcode)) bytes=\(data?.count ?? 0) error=\(error)")
                         connection.cancel()
                     }
                 }
