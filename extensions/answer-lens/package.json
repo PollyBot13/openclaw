@@ -1,0 +1,32 @@
+{
+  "name": "@pollybot/answer-lens",
+  "version": "0.1.0",
+  "description": "Adjust the length and technical depth of answers in a separate OpenClaw sidebar.",
+  "type": "module",
+  "dependencies": {
+    "@solidjs/web": "2.0.0-rc.18",
+    "solid-js": "2.0.0-rc.18",
+    "dompurify": "3.4.17",
+    "marked": "18.1.1"
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*",
+    "@solidjs/compiler": "2.0.0-rc.18",
+    "esbuild": "0.28.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "controlUi": "./src/control-ui.tsx",
+    "assetScripts": {
+      "build": "cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/answer-lens",
+      "buildOutputs": [
+        "dist/openclaw.plugin.json"
+      ]
+    }
+  },
+  "scripts": {
+    "package:artifact": "node scripts/package.mjs"
+  }
+}

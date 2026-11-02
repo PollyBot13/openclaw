@@ -1,0 +1,19 @@
+{
+  "id": "answer-lens",
+  "name": "Answer Lens",
+  "description": "Adjust the length and technical depth of answers in a separate OpenClaw sidebar.",
+  "enabledByDefault": false,
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "gatewayMethodDispatch": [
+      "authenticated-request"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

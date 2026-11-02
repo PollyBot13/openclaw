@@ -1,0 +1,120 @@
+.answer-lens {
+  padding: 20px;
+  color: var(--text);
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+.answer-lens header h2 {
+  margin: 6px 0;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+.answer-lens header p,
+.answer-lens-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.answer-lens-eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.answer-lens-source {
+  display: grid;
+  gap: 8px;
+}
+.answer-lens label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.answer-lens select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.answer-lens fieldset {
+  padding: 0;
+  border: 0;
+  margin: 0;
+  min-width: 0;
+}
+.answer-lens legend {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.answer-lens-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.answer-lens-options button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.answer-lens-options button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+.answer-lens button:focus-visible,
+.answer-lens select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.answer-lens-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.answer-lens-status {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.answer-lens-error {
+  color: var(--danger);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.answer-lens-reading {
+  min-height: 120px;
+  line-height: 1.7;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.answer-lens-reading > :first-child {
+  margin-top: 0;
+}
+.answer-lens-reading pre,
+.answer-lens-reading table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.answer-lens-reading a {
+  color: var(--accent);
+}
+
+.answer-lens .btn {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 12px;
+}

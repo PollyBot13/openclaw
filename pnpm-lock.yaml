@@ -772,6 +772,31 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/answer-lens:
+    dependencies:
+      '@solidjs/web':
+        specifier: 2.0.0-rc.18
+        version: 2.0.0-rc.18(patch_hash=6d6b2e52e607edf3c9cfcc1a26f331d013537d051f43bbb4f3e7877ed08fa5cf)(solid-js@2.0.0-rc.18)
+      dompurify:
+        specifier: 3.4.17
+        version: 3.4.17
+      marked:
+        specifier: 18.1.1
+        version: 18.1.1
+      solid-js:
+        specifier: 2.0.0-rc.18
+        version: 2.0.0-rc.18
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      '@solidjs/compiler':
+        specifier: 2.0.0-rc.18
+        version: 2.0.0-rc.18
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+
   extensions/anthropic:
     devDependencies:
       '@openclaw/plugin-sdk':
