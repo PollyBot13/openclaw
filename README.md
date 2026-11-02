@@ -4,6 +4,12 @@ An isolated built Control UI with a real Gateway and utility model. Synthetic he
 
 [Play/download the transition video](answer-lens-transitions.mp4)
 
+## Longer walkthrough
+
+[Play/download the 39-second length and complexity demo](answer-lens-long-demo.mp4)
+
+A separate user-recorded walkthrough using a car explanation. Original recording preserved.
+
 ## Original
 ![Original answer](before.png)
 
