@@ -1,0 +1,101 @@
+{
+  "reviewedHead": "662d9a3146ecdcca97def4b351fdb145a02d8eb2",
+  "redSourceSha256": "f0229ae2b3c5f622d8a56967bd755eead104ea8eb37ae568a4ebe483fc0ffbff",
+  "redObservation": {
+    "scenario": "incognito actor closed while provider response held",
+    "expectedPostClosureSocketDeltas": 0,
+    "observedPostClosureSocketDeltas": 1,
+    "finalRpcRejected": true
+  },
+  "greenRuns": [
+    {
+      "boundary": "Real isolated Gateway, authenticated TLS WebSocket non-admin clients, real authority/storage/utility/HTTP adapter/broadcaster; local synthetic HTTP SSE provider only",
+      "sourceSha256": "ecec57e19acaeebf079253005311cac4317cd8cad25a8d8b4d227f9ddfba07b0",
+      "mode": "local",
+      "happy": {
+        "sourceKind": "incognito",
+        "requesterChunks": 1,
+        "observerChunks": 0,
+        "historyUnchanged": true
+      },
+      "cases": [
+        {
+          "scenario": "incognito-close",
+          "stage": "before-dispatch",
+          "providerCallsDuringOperation": 0,
+          "postRevocationChunks": 0,
+          "laterRequestDenied": true,
+          "laterProviderCalls": 0,
+          "error": {
+            "ok": false,
+            "code": "UNAVAILABLE",
+            "message": "Answer Lens is unavailable for the configured utility model. Try again or restore Original."
+          }
+        },
+        {
+          "scenario": "incognito-close",
+          "stage": "inflight",
+          "providerCallsDuringOperation": 1,
+          "postRevocationChunks": 0,
+          "laterRequestDenied": true,
+          "laterProviderCalls": 0,
+          "error": {
+            "ok": false,
+            "code": "UNAVAILABLE",
+            "message": "Answer Lens is unavailable for the configured utility model. Try again or restore Original."
+          }
+        }
+      ],
+      "providerRequests": 2,
+      "limitations": [
+        "No live model semantics claimed. Provider response barriers cover post-dispatch revocation; pre-dispatch uses a wrapper that awaits real utility preparation then pauses its return, without replacing any authority decisions or completion implementation."
+      ]
+    },
+    {
+      "boundary": "Real isolated Gateway, authenticated TLS WebSocket non-admin clients, real authority/storage/utility/HTTP adapter/broadcaster; local synthetic HTTP SSE provider only",
+      "sourceSha256": "ecec57e19acaeebf079253005311cac4317cd8cad25a8d8b4d227f9ddfba07b0",
+      "mode": "member",
+      "profiledNonAdminIncognitoDenied": true,
+      "membershipOnlyRemoval": "Read authority remains under configured view policy; Original still succeeds before visibility is revoked to draft.",
+      "happy": {
+        "sourceKind": "durable",
+        "requesterChunks": 1,
+        "observerChunks": 0,
+        "historyUnchanged": true
+      },
+      "cases": [
+        {
+          "scenario": "sharing-revoke",
+          "stage": "before-dispatch",
+          "providerCallsDuringOperation": 0,
+          "postRevocationChunks": 0,
+          "laterRequestDenied": true,
+          "laterProviderCalls": 0,
+          "error": {
+            "ok": false,
+            "code": "INVALID_REQUEST",
+            "message": "Session \"<synthetic-session>\" was not found."
+          }
+        },
+        {
+          "scenario": "sharing-revoke",
+          "stage": "inflight",
+          "providerCallsDuringOperation": 1,
+          "postRevocationChunks": 0,
+          "laterRequestDenied": true,
+          "laterProviderCalls": 0,
+          "error": {
+            "ok": false,
+            "code": "INVALID_REQUEST",
+            "message": "Session \"<synthetic-session>\" was not found."
+          }
+        }
+      ],
+      "providerRequests": 2,
+      "limitations": [
+        "No live model semantics claimed. Provider response barriers cover post-dispatch revocation; pre-dispatch uses a wrapper that awaits real utility preparation then pauses its return, without replacing any authority decisions or completion implementation."
+      ]
+    }
+  ],
+  "repairedHead": "08d302fc15df7b5c3c6f49b407054411d5a263f0"
+}
