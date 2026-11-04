@@ -4,6 +4,7 @@ import {
   validateSessionsPostParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { getGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
+import { runWithoutOwnedSessionTranscriptWrites } from "../../config/sessions/transcript-write-context-store.js";
 import { isIncognitoSessionKey } from "../../routing/session-key.js";
 import { injectGatewayAssistantMessage } from "./chat-inject.js";
 import type { GatewayRequestHandler } from "./types.js";
@@ -24,27 +25,29 @@ export const handleSessionPost: GatewayRequestHandler = async (options) => {
     return;
   }
   const sourceSessionKey = getGatewayToolCallerIdentity()?.sessionKey;
-  const result = await injectGatewayAssistantMessage(
-    context,
-    {
-      sessionKey: params.sessionKey,
-      agentId: params.agentId,
-      expectedSessionId: params.expectedSessionId,
-      message: params.message,
-      literal: true,
-      label: sourceSessionKey ? "Post from " + sourceSessionKey : "Session post",
-      idempotencyKey: JSON.stringify([
-        "session-post",
-        sourceSessionKey ?? null,
-        params.idempotencyKey,
-      ]),
-      inputProvenance: {
-        kind: "inter_session",
-        sourceTool: "sessions_send",
-        ...(sourceSessionKey ? { sourceSessionKey } : {}),
+  const result = await runWithoutOwnedSessionTranscriptWrites(() =>
+    injectGatewayAssistantMessage(
+      context,
+      {
+        sessionKey: params.sessionKey,
+        agentId: params.agentId,
+        expectedSessionId: params.expectedSessionId,
+        message: params.message,
+        literal: true,
+        label: sourceSessionKey ? "Post from " + sourceSessionKey : "Session post",
+        idempotencyKey: JSON.stringify([
+          "session-post",
+          sourceSessionKey ?? null,
+          params.idempotencyKey,
+        ]),
+        inputProvenance: {
+          kind: "inter_session",
+          sourceTool: "sessions_send",
+          ...(sourceSessionKey ? { sourceSessionKey } : {}),
+        },
       },
-    },
-    sessionMutationCommitGuard,
+      sessionMutationCommitGuard,
+    ),
   );
   if (!result.ok) {
     respond(false, undefined, result.error);

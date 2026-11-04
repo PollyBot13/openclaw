@@ -1,4 +1,5 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { createRuntimeConfigReader } from "../../config/runtime-snapshot.js";
 import { createSessionVisibilityDecisionChecker } from "../../plugin-sdk/session-visibility-internal.js";
 import { resolveSessionAgentIds } from "../agent-scope.js";
 import { ToolInputError } from "../tool-input-error.js";
@@ -7,6 +8,7 @@ import { getGatewayToolCallerIdentity } from "./gateway-caller-context.js";
 import { callAgentToolGatewayRequest } from "./in-process-gateway.js";
 import { resolveSessionToolTargetAgentId } from "./scoped-session-access.js";
 import {
+  createAgentToAgentPolicy,
   formatSessionToolAccessDenial,
   isSessionToolRequesterCreator,
   readDescribedSessionVisibilityRow,
@@ -87,15 +89,18 @@ export async function executeSessionPost(
   }
   // Reuse the send decision so explicit outbound denials and native-child exceptions agree.
   // Read eligibility above still owns creator-only tree widening; this never admits a turn.
-  const outbound = createSessionVisibilityDecisionChecker({
-    action: "send",
-    defaultAgentId: targetAgentId,
-    requesterAgentId,
-    requesterSessionKey,
-    mainSessionKey: context.mainSessionKey,
-    visibility: context.sessionVisibility,
-    a2aPolicy: context.a2aPolicy,
-  }).check(targetRow);
+  const readConfig = createRuntimeConfigReader(context.cfg);
+  const checkOutbound = () =>
+    createSessionVisibilityDecisionChecker({
+      action: "send",
+      defaultAgentId: targetAgentId,
+      requesterAgentId,
+      requesterSessionKey,
+      mainSessionKey: context.mainSessionKey,
+      visibility: context.sessionVisibility,
+      a2aPolicy: createAgentToAgentPolicy(readConfig(), { sandboxed: opts?.sandboxed }),
+    }).check(targetRow);
+  const outbound = checkOutbound();
   if (!outbound.allowed && outbound.reasonCode === "agent_to_agent_send_not_allowed") {
     return jsonResult({
       status: "forbidden",
@@ -107,6 +112,17 @@ export async function executeSessionPost(
   }
   const receipt = await callGateway({
     method: "sessions.post",
+    sessionMutationCommitGuard: () => {
+      const current = checkOutbound();
+      if (!current.allowed && current.reasonCode === "agent_to_agent_send_not_allowed") {
+        throw new Error(
+          formatSessionToolAccessDenial(current, {
+            action: "send",
+            targetSessionKey: targetRow.key,
+          }),
+        );
+      }
+    },
     params: {
       sessionKey: targetRow.key,
       agentId: targetAgentId,

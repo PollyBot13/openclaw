@@ -14,8 +14,10 @@ import { createSessionsSearchTool } from "../agents/tools/sessions-search-tool.j
 import { createSessionsSendTool } from "../agents/tools/sessions-send-tool.js";
 import { createSessionsTool } from "../agents/tools/sessions-tool.js";
 import { makeZeroUsageSnapshot } from "../agents/usage.js";
+import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { appendTranscriptMessage } from "../config/sessions/session-accessor.js";
 import { runWithSessionTranscriptReadFence } from "../config/sessions/session-transcript-read-fence.js";
+import { withOwnedSessionTranscriptWrites } from "../config/sessions/transcript-write-context.js";
 import { mockSessionStatusModelDependencies } from "./local-request-context.session-status.test-support.js";
 import {
   REQUESTER,
@@ -163,7 +165,15 @@ it("discovers and reads an independent session created by the requesting human",
         message: "Passive session marker",
         idempotencyKey: "passive-session-marker",
       };
-      const first = await post.execute("passive-post", args);
+      const first = await withOwnedSessionTranscriptWrites(
+        {
+          sessionKey: REQUESTER,
+          sessionTarget: { sessionKey: REQUESTER, sessionId: "requester-turn", agentId: "main" },
+          assertCommitAllowed: () => {},
+          withTranscriptWrite: (run) => run(),
+        },
+        () => post.execute("passive-post", args),
+      );
       expect(first.details).toMatchObject({
         status: "posted",
         sessionKey: PARTICIPANT_DRAFT,
@@ -479,5 +489,45 @@ it("keeps reads allowed while enforcing explicit outbound post denial", async ()
       ).resolves.toMatchObject({ details: { status: "forbidden" } });
     },
     { visibility: "all", mainSend: [] },
+  );
+});
+
+it("rejects a pending cross-agent post when outbound permission is revoked", async () => {
+  await withParticipantSessionToolsFixture(
+    async ({ cfg, turn, alice }) => {
+      const key = "agent:other:dashboard:revoked-post";
+      await seedSessionToolsFixtureSession({
+        agentId: "other",
+        sessionKey: key,
+        sessionId: "revoked-post-session",
+        creatorId: alice.profileId,
+        visibility: "draft",
+      });
+      const options = {
+        agentSessionKey: REQUESTER,
+        requesterTurnRunId: turn.runtimeIdentity.operationalRunInstance.runId,
+        callGateway: <T>(request: Parameters<typeof callAgentToolGatewayRequest>[0]) => {
+          if (request.method === "sessions.post") {
+            cfg.agents!.entries!.main!.tools!.agentToAgent!.send = [];
+            setRuntimeConfigSnapshot({ ...cfg });
+          }
+          return callAgentToolGatewayRequest<T>(request);
+        },
+      };
+      await expect(
+        createSessionsSendTool(options).execute("revoked-post", {
+          sessionKey: key,
+          user: alice.profileId,
+          mode: "post",
+          message: "Must not persist after revocation",
+        }),
+      ).rejects.toThrow();
+      const history = await createSessionsHistoryTool(options).execute("revoked-history", {
+        sessionKey: key,
+        user: alice.profileId,
+      });
+      expect(JSON.stringify(history.details)).not.toContain("Must not persist after revocation");
+    },
+    { visibility: "all", mainSend: ["other"] },
   );
 });
