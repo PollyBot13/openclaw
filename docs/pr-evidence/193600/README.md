@@ -20,3 +20,49 @@ Together with the rebuilt candidate green above, this is a matching focused auto
 ## Smaller iPhone automated check
 
 `candidate-xcuitest-se3-xxxl-initial.png` is the initial screenshot attachment from the same exact-source focused test on an iPhone SE (3rd generation), iOS 27.2, accessibility XXXL, at 21:11 CET. The 375×667-point viewport initially shows the title, explanation and toggle; Cancel/Create Thread start below the visible window (Cancel `y=696.5`, not initially hittable). The test then swiped the form until both actions were contained and Cancel was hittable, tapped Cancel, observed dismissal, and **passed 1/1 in 16.57 seconds**. This is smaller-viewport reachability proof, not a claim that all controls fit without scrolling. It remains fixture-only and does not verify real Gateway effects.
+
+## Additional proof — 5 November, 21:33 CET
+
+Production source: task tip `612140c312ec5bb1f8cb8619b587fb67f4b8e9a4`; both affected production files match PR head `e767a466cd5691b82b27dec8d58c2ec4fed82369`. No product-code change was needed.
+
+### Smaller iPhone, default text
+
+Fresh Xcode 27.2 `xcodebuild test` on iPhone SE (3rd generation), iOS 27.2, light appearance, 375×667-point viewport: **1/1 passed in 14.135 seconds**, at 21:33:18 CET. The original focused regression harness was temporarily changed only to select `UICTContentSizeCategoryL` instead of accessibility XXXL, and retain an extra screenshot immediately before Cancel. No production code or fixture data changed for this run; the original test file was restored afterward and the worktree was clean.
+
+```sh
+xcodebuild test -project apps/ios/OpenClaw.xcodeproj -scheme OpenClawUITests \
+  -destination 'platform=iOS Simulator,id=<owned-SE3-device>' \
+  -derivedDataPath <private-proof>/DerivedData \
+  -only-testing:OpenClawUITests/AdaptiveLayoutUITests/testNewSessionOptionsRemainReachableAtAccessibilitySize \
+  -resultBundlePath <private-proof>/se3-default-automated.xcresult
+```
+
+The geometry attachment records window `(0,0,375,667)`, title `(34.3,331.1,73.7,18.2)`, Cancel `(172.2,562.8,44.0,16.3)` with hittable=true, and Create Thread `(225.8,556.1,114.9,29.7)`. All were contained without scrolling; Cancel dismissed the sheet. Screenshot mode, working copy OFF, keyboard hidden. This tests layout/cancellation, not server-side non-creation.
+
+![SE3 default text: title, explanation, toggle and both actions visible.](candidate-se3-default.png)
+
+This screenshot was inspected and cropped to the sheet; unrelated fixture chat and PNG metadata were excluded. The local full xcresult remains private.
+
+### Native iOS typography checks
+
+Rebuilt source-equivalent **OpenClawTypographyTests passed 23/23** on iPhone 17 / iOS 27.2 using Xcode 27.2. Command: `xcodebuild test -project apps/ios/OpenClaw.xcodeproj -scheme OpenClaw -destination 'platform=iOS Simulator,id=<owned-iPhone17-device>' -derivedDataPath <private-proof>/DerivedData -only-testing:OpenClawTests/OpenClawTypographyTests -resultBundlePath <private-proof>/typography-continuation.xcresult`. Local terminal result: `Test run with 23 tests in 1 suite passed after 2.240 seconds`. Both these builds use the same temporary generated no-Watch project described above, not a standard Watch-retaining build.
+
+### Earlier focused shared suite — provenance supplement
+
+The exact command was `PATH=<Node24-bin>:$PATH swift test --package-path apps/shared/OpenClawKit --filter ChatViewModelSessionActionTests`, on task tip `612140c312ec5bb1f8cb8619b587fb67f4b8e9a4` whose shared production blob matches published head. The recorded result is **50/50 passed**. This is macOS-hosted Swift package validation, not a macOS app/popover UI pass or real Gateway proof.
+
+Earlier full-package execution ran 2,492 tests and had three failures, all at `createdParentSessionKeys() == [nil]`: “new trigger starts fresh agent session without admin reset”, “new trigger keeps selected global agent scope”, and “new trigger prefers explicit session agent over ambient agent”. A control restoring the changed shared production file to original main reproduced the three failures. No full-suite pass is claimed.
+
+### Historical synthetic keyboard-visible layout observation
+
+The following inspected crop comes from the earlier 20:12 CET iPhone 17/iOS 27.2/XXXL manual observation. Only the local screenshot agent's `workspaceGit` fixture flag was temporarily enabled; production layout code was unchanged from task tip. Both actions and the base field were scrolled above the **visible software keyboard**; text entry and Cancel dismissal were observed. Fixture changes were restored; there was no real Gateway creation/worktree operation.
+
+![Synthetic fixture only: ON, base field and Cancel/Create above visible software keyboard.](synthetic-on-keyboard.png)
+
+This closes only the missing inspectable **synthetic** keyboard-visible layout observation. It must not be described as normal-onboarding, real-Gateway, automated ON coverage, or proof of server-side Cancel non-creation. The top heading has intentionally scrolled out of view in this state.
+
+### Independent reporter evidence
+
+[ellibbe's source report](https://github.com/openclaw/openclaw/pull/193600#issuecomment-6668182174) separately reports same-head iPhone 17 native red/green, default-size control, standard Watch-retaining build, and normal-onboarding/WebSocket-fixture ON/base-field/Cancel without creation/chat-send requests. These are reporter-supplied results, not local Engineering executions. The reporter explicitly does not claim visible-keyboard or real-Gateway creation coverage.
+
+Still open: real-Gateway OFF/ON Create and worktree effects, production-flow keyboard-visible proof, macOS app UI, broad viewport/VoiceOver matrix and full-suite validation. These results do not authorize merge or deployment.
