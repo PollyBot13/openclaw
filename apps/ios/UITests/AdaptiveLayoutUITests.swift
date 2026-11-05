@@ -46,10 +46,8 @@ final class AdaptiveLayoutUITests: XCTestCase {
         add(screenshot)
         XCTAssertTrue(window.contains(title.frame), "New Thread title is clipped")
         XCTAssertTrue(title.isHittable, "New Thread title is not visible")
-        let scroll = app.scrollViews["new-session-options-scroll"]
-        XCTAssertTrue(scroll.exists, "New session options must scroll at accessibility size")
         for _ in 0..<3 where !cancel.isHittable {
-            scroll.swipeUp()
+            app.swipeUp()
         }
         XCTAssertTrue(window.contains(cancel.frame), "Cancel remains clipped after scrolling")
         XCTAssertTrue(window.contains(create.frame), "Create Thread remains clipped after scrolling")

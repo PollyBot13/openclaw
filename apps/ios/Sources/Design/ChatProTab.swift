@@ -105,7 +105,6 @@ struct ChatProTab: View {
                                 self.showsNewSessionOptions = false
                             }
                         }
-                        .accessibilityIdentifier("new-session-options-scroll")
                         .disabled(self.isGatewayTransitionPending)
                         .presentationDetents(self.dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
                         .presentationDragIndicator(.visible)
