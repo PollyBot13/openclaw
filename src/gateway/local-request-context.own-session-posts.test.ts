@@ -586,7 +586,7 @@ it.each(["sender send list", "global A2A enablement", "global A2A allow list"])(
   },
 );
 
-it("rejects a pending same-agent post when visibility is restricted to self", async () => {
+it("rejects a same-agent post when requester visibility is revoked during injection", async () => {
   await withParticipantSessionToolsFixture(
     async ({ cfg, turn, alice }) => {
       const key = "agent:main:dashboard:visibility-revoked-post";
@@ -604,22 +604,38 @@ it("rejects a pending same-agent post when visibility is restricted to self", as
       const options = {
         agentSessionKey: REQUESTER,
         requesterTurnRunId: turn.runtimeIdentity.operationalRunInstance.runId,
-        callGateway: <T>(request: Parameters<typeof callAgentToolGatewayRequest>[0]) => {
-          if (request.method === "sessions.post") {
+      };
+      const inject = chatInjection.injectGatewayAssistantMessage;
+      const load = sessionStoreWorker.loadGatewaySessionEntryReadOnlyInWorker;
+      let boundaryReached = false;
+      const readSpy = vi.spyOn(sessionStoreWorker, "loadGatewaySessionEntryReadOnlyInWorker");
+      const injectionSpy = vi
+        .spyOn(chatInjection, "injectGatewayAssistantMessage")
+        .mockImplementationOnce(async (...args) => {
+          readSpy.mockImplementationOnce(async (params) => {
+            expect(params.key).toBe(key);
+            const target = await load(params);
+            boundaryReached = true;
             cfg.tools!.sessions!.visibility = "self";
             setRuntimeConfigSnapshot({ ...cfg });
-          }
-          return callAgentToolGatewayRequest<T>(request);
-        },
-      };
-      await expect(
-        createSessionsSendTool(options).execute("visibility-revoked-post", {
-          sessionKey: key,
-          user: alice.profileId,
-          mode: "post",
-          message: "Must not persist after visibility revocation",
-        }),
-      ).rejects.toThrow(/tools\.sessions\.visibility/);
+            return target;
+          });
+          return inject(...args);
+        });
+      try {
+        await expect(
+          createSessionsSendTool(options).execute("visibility-revoked-post", {
+            sessionKey: key,
+            user: alice.profileId,
+            mode: "post",
+            message: "Must not persist after visibility revocation",
+          }),
+        ).rejects.toThrow(/tools\.sessions\.visibility/);
+      } finally {
+        injectionSpy.mockRestore();
+        readSpy.mockRestore();
+      }
+      expect(boundaryReached).toBe(true);
       const messages = await loadTranscriptEvents({
         agentId: "main",
         sessionKey: key,
