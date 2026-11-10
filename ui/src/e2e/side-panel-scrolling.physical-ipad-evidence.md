@@ -1,6 +1,6 @@
 # Physical iPad Safari evidence, November 10, 2026
 
-Reporter outcome: the tall-page dashboard worked with the candidate; the ordinary multi-widget control did not. The recordings support the narrow tall-page improvement. Multi-widget acceptance remains unresolved, with the same visible limitation in the baseline recording; these recordings do not establish a new candidate regression.
+Reporter outcome: the tall-page dashboard worked with the candidate; the ordinary multi-widget control FAILED, unchanged versus unpatched. The reporter explicitly clarified: "no change versus unpatched." The recordings support the narrow tall-page improvement and the unchanged grid failure. The remaining grid bug/root cause is unresolved; the test outcome is a failure, not unknown. Additional telemetry is diagnostic only and is not needed to accept the reported failure. These recordings do not establish a new candidate regression.
 
 ## Versions and fixture
 
@@ -45,6 +45,6 @@ The later one-page PDF screenshot of the candidate export is partial: collectedA
 ## Acceptance status
 
 - Physical reporter-confirmed tall-page improvement, supported by before/after recordings.
-- Ordinary multi-widget scrolling is not accepted as passing. Visible limitation exists in both recordings; root cause and exact input routing remain unestablished.
+- Ordinary multi-widget scrolling FAILED, unchanged versus baseline, per the reporter and paired recordings. The bug/root cause and exact input routing remain unestablished; the failure outcome itself is established.
 - No claim of complete iPad telemetry, exact release timing, all dashboard cases passing, or production deployment. PR #196797 should retain these qualifications and remain draft pending its owner's decision.
 
