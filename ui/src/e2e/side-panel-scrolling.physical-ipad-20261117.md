@@ -45,7 +45,7 @@ Three MP4s stack a dashboard crop above its proof toolbar from the SAME source f
 | `restored-split.mp4` | 19–40s; marks2–4 | `28863b5e5610739d895340549630f6b6313fa8d1744f9ec774203e10128813e6` |
 | `independent-feeds.mp4` | 54–70s; feed scrolling and mark6 | `f8ec4e5f6c19aadd62a5a5ba2c32f18ad93a516f998f14e2365462dede002300` |
 | `auto-fixed-auto.mp4` | 74–113s; menus, marks7–10 and final restored Auto markers | `5ef3e7b80c43b4ce3b87c265560e27a90be1310ce98d09170424d4ee06f1ec33` |
-| `ipad-candidate-nov17-redacted.json` | All 1,958 samples unchanged; only the two top-level private tailnet-origin values are redacted, with an explanatory field added | `cf6a7d81a696544369e44d7c8f0f4c26ff54a3d63bf3d3ee610bdc99079ecbd7` |
+| `ipad-candidate-nov17-redacted-compact.json` | All 1,958 sample values unchanged; only the two top-level private tailnet-origin values are redacted, with an explanatory field added; insignificant JSON whitespace removed for attachment size | `bdca6ad83a7559eb5dd31808d5cea4f086211f9b64aef41785832e4e41ebb438` |
 
 The [companion marked-readings file](./side-panel-scrolling.physical-ipad-20261117.readings.json) contains the ten marked top-frame measurements, earlier widget readings with explicit ages, the independent-feed ranges and the fixed-control iframe-height set. It is a derived, selected evidence file; the full sample stream is attached separately in the existing Roboclaw conversation.
 
